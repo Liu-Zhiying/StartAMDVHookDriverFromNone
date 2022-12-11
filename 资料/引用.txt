@@ -1,0 +1,5 @@
+Newbluepill源码来自
+https://github.com/haidragon/newbluepill
+AMD-V_for_Hackers PDF来自
+https://tandasat.github.io/VXCON/AMD-V_for_Hackers.pdf
+

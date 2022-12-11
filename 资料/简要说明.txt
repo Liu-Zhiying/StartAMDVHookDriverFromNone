@@ -1,0 +1,3 @@
+Newbluepill和它的源码是目前知道唯一的有AMDV Hook驱动实现细节的书和源码
+AMD-V_for_Hackers.pdf 讲的是AMDV Hook 和 VTX Hook 里面的一些差别
+AMD官方资料不用我说了吧
