@@ -1,0 +1,5 @@
+**/.vs/
+Sources/**/.vs/
+Sources/**/x64
+Sources/**/Debug
+Sources/**/Release

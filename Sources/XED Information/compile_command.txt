@@ -1,0 +1,7 @@
+为Windows驱动编译Intel XED的命令
+请在Visual Studio x64 Natve 开发人员命令行下运行
+python的位置和mfile.py的位置请自行替换
+
+python ..\xed\mfile.py --extra-flags="/kernel /I \"%WindowsSdkDir%Include\%WindowsSDKVersion%\km\" /I \"%WindowsSdkDir%Include\%WindowsSDKVersion%\km\crt\" /D_AMD64_" --extra-linkflags="/libpath:\"%WindowsSdkDir%lib\%WindowsSDKVersion%\km\x64\\"" all
+
+库文件在 当前工作目录的 obj/wkit目录下
