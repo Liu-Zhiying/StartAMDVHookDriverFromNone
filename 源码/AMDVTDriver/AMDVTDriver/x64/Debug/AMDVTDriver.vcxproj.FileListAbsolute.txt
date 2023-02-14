@@ -1,1 +1,0 @@
-D:\Data\CppCode\AMDVTDriver\AMDVTDriver\x64\Debug\AMDVTDriver.sys

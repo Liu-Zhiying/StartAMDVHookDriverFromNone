@@ -22,6 +22,9 @@
     <ClCompile Include="main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="PageTable.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CheckAMDV.h">
@@ -30,9 +33,18 @@
     <ClInclude Include="Basic.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="PageTable.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ReadRegisters.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <MASM Include="CheckAMDV.asm">
+      <Filter>Source Files</Filter>
+    </MASM>
+    <MASM Include="ReadRegisters.asm">
       <Filter>Source Files</Filter>
     </MASM>
   </ItemGroup>

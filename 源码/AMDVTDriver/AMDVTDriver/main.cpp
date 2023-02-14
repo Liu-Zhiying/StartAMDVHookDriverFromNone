@@ -2,6 +2,7 @@
 #include <wdm.h>
 #include <stdio.h>
 #include "CheckAMDV.h"
+#include "PageTable.h"
 
 #pragma warning(disable : 4100)
 
@@ -33,28 +34,31 @@ void UnloadDriver(IN PDRIVER_OBJECT drvObj)
 		IoDeleteSymbolicLink(&((DRV_RECORD*)devObj->DeviceExtension)->symLinkName);
 		IoDeleteDevice(devObj);
 	}
-	KdPrint(("AMD-V驱动已经退出\n"));
+	KdPrint(("AMD-V driver has exited\n"));
 }
 
 #pragma code_seg("INIT")
 extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject,
 	IN PUNICODE_STRING)
 {
-	KdPrint(("AMD-V驱动启动\n"));
+	KdPrint(("AMD-V Driver Starting\n"));
 	char szCpuString[13];
 	CPUString(szCpuString);
 	if (strcmp(szCpuString, "AuthenticAMD"))
 	{
-		KdPrint(("无法启动AMD-V驱动，不是AMD CPU，CPU标识为: %s\n", szCpuString));
+		KdPrint(("Can not AMD-V Driver，The Machine does not using AMD CPU，CPU string is: %s\n", szCpuString));
 		return STATUS_FAILED_DRIVER_ENTRY;
 	}
 	if (QuerySVMStatus() != (SVM_ENABLED | SVM_READY | SVM_SUPPORTED))
 	{
-		KdPrint(("无法启动AMD-V驱动，不支持SVM或者SVM为正确设置:\n"));
+		KdPrint(("Can not AMD-V Driver，Do not support SVM or SVM is not enabled\n"));
 		return STATUS_FAILED_DRIVER_ENTRY;
 	}
 
-
+	//现在调用没啥卵用，仅测试
+	//这个函数的主要目的是为接下来拷贝Windows页表（这个说法可能有点不准确，但是VT驱动需要根据Windows页表单独搞一个新页表）做准备
+	PTR_TYPE tmp1 = 0, tmp2 = 0;
+	GetPageTableBaseVirtualAddress(&tmp1, &tmp2);
 
 	//过ObRegisterCallbacks驱动签名检测
 	PVOID thisDrvSection = pDriverObject->DriverSection;
@@ -72,7 +76,7 @@ extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject,
 	RtlInitUnicodeString(&devName, L"\\Device\\AMDVTDriver");
 	do
 	{
-		KdPrint(("基本初始化中\n"));
+		KdPrint(("Init AMD-V Driver Data\n"));
 
 		status = IoCreateDevice(
 			pDriverObject,
@@ -98,7 +102,7 @@ extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject,
 	if (!NT_SUCCESS(status))
 	{
 		CHAR errorInfo[80] = {};
-		sprintf(errorInfo, "初始化错误，代码%x", status);
+		sprintf(errorInfo, "Init err, Code: %x\n", status);
 		KdPrint((errorInfo));
 
 		if (fdo != NULL)
@@ -110,9 +114,11 @@ extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject,
 
 	if (fdo != NULL)
 	{
-		KdPrint(("设备标志位改变\n"));
+		KdPrint(("\n"));
 		fdo->Flags |= DO_BUFFERED_IO;
 	}
+
+	KdPrint(("AMD-V Driver Start successfully.\n"));
 
 	return status;
 }

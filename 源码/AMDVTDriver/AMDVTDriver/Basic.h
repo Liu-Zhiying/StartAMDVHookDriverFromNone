@@ -4,6 +4,7 @@
 #define WINDOWS_X64
 
 //头文件包含，一些基础定义
+#include <ntddk.h>
 #include <wdm.h>
 
 //在C++编译器下使用C链接
@@ -28,9 +29,11 @@ typedef long long SINT64;
 #if defined(WINDOWS_X64)
 typedef UINT64 SIZE_TYPE;
 typedef UINT64 PTR_TYPE;
+const PTR_TYPE PTR_VAL_MAX = 0xffffffffffffffff;
 #elif defined(WINDOWS_X86)
 typedef UINT32 SIZE_TYPE;
 typedef UINT32 PTR_TYPE;
+const PTR_TYPE PTR_VAL_MAX = 0xffffffff;
 #endif
 
 #endif // !BASIC_H

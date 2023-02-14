@@ -1,9 +1,0 @@
-﻿  Building 'AMDVTDriver' with toolset 'WindowsKernelModeDriver10.0' and the 'Desktop' target platform.
-  Assembling CheckAMDV.asm...
-  main.cpp
-  AMDVTDriver.vcxproj -> D:\Data\CppCode\AMDVTDriver\AMDVTDriver\x64\Debug\AMDVTDriver.sys
-  Done Adding Additional Store
-  Successfully signed: D:\Data\CppCode\AMDVTDriver\AMDVTDriver\x64\Debug\AMDVTDriver.sys
-  
-  Inf2Cat task was skipped as there were no inf files to process
-  
