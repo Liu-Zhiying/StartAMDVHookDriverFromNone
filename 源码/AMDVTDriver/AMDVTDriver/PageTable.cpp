@@ -46,3 +46,92 @@ void GetPageTableBaseVirtualAddress(PTR_TYPE* pPxeOut, PTR_TYPE* pageSizeOut)
 	KdPrint(("PageSize: 0x%llx\n", pageSize));
 	return;
 }
+
+#pragma code_seg()
+NTSTATUS AllocPageTableInfoBlock(const PT_G_INFO* pPtGInfo, PVOID* pNewBlockOut)
+{
+	ULONG tag = MAKE_TAG('p', 't', '_', '0');
+	PTR_TYPE* pMem = (PTR_TYPE*)ExAllocatePool2(POOL_FLAG_NON_PAGED, pPtGInfo->pageSize, tag);
+	if (pMem == NULL)
+	{
+		return STATUS_RESOURCE_NOT_OWNED;
+	}
+	else
+	{
+		*pNewBlockOut = pMem;
+		RtlZeroMemory(pMem, pPtGInfo->pageSize);
+		return STATUS_SUCCESS;
+	}
+}
+
+#pragma code_seg()
+void AttachPageTableInfoBlockToList(PT_G_INFO* pPtGInfo, PVOID pBlock)
+{
+	while (InterlockedCompareExchange(&pPtGInfo->lockFlag, 1, 0)) continue;
+	PTR_TYPE* pNewBlockHead = (PTR_TYPE*)pBlock;
+	PTR_TYPE* pBlockHeadInList = (PTR_TYPE*)pPtGInfo->pArrInfoList;
+	if (pPtGInfo->pArrInfoList == NULL)
+	{
+		*pNewBlockHead = (PTR_TYPE)pNewBlockHead;
+		*(pNewBlockHead + 1) = (PTR_TYPE)pNewBlockHead;
+		pPtGInfo->pArrInfoList = (PTR_TYPE)pNewBlockHead;
+	}
+	else
+	{
+		*(pNewBlockHead + 1) = (PTR_TYPE)pBlockHeadInList;
+		*pNewBlockHead = *pBlockHeadInList;
+		*(((PTR_TYPE**)(*pNewBlockHead)) + 1) = pNewBlockHead;
+		*pBlockHeadInList = (PTR_TYPE)pNewBlockHead;
+	}
+	InterlockedDecrement(&pPtGInfo->lockFlag);
+}
+
+#pragma code_seg()
+BOOLEAN DetachPageTableInfoBlockToList(PT_G_INFO* pPtGInfo, PVOID pBlock)
+{
+	while (InterlockedCompareExchange(&pPtGInfo->lockFlag, 1, 0)) continue;
+	PTR_TYPE* pBlockHeadLast = *((PTR_TYPE**)pBlock);
+	PTR_TYPE* pBlockHeadNext = *(((PTR_TYPE**)pBlock) + 1);
+	if (pBlockHeadNext == (PTR_TYPE*)pBlock && pBlockHeadLast == (PTR_TYPE*)pBlock)
+	{
+		InterlockedDecrement(&pPtGInfo->lockFlag);
+		return FALSE;
+	}
+	*(pBlockHeadLast + 1) = (PTR_TYPE)pBlockHeadNext;
+	*pBlockHeadNext = (PTR_TYPE)pBlockHeadLast;
+	if (pBlock == (PVOID)pPtGInfo->pArrInfoList)
+		pPtGInfo->pArrInfoList = (PTR_TYPE)pBlockHeadLast;
+	InterlockedDecrement(&pPtGInfo->lockFlag);
+	return TRUE;
+}
+
+#pragma code_seg()
+void FreePageTableInfoBlock(const PT_G_INFO* pPtGInfo, PVOID pBlock)
+{
+	UNREFERENCED_PARAMETER(pPtGInfo);
+	ULONG tag = MAKE_TAG('p', 't', '_', '0');
+	ExFreeMem(pBlock, tag);
+}
+
+#pragma code_seg()
+NTSTATUS InitGlobalNewPageTableInfo(PT_G_INFO* pPtGInfo)
+{
+	GetPageTableBaseVirtualAddress(&pPtGInfo->pPxe, &pPtGInfo->pageSize);
+	InterlockedExchange(&pPtGInfo->lockFlag, 0);
+	pPtGInfo->pArrInfoList = 0;
+	return STATUS_SUCCESS;
+}
+
+void DestroyPageTableInfoBlockList(PT_G_INFO* pPtGInfo)
+{
+	PVOID pBlock = (PVOID)pPtGInfo->pArrInfoList;
+	while (DetachPageTableInfoBlockToList(pPtGInfo, pBlock))
+	{
+		FreePageTableInfoBlock(pPtGInfo, pBlock);
+		pBlock = (PVOID)pPtGInfo->pArrInfoList;
+	}
+	FreePageTableInfoBlock(pPtGInfo, pBlock);
+	pPtGInfo->pageSize = 0;
+	pPtGInfo->pArrInfoList = NULL;
+	pPtGInfo->pPxe = NULL;
+}

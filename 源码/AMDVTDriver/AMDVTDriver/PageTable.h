@@ -4,6 +4,31 @@
 #include "Basic.h"
 #include "ReadRegisters.h"
 
+//分配的新页表内存信息
+typedef struct _PAGE_TABLE_INFO
+{
+	//映射的虚拟内存
+	PTR_TYPE virtAddressMapping;
+	//页表自己的虚拟内存
+	PTR_TYPE virtAddressThis;
+	//页表自己的物理内存
+	PTR_TYPE phyAddressThis;
+} PT_INFO;
+
+//VT驱动的页表全局数据
+typedef struct _PAGE_TABLE_GLOBAL_INFO
+{
+	//PXE基址
+	PTR_TYPE pPxe;
+	//页大小
+	PTR_TYPE pageSize;
+	//Windows 分配 分页内存是按照 页面分的 所以这里 存储新页表信息 的时候 会按照 页面 为单位利用
+	//比如普通的4k页内存，页头部放双向链表除外，其余部分尽可能放 PT_INFO 数据
+	PTR_TYPE pArrInfoList;
+	//锁定标记
+	volatile LONG lockFlag;
+} PT_G_INFO;
+
 //这三个用于提取页表项的数据
 //关于页表项的结构 内存映射 自映射 等等 可以 google "x86-64 page mapping" , "x86-64 page table entry structure" 和 "self refenerce"
 //现在只用了第一个，后面两个大概率也要用，先留着
@@ -18,5 +43,17 @@
 //Newbluepill中使用的是固定的页表地址——过时了
 //直接拿到pxe地址就行，其他的见函数实现结尾的输出的那一堆KdPrint
 void GetPageTableBaseVirtualAddress(PTR_TYPE* pPxeOut, PTR_TYPE* pageSizeOut);
+//初始化新页表
+NTSTATUS InitGlobalNewPageTableInfo(PT_G_INFO* pPtGInfo);
+//分配新页表信息块
+NTSTATUS AllocPageTableInfoBlock(const PT_G_INFO* pPtGInfo, PVOID* pNewBlockOut);
+//把新页表信息块加入页表信息块链表
+void AttachPageTableInfoBlockToList(PT_G_INFO* pPtGInfo, PVOID pBlock);
+//从页表信息块链表删除把新页表信息块
+BOOLEAN DetachPageTableInfoBlockToList(PT_G_INFO* pPtGInfo, PVOID pBlock);
+//释放页表信息块
+void FreePageTableInfoBlock(const PT_G_INFO* pPtGInfo, PVOID pBlock);
+//销毁页表信息块链表
+void DestroyPageTableInfoBlockList(PT_G_INFO* pPtGInfo);
 
 #endif

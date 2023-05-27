@@ -36,5 +36,13 @@ typedef UINT32 PTR_TYPE;
 const PTR_TYPE PTR_VAL_MAX = 0xffffffff;
 #endif
 
+//Windows 10 2004前后操作内存的函数有不同
+#define ExAllocateMem ExAllocatePool2
+#define ExFreeMem ExFreePoolWithTag
+
+//设置tag
+#define C_TO_U32(c) ((UINT32)(c))
+#define MAKE_TAG(c1,c2,c3,c4) (UINT32)((C_TO_U32(c4) << 24) + (C_TO_U32(c3) << 16) + (C_TO_U32(c2) << 8) + C_TO_U32(c1))
+
 #endif // !BASIC_H
 
