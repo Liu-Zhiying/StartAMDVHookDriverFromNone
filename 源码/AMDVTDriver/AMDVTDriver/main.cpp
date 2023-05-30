@@ -95,7 +95,7 @@ extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject,
 		//现在调用没啥卵用，仅测试
 		//这个函数的主要目的是为接下来拷贝Windows页表（这个说法可能有点不准确
 		//但是VT驱动需要根据Windows页表单独搞一个新页表）做准备
-		GetPageTableBaseVirtualAddress(&pGData->gPtInfo.pPxe, &pGData->gPtInfo.pageSize);
+		GetPageTableBaseVirtualAddress(&pGData->gPtInfo.pPxe);
 
 		//测试代码
 		InitGlobalNewPageTableInfo(&pGData->gPtInfo);
@@ -108,9 +108,19 @@ extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject,
 			AttachPageTableInfoBlockToList(&pGData->gPtInfo, pNewBlock);
 		if (AllocPageTableInfoBlock(&pGData->gPtInfo, &pNewBlock) == STATUS_SUCCESS)
 			AttachPageTableInfoBlockToList(&pGData->gPtInfo, pNewBlock);
-		DestroyPageTableInfoBlockList(&pGData->gPtInfo);
-		//拷贝页表
+		
 
+		PT_INFO ptInfo = {};
+		ptInfo.virtAddressMapping = 0x20;
+
+		BOOLEAN b1 = InsertPageTableInfo(&pGData->gPtInfo, &ptInfo);
+		BOOLEAN b2 = RemovePageTableInfo(&pGData->gPtInfo, &ptInfo);
+		(b1);
+		(b2);
+
+		DestroyPageTableInfoBlockList(&pGData->gPtInfo);
+
+		//拷贝页表
 
 		fdo->Flags |= DO_BUFFERED_IO;
 		KdPrint(("AMD-V Driver Start successfully.\n"));

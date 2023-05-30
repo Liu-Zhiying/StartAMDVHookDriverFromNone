@@ -1,11 +1,12 @@
 #include "PageTable.h"
 
 #pragma code_seg()
-void GetPageTableBaseVirtualAddress(PTR_TYPE* pPxeOut, PTR_TYPE* pageSizeOut)
+void GetPageTableBaseVirtualAddress(PTR_TYPE* pPxeOut)
 {
 	//读取Cr3物理地址并使用Windows内核函数转换为虚拟地址
 	//注意：MmGetVirtualForPhysical被微软标记为保留，除了名字外啥也没提
 	PTR_TYPE pxePhyAddr = ReadCr3();
+	pxePhyAddr &= 0xFFFFFFFFFFFFF000;
 
 	PHYSICAL_ADDRESS temp = {};
 	temp.QuadPart = (PTR_TYPE)pxePhyAddr;
@@ -17,49 +18,35 @@ void GetPageTableBaseVirtualAddress(PTR_TYPE* pPxeOut, PTR_TYPE* pageSizeOut)
 		return;
 	}
 
-	//这里开始 根据各级页表 的 LargePage 标志位 判断 Windows 当前的页面大小
-	//这里我并没有让Windows开启大页模式（不过操作这种东西，错了肯定炸），在4k页普通模式下测试通过
 	*pPxeOut = (PTR_TYPE)pxeVirtualAddr;
-
-	PTR_TYPE pageSize = 0x40000000;
-	UINT32 count = 2;
-
-	do
-	{
-		UINT32 shrParam = (21 + count * 9);
-		temp.QuadPart = (PTR_TYPE)pxeVirtualAddr[(*pPxeOut >> shrParam) & 0x1ff];
-		temp.QuadPart = GET_PHY_BASEARRD_IN_PAGETABLE(temp.QuadPart);
-		pxeVirtualAddr = (PTR_TYPE*)MmGetVirtualForPhysical(temp);
-		if (count-- && !(pxeVirtualAddr[(*pPxeOut >> shrParam) & 0x1ff] & 0x80))
-			pageSize >>= 9;
-		else
-			break;
-	} while (true);
-
-	*pageSizeOut = pageSize;
 
 	//显示结果
 	KdPrint(("PXE: 0x%llx\n", *pPxeOut));
 	KdPrint(("PPE: 0x%llx\n", (*pPxeOut) & 0xFFFFFFFFFFE00000));
 	KdPrint(("PDE: 0x%llx\n", (*pPxeOut) & 0xFFFFFFFFC0000000));
 	KdPrint(("PTE: 0x%llx\n", (*pPxeOut) & 0xFFFFFF1000000000));
-	KdPrint(("PageSize: 0x%llx\n", pageSize));
 	return;
 }
 
 #pragma code_seg()
-NTSTATUS AllocPageTableInfoBlock(const PT_G_INFO* pPtGInfo, PVOID* pNewBlockOut)
+NTSTATUS AllocPageTableInfoBlock(PT_G_INFO* pPtGInfo, PVOID* pNewBlockOut)
 {
+	//cas 无锁设计，下同
+	while (InterlockedCompareExchange(&pPtGInfo->lockFlag, 1, 0)) continue;
+	//内存池tag，用于内存泄漏测试
 	ULONG tag = MAKE_TAG('p', 't', '_', '0');
-	PTR_TYPE* pMem = (PTR_TYPE*)ExAllocatePool2(POOL_FLAG_NON_PAGED, pPtGInfo->pageSize, tag);
+	//老版本Windows需要修改
+	PTR_TYPE* pMem = (PTR_TYPE*)ExAllocatePool2(POOL_FLAG_NON_PAGED, PAGE_SIZE, tag);
 	if (pMem == NULL)
 	{
+		InterlockedDecrement(&pPtGInfo->lockFlag);
 		return STATUS_RESOURCE_NOT_OWNED;
 	}
 	else
 	{
 		*pNewBlockOut = pMem;
-		RtlZeroMemory(pMem, pPtGInfo->pageSize);
+		RtlZeroMemory(pMem, PAGE_SIZE);
+		InterlockedDecrement(&pPtGInfo->lockFlag);
 		return STATUS_SUCCESS;
 	}
 }
@@ -109,6 +96,7 @@ BOOLEAN DetachPageTableInfoBlockToList(PT_G_INFO* pPtGInfo, PVOID pBlock)
 void FreePageTableInfoBlock(const PT_G_INFO* pPtGInfo, PVOID pBlock)
 {
 	UNREFERENCED_PARAMETER(pPtGInfo);
+	//内存释放tag
 	ULONG tag = MAKE_TAG('p', 't', '_', '0');
 	ExFreeMem(pBlock, tag);
 }
@@ -116,7 +104,7 @@ void FreePageTableInfoBlock(const PT_G_INFO* pPtGInfo, PVOID pBlock)
 #pragma code_seg()
 NTSTATUS InitGlobalNewPageTableInfo(PT_G_INFO* pPtGInfo)
 {
-	GetPageTableBaseVirtualAddress(&pPtGInfo->pPxe, &pPtGInfo->pageSize);
+	GetPageTableBaseVirtualAddress(&pPtGInfo->pPxe);
 	InterlockedExchange(&pPtGInfo->lockFlag, 0);
 	pPtGInfo->pArrInfoList = 0;
 	return STATUS_SUCCESS;
@@ -131,7 +119,60 @@ void DestroyPageTableInfoBlockList(PT_G_INFO* pPtGInfo)
 		pBlock = (PVOID)pPtGInfo->pArrInfoList;
 	}
 	FreePageTableInfoBlock(pPtGInfo, pBlock);
-	pPtGInfo->pageSize = 0;
 	pPtGInfo->pArrInfoList = NULL;
 	pPtGInfo->pPxe = NULL;
+}
+
+BOOLEAN ComparePtInfo(const PT_INFO* pPtInfo1, const PT_INFO* pPtInfo2)
+{
+	return pPtInfo1->phyAddressThis == pPtInfo2->phyAddressThis &&
+		pPtInfo1->virtAddressMapping == pPtInfo2->virtAddressMapping &&
+		pPtInfo1->virtAddressThis == pPtInfo2->virtAddressThis;
+}
+
+BOOLEAN InsertPageTableInfo(PT_G_INFO* pPtGInfo, const PT_INFO* pPtInfo)
+{
+	BOOLEAN bResult = FALSE;
+	while (InterlockedCompareExchange(&pPtGInfo->lockFlag, 1, 0)) continue;
+	PTR_TYPE* pStartBlock = (PTR_TYPE*)pPtGInfo->pArrInfoList, * pEndBlock = pStartBlock;
+	do
+	{
+		PTR_TYPE count = (PTR_TYPE) * (pStartBlock + 2);
+		PT_INFO* pPtInfoStart = (PT_INFO*)(pStartBlock + 3);
+		if ((PAGE_SIZE - sizeof * pPtInfoStart * (count + 1)) > sizeof * pPtInfoStart)
+		{
+			bResult = TRUE;
+			pPtInfoStart[count + 1] = *pPtInfo;
+			++(*(pStartBlock + 2));
+		}
+		pStartBlock = (PTR_TYPE*)*pStartBlock;
+	} while (pStartBlock != pEndBlock);
+	InterlockedDecrement(&pPtGInfo->lockFlag);
+	return bResult;
+}
+
+BOOLEAN RemovePageTableInfo(PT_G_INFO* pPtGInfo, const PT_INFO* pPtInfo)
+{
+	BOOLEAN bResult = FALSE;
+	while (InterlockedCompareExchange(&pPtGInfo->lockFlag, 1, 0)) continue;
+	PTR_TYPE* pStartBlock = (PTR_TYPE*)pPtGInfo->pArrInfoList, *pEndBlock = pStartBlock;
+	do
+	{
+		PTR_TYPE index = 0, count = (PTR_TYPE) * (pStartBlock + 2);
+		PT_INFO* pPtInfoStart = (PT_INFO*)(pStartBlock + 3);
+		while (index < count)
+		{
+			if (ComparePtInfo(&pPtInfoStart[index], pPtInfo))
+			{
+				bResult = TRUE;
+				PTR_TYPE copyBytes = sizeof *pPtInfoStart * (count - index - 1);
+				if (copyBytes)
+					RtlCopyMemory(&pPtInfoStart[index], &pPtInfoStart[index + 1], copyBytes);
+			}
+			++index;
+		}
+		pStartBlock = (PTR_TYPE*)*pStartBlock;
+	} while (pStartBlock != pEndBlock);
+	InterlockedDecrement(&pPtGInfo->lockFlag);
+	return bResult;
 }
