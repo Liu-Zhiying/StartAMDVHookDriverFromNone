@@ -71,7 +71,9 @@ extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject,
 			break;
 		}
 
-		if (QuerySVMStatus() != (SVM_ENABLED | SVM_READY | SVM_SUPPORTED))
+		//SVM Ready 在我的主板上不可用
+
+		if (QuerySVMStatus() != (SVM_ENABLED | SVM_SUPPORTED))
 		{
 			KdPrint(("Can not AMD-V Driver，Do not support SVM or SVM is not enabled\n"));
 			status = STATUS_FAILED_DRIVER_ENTRY;

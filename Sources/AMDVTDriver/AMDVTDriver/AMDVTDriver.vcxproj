@@ -89,6 +89,7 @@
     <FilesToPackage Include="$(TargetPath)" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="CheckAMDV.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="PageTable.cpp" />
   </ItemGroup>
@@ -96,15 +97,6 @@
     <ClInclude Include="Basic.h" />
     <ClInclude Include="CheckAMDV.h" />
     <ClInclude Include="PageTable.h" />
-    <ClInclude Include="ReadRegisters.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <MASM Include="CheckAMDV.asm" />
-  </ItemGroup>
-  <ItemGroup>
-    <MASM Include="ReadRegisters.asm">
-      <FileType>Document</FileType>
-    </MASM>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

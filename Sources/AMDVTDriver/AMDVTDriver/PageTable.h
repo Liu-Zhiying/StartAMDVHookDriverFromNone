@@ -2,7 +2,6 @@
 #define PAGE_TABLE_H
 
 #include "Basic.h"
-#include "ReadRegisters.h"
 
 //分配的新页表内存信息
 typedef struct _PAGE_TABLE_INFO

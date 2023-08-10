@@ -1,11 +1,12 @@
 #include "PageTable.h"
+#include <intrin.h>
 
 #pragma code_seg()
 void GetPageTableBaseVirtualAddress(PTR_TYPE* pPxeOut)
 {
 	//读取Cr3物理地址并使用Windows内核函数转换为虚拟地址
 	//注意：MmGetVirtualForPhysical被微软标记为保留，除了名字外啥也没提
-	PTR_TYPE pxePhyAddr = ReadCr3();
+	PTR_TYPE pxePhyAddr = __readcr3();
 	pxePhyAddr &= 0xFFFFFFFFFFFFF000;
 
 	PHYSICAL_ADDRESS temp = {};
@@ -24,7 +25,7 @@ void GetPageTableBaseVirtualAddress(PTR_TYPE* pPxeOut)
 	KdPrint(("PXE: 0x%llx\n", *pPxeOut));
 	KdPrint(("PPE: 0x%llx\n", (*pPxeOut) & 0xFFFFFFFFFFE00000));
 	KdPrint(("PDE: 0x%llx\n", (*pPxeOut) & 0xFFFFFFFFC0000000));
-	KdPrint(("PTE: 0x%llx\n", (*pPxeOut) & 0xFFFFFF1000000000));
+	KdPrint(("PTE: 0x%llx\n", (*pPxeOut) & 0xFFFFFF8000000000));
 	return;
 }
 
