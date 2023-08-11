@@ -97,6 +97,7 @@
     <ClInclude Include="Basic.h" />
     <ClInclude Include="CheckAMDV.h" />
     <ClInclude Include="PageTable.h" />
+    <ClInclude Include="Vmcb.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

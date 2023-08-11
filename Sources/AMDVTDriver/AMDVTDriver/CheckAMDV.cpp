@@ -9,6 +9,7 @@ C_LINK void CPUString(char* outputString)
 	memcpy(outputString, &cpuid_result[1], sizeof(UINT32));
 	memcpy(outputString + sizeof(UINT32), &cpuid_result[3], sizeof(UINT32));
 	memcpy(outputString + sizeof(UINT32) * 2, &cpuid_result[2], sizeof(UINT32));
+	outputString[3 * sizeof(UINT32)] = 0;
 }
 
 C_LINK UINT32 QuerySVMStatus()

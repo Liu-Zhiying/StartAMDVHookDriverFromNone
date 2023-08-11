@@ -71,8 +71,6 @@ extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject,
 			break;
 		}
 
-		//SVM Ready 在我的主板上不可用
-
 		if (QuerySVMStatus() != (SVM_ENABLED | SVM_SUPPORTED))
 		{
 			KdPrint(("Can not AMD-V Driver，Do not support SVM or SVM is not enabled\n"));
@@ -99,30 +97,28 @@ extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject,
 		//但是VT驱动需要根据Windows页表单独搞一个新页表）做准备
 		GetPageTableBaseVirtualAddress(&pGData->gPtInfo.pPxe);
 
-		//测试代码
-		InitGlobalNewPageTableInfo(&pGData->gPtInfo);
-		PVOID pNewBlock = NULL;
-		if (AllocPageTableInfoBlock(&pGData->gPtInfo, &pNewBlock) == STATUS_SUCCESS)
-			AttachPageTableInfoBlockToList(&pGData->gPtInfo, pNewBlock);
-		if (AllocPageTableInfoBlock(&pGData->gPtInfo, &pNewBlock) == STATUS_SUCCESS)
-			AttachPageTableInfoBlockToList(&pGData->gPtInfo, pNewBlock);
-		if (AllocPageTableInfoBlock(&pGData->gPtInfo, &pNewBlock) == STATUS_SUCCESS)
-			AttachPageTableInfoBlockToList(&pGData->gPtInfo, pNewBlock);
-		if (AllocPageTableInfoBlock(&pGData->gPtInfo, &pNewBlock) == STATUS_SUCCESS)
-			AttachPageTableInfoBlockToList(&pGData->gPtInfo, pNewBlock);
-		
+		////测试代码
+		//InitGlobalNewPageTableInfo(&pGData->gPtInfo);
+		//PVOID pNewBlock = NULL;
+		//if (AllocPageTableInfoBlock(&pGData->gPtInfo, &pNewBlock) == STATUS_SUCCESS)
+		//	AttachPageTableInfoBlockToList(&pGData->gPtInfo, pNewBlock);
+		//if (AllocPageTableInfoBlock(&pGData->gPtInfo, &pNewBlock) == STATUS_SUCCESS)
+		//	AttachPageTableInfoBlockToList(&pGData->gPtInfo, pNewBlock);
+		//if (AllocPageTableInfoBlock(&pGData->gPtInfo, &pNewBlock) == STATUS_SUCCESS)
+		//	AttachPageTableInfoBlockToList(&pGData->gPtInfo, pNewBlock);
+		//if (AllocPageTableInfoBlock(&pGData->gPtInfo, &pNewBlock) == STATUS_SUCCESS)
+		//	AttachPageTableInfoBlockToList(&pGData->gPtInfo, pNewBlock);
+		//
 
-		PT_INFO ptInfo = {};
-		ptInfo.virtAddressMapping = 0x20;
+		//PT_INFO ptInfo = {};
+		//ptInfo.virtAddressMapping = 0x20;
 
-		BOOLEAN b1 = InsertPageTableInfo(&pGData->gPtInfo, &ptInfo);
-		BOOLEAN b2 = RemovePageTableInfo(&pGData->gPtInfo, &ptInfo);
-		(b1);
-		(b2);
+		//BOOLEAN b1 = InsertPageTableInfo(&pGData->gPtInfo, &ptInfo);
+		//BOOLEAN b2 = RemovePageTableInfo(&pGData->gPtInfo, &ptInfo);
+		//(b1);
+		//(b2);
 
-		DestroyPageTableInfoBlockList(&pGData->gPtInfo);
-
-		//拷贝页表
+		//DestroyPageTableInfoBlockList(&pGData->gPtInfo);
 
 		fdo->Flags |= DO_BUFFERED_IO;
 		KdPrint(("AMD-V Driver Start successfully.\n"));
@@ -145,5 +141,5 @@ extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject,
 		}
 	}
 
-	return status;
+	return STATUS_SUCCESS;
 }

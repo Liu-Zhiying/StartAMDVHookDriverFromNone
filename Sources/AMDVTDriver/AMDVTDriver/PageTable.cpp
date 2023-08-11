@@ -9,6 +9,44 @@ void GetPageTableBaseVirtualAddress(PTR_TYPE* pPxeOut)
 	PTR_TYPE pxePhyAddr = __readcr3();
 	pxePhyAddr &= 0xFFFFFFFFFFFFF000;
 
+	PTR_TYPE testAddr = NULL;
+	PTR_TYPE testPhyAddr = NULL;
+	BOOLEAN matchedPxe = FALSE;
+
+	//通过测试内存页面和物理地址确认自映射页表编号
+	PTR_TYPE index = 0;
+	for (index = 0; index < 0x200; index++)
+	{
+		//构造可能的pxe地址
+		testAddr = 0xFFFF000000000000;
+		testAddr |= index << 39 | index << 30 | index << 21 | index << 12;
+
+		//确认可以读
+		if (MmIsAddressValid((PVOID)testAddr))
+		{
+			// MmIsAddressValid 只对非分页 但是 页表 一定是 非分页内存 直接通过范围确认在Pxe表内
+			testPhyAddr = MmGetPhysicalAddress((PVOID)testAddr).QuadPart;
+
+			if (testPhyAddr == pxePhyAddr)
+			{
+				matchedPxe = TRUE;
+				break;
+			}
+		}
+	}
+
+	if (!matchedPxe)
+	{
+		KdPrint(("Unmatched PXE\n"));
+		return;
+	}
+
+	*pPxeOut = testAddr;
+
+	/*
+
+	老版代码，使用了微软的保留API
+
 	PHYSICAL_ADDRESS temp = {};
 	temp.QuadPart = (PTR_TYPE)pxePhyAddr;
 
@@ -21,11 +59,14 @@ void GetPageTableBaseVirtualAddress(PTR_TYPE* pPxeOut)
 
 	*pPxeOut = (PTR_TYPE)pxeVirtualAddr;
 
+	*/
+
 	//显示结果
 	KdPrint(("PXE: 0x%llx\n", *pPxeOut));
 	KdPrint(("PPE: 0x%llx\n", (*pPxeOut) & 0xFFFFFFFFFFE00000));
 	KdPrint(("PDE: 0x%llx\n", (*pPxeOut) & 0xFFFFFFFFC0000000));
 	KdPrint(("PTE: 0x%llx\n", (*pPxeOut) & 0xFFFFFF8000000000));
+
 	return;
 }
 
@@ -156,7 +197,7 @@ BOOLEAN RemovePageTableInfo(PT_G_INFO* pPtGInfo, const PT_INFO* pPtInfo)
 {
 	BOOLEAN bResult = FALSE;
 	while (InterlockedCompareExchange(&pPtGInfo->lockFlag, 1, 0)) continue;
-	PTR_TYPE* pStartBlock = (PTR_TYPE*)pPtGInfo->pArrInfoList, *pEndBlock = pStartBlock;
+	PTR_TYPE* pStartBlock = (PTR_TYPE*)pPtGInfo->pArrInfoList, * pEndBlock = pStartBlock;
 	do
 	{
 		PTR_TYPE index = 0, count = (PTR_TYPE) * (pStartBlock + 2);
@@ -166,7 +207,7 @@ BOOLEAN RemovePageTableInfo(PT_G_INFO* pPtGInfo, const PT_INFO* pPtInfo)
 			if (ComparePtInfo(&pPtInfoStart[index], pPtInfo))
 			{
 				bResult = TRUE;
-				PTR_TYPE copyBytes = sizeof *pPtInfoStart * (count - index - 1);
+				PTR_TYPE copyBytes = sizeof * pPtInfoStart * (count - index - 1);
 				if (copyBytes)
 					RtlCopyMemory(&pPtInfoStart[index], &pPtInfoStart[index + 1], copyBytes);
 			}
