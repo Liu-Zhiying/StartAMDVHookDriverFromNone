@@ -12,7 +12,7 @@ enum Opcode1InterceptBits
 	SMI = 0x4,
 	INIT = 0x8,
 	VINITR = 0x10,
-	//这个特殊 指的是 CR0 除了 bit 1 (CR0.MP) 和 bit 3 (CR0.TS) 之外的big 更改
+	//这个特殊 指的是 CR0 除了 bit 1 (CR0.MP) 和 bit 3 (CR0.TS) 之外的 bit 更改
 	CR0_CHANGE_NOT_TSMP = 0x20,
 	ReadIDTR = 0x40,
 	ReadGDTR = 0x80,
