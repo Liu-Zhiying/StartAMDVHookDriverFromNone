@@ -80,26 +80,99 @@ enum Opcode2InterceptBits
 	WriteCR15 = 0x80000000,
 };
 
-struct VIntr
+union VIntr
 {
-	UINT8 V_IPR;
-	UINT8 V_IRQ : 1;
-	UINT8 V_GIF : 1;
-	UINT8 reservedBit : 1;
-	UINT8 V_NMI : 1;
-	UINT8 V_NMI_MASK : 1;
-	UINT8 reservedBits1 : 3;
-	UINT8 V_INTR_PRIO : 4;
-	UINT8 V_IGN_TPR : 1;
-	UINT8 reservedBits2 : 3;
-	UINT8 V_INTR_MASKING : 1;
-	UINT8 EnableGIFForGuest : 1;
-	UINT8 V_NMI_ENABLE : 1;
-	UINT8 ReservedBits3 : 3;
-	UINT8 enableX2AVIC : 1;
-	UINT8 enableAVIC : 1;
-	UINT8 V_INTR_VECTOR;
-	UINT8 reservedBits4[3];
+	UINT64 data;
+	struct
+	{
+		UINT8 V_IPR;
+		UINT8 V_IRQ : 1;
+		UINT8 V_GIF : 1;
+		UINT8 reservedBit : 1;
+		UINT8 V_NMI : 1;
+		UINT8 V_NMI_MASK : 1;
+		UINT8 reservedBits1 : 3;
+		UINT8 V_INTR_PRIO : 4;
+		UINT8 V_IGN_TPR : 1;
+		UINT8 reservedBits2 : 3;
+		UINT8 V_INTR_MASKING : 1;
+		UINT8 EnableGIFForGuest : 1;
+		UINT8 V_NMI_ENABLE : 1;
+		UINT8 ReservedBits3 : 3;
+		UINT8 enableX2AVIC : 1;
+		UINT8 enableAVIC : 1;
+		UINT8 V_INTR_VECTOR;
+		UINT8 reservedBits4[3];
+	} fields;
+};
+
+union InterruptBits
+{
+	UINT64 data;
+	struct
+	{
+		UINT8 INTERRUCT_SHADOW : 1;
+		UINT8 GUEST_INTERRUTP_MASK : 1;
+		UINT64 reservedBits : 62;
+	} fields;
+};
+
+union SVMExtendFeatureBits1
+{
+	UINT64 data;
+	struct 
+	{
+		UINT8 enableNestedPage : 1;
+		UINT8 enableSecureEncrypted : 1;
+		UINT8 enableSecureEncryptedState : 1;
+		UINT8 guestModeExecuteTrap : 1;
+		UINT8 enableSSSCheck : 1;
+		UINT8 virtualTransparentTrap : 1;
+		UINT8 enableReadonlyGuestPage : 1;
+		UINT8 INVLPGB_TLBSYNC_AS_UD : 1;
+		UINT8 reservedBits[7];
+	} fields;
+};
+
+union AVIC_BAR
+{
+	UINT64 data;
+	struct 
+	{
+		UINT64 APIC_BAR : 52;
+		UINT64 reservedBits : 12;
+	} fields;
+};
+
+union EventInj
+{
+	UINT64 data;
+	struct
+	{
+		UINT8 vector : 8;
+		UINT8 type : 3;
+		UINT8 ev : 1;
+		UINT8 resvd1 : 19;
+		UINT8 v : 1;
+		UINT64 errorcode : 32;
+	} fields;
+};
+
+struct SVMExtendFeatureBits2
+{
+	UINT64 data;
+	struct
+	{
+		UINT8 enableLBRVirtualcation : 1;
+		UINT8 enableVirtualized_VMSAVE_VMLOAD : 1;
+		UINT8 reservedBits : 62;
+	} fields;
+};
+
+struct VMCBCleanBits
+{
+	UINT32 bits;
+	UINT32 reservedBits;
 };
 
 struct VMCB
@@ -117,6 +190,7 @@ struct VMCB
 	//特殊指令的中断
 	UINT32 interceptOpcodes1;
 	UINT32 interceptOpcodes2;
+	//保留不使用
 	UINT8 reserved1[0x24];
 	UINT16 pauseFilterTheshold;
 	UINT16 pauseFilterCount;
@@ -127,6 +201,19 @@ struct VMCB
 	UINT8 tlbControl;
 	UINT8 reserved2[3];
 	VIntr vintr;
+	InterruptBits interruptBIts;
+	UINT64 exitCode;
+	UINT64 exitInfo1;
+	UINT64 exitInfo2;
+	UINT64 exitIntInfo;
+	SVMExtendFeatureBits1 extendFeatures1;
+	AVIC_BAR avic;
+	UINT64 physicalAddressGHCB;
+	EventInj eventInj;
+	UINT64 n_Cr3;
+	SVMExtendFeatureBits2 extendFeatures2;
+	VMCBCleanBits cleanBits;
+	UINT64 n_Rip;
 };
 
 #endif
