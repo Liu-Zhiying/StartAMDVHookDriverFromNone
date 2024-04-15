@@ -25,14 +25,14 @@
     <ClCompile Include="PageTable.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="CheckAMDV.cpp">
+    <ClCompile Include="SVM.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Basic.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="CheckAMDV.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="Basic.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -40,6 +40,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="Vmcb.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SVM.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

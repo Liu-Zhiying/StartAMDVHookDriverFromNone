@@ -89,14 +89,15 @@
     <FilesToPackage Include="$(TargetPath)" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="CheckAMDV.cpp" />
+    <ClCompile Include="Basic.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="PageTable.cpp" />
+    <ClCompile Include="SVM.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Basic.h" />
-    <ClInclude Include="CheckAMDV.h" />
     <ClInclude Include="PageTable.h" />
+    <ClInclude Include="SVM.h" />
     <ClInclude Include="Vmcb.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

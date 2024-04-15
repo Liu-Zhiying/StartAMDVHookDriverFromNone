@@ -1,9 +1,39 @@
 #include "PageTable.h"
 #include <intrin.h>
 
+//页表项标志位判断
+//见https://www.iaik.tugraz.at/teaching/materials/os/tutorials/paging-on-intel-x86-64/
+//这个判断的方式会修改
+#define GET_PHY_BASEARRD_IN_PAGETABLE(item) (((PTR_TYPE)(item)) & 0x7FFFFFF000)
+//页表项目是否映射内存
+#define IS_PAGETABLE_ITEM_ACCESSABLE(item) (((PTR_TYPE)(item)) & 0x20)
+//页表项目的数据是否启用（如果这个判断失败，前两个（和其他页表项数据）全部作废）
+#define IS_PAGETABLE_ITEM_PRESENT(item) (((PTR_TYPE)(item)) & 0x1)
+
+const ULONG ptTag = MAKE_TAG('p', 't', 'm', ' ');
+
+//封装一下Windows内核内存分配函数
 #pragma code_seg()
-void GetPageTableBaseVirtualAddress(PTR_TYPE* pPxeOut)
+PVOID AllocNonPagedMem(SIZE_T byteCnt)
 {
+#ifdef _BUILD_WIN_2004
+	return ExAllocatePool2(POOL_FLAG_NON_PAGED, byteCnt, ptTag);
+#else
+	return ExAllocatePoolWithTag(POOL_TYPE::NonPagedPool, byteCnt, ptTag);
+#endif
+}
+
+#pragma code_seg()
+void FreeNonPagedMem(PVOID pMem)
+{
+	ExFreePoolWithTag(pMem, ptTag);
+}
+
+//获取页表基地址（虚拟地址）
+#pragma code_seg("PAGE")
+void GetSysPXEVirtAddr(PTR_TYPE* pPxeOut)
+{
+	PAGED_CODE();
 	//读取Cr3物理地址并使用Windows内核函数转换为虚拟地址
 	//注意：MmGetVirtualForPhysical被微软标记为保留，除了名字外啥也没提
 	PTR_TYPE pxePhyAddr = __readcr3();
@@ -37,12 +67,12 @@ void GetPageTableBaseVirtualAddress(PTR_TYPE* pPxeOut)
 
 	if (!matchedPxe)
 	{
-		KdPrint(("Unmatched PXE\n"));
+		*pPxeOut = NULL;
 		return;
 	}
-
+	
 	*pPxeOut = testAddr;
-
+	
 	/*
 
 	老版代码，使用了微软的保留API
@@ -62,159 +92,39 @@ void GetPageTableBaseVirtualAddress(PTR_TYPE* pPxeOut)
 	*/
 
 	//显示结果
-	KdPrint(("PXE: 0x%llx\n", *pPxeOut));
-	KdPrint(("PPE: 0x%llx\n", (*pPxeOut) & 0xFFFFFFFFFFE00000));
-	KdPrint(("PDE: 0x%llx\n", (*pPxeOut) & 0xFFFFFFFFC0000000));
-	KdPrint(("PTE: 0x%llx\n", (*pPxeOut) & 0xFFFFFF8000000000));
+	KdPrint(("GetWinPageTableVirtualAddr(): PXE: 0x%llx\n", *pPxeOut));
+	KdPrint(("GetWinPageTableVirtualAddr(): PPE: 0x%llx\n", (*pPxeOut) & 0xFFFFFFFFFFE00000));
+	KdPrint(("GetWinPageTableVirtualAddr(): PDE: 0x%llx\n", (*pPxeOut) & 0xFFFFFFFFC0000000));
+	KdPrint(("GetWinPageTableVirtualAddr(): PTE: 0x%llx\n", (*pPxeOut) & 0xFFFFFF8000000000));
 
 	return;
 }
 
-#pragma code_seg()
-NTSTATUS AllocPageTableInfoBlock(PT_G_INFO* pPtGInfo, PVOID* pNewBlockOut)
+#pragma code_seg("PAGE")
+NTSTATUS PageTableManager::Init()
 {
-	//cas 无锁设计，下同
-	while (InterlockedCompareExchange(&pPtGInfo->lockFlag, 1, 0)) continue;
-	//内存池tag，用于内存泄漏测试
-	ULONG tag = MAKE_TAG('p', 't', '_', '0');
-	//老版本Windows需要修改
-	PTR_TYPE* pMem = (PTR_TYPE*)ExAllocatePool2(POOL_FLAG_NON_PAGED, PAGE_SIZE, tag);
-	if (pMem == NULL)
-	{
-		InterlockedDecrement(&pPtGInfo->lockFlag);
-		return STATUS_RESOURCE_NOT_OWNED;
-	}
-	else
-	{
-		*pNewBlockOut = pMem;
-		RtlZeroMemory(pMem, PAGE_SIZE);
-		InterlockedDecrement(&pPtGInfo->lockFlag);
-		return STATUS_SUCCESS;
-	}
-}
+	PAGED_CODE();
+	NTSTATUS status = STATUS_SUCCESS;
 
-#pragma code_seg()
-void AttachPageTableInfoBlockToList(PT_G_INFO* pPtGInfo, PVOID pBlock)
-{
-	while (InterlockedCompareExchange(&pPtGInfo->lockFlag, 1, 0)) continue;
-	PTR_TYPE* pNewBlockHead = (PTR_TYPE*)pBlock;
-	PTR_TYPE* pBlockHeadInList = (PTR_TYPE*)pPtGInfo->pArrInfoList;
-	if (pPtGInfo->pArrInfoList == NULL)
-	{
-		*pNewBlockHead = (PTR_TYPE)pNewBlockHead;
-		*(pNewBlockHead + 1) = (PTR_TYPE)pNewBlockHead;
-		pPtGInfo->pArrInfoList = (PTR_TYPE)pNewBlockHead;
-	}
-	else
-	{
-		*(pNewBlockHead + 1) = (PTR_TYPE)pBlockHeadInList;
-		*pNewBlockHead = *pBlockHeadInList;
-		*(((PTR_TYPE**)(*pNewBlockHead)) + 1) = pNewBlockHead;
-		*pBlockHeadInList = (PTR_TYPE)pNewBlockHead;
-	}
-	InterlockedDecrement(&pPtGInfo->lockFlag);
-}
-
-#pragma code_seg()
-BOOLEAN DetachPageTableInfoBlockToList(PT_G_INFO* pPtGInfo, PVOID pBlock)
-{
-	while (InterlockedCompareExchange(&pPtGInfo->lockFlag, 1, 0)) continue;
-	PTR_TYPE* pBlockHeadLast = *((PTR_TYPE**)pBlock);
-	PTR_TYPE* pBlockHeadNext = *(((PTR_TYPE**)pBlock) + 1);
-	if (pBlockHeadNext == (PTR_TYPE*)pBlock && pBlockHeadLast == (PTR_TYPE*)pBlock)
-	{
-		InterlockedDecrement(&pPtGInfo->lockFlag);
-		return FALSE;
-	}
-	*(pBlockHeadLast + 1) = (PTR_TYPE)pBlockHeadNext;
-	*pBlockHeadNext = (PTR_TYPE)pBlockHeadLast;
-	if (pBlock == (PVOID)pPtGInfo->pArrInfoList)
-		pPtGInfo->pArrInfoList = (PTR_TYPE)pBlockHeadLast;
-	InterlockedDecrement(&pPtGInfo->lockFlag);
-	return TRUE;
-}
-
-#pragma code_seg()
-void FreePageTableInfoBlock(const PT_G_INFO* pPtGInfo, PVOID pBlock)
-{
-	UNREFERENCED_PARAMETER(pPtGInfo);
-	//内存释放tag
-	ULONG tag = MAKE_TAG('p', 't', '_', '0');
-	ExFreeMem(pBlock, tag);
-}
-
-#pragma code_seg()
-NTSTATUS InitGlobalNewPageTableInfo(PT_G_INFO* pPtGInfo)
-{
-	GetPageTableBaseVirtualAddress(&pPtGInfo->pPxe);
-	InterlockedExchange(&pPtGInfo->lockFlag, 0);
-	pPtGInfo->pArrInfoList = 0;
-	return STATUS_SUCCESS;
-}
-
-void DestroyPageTableInfoBlockList(PT_G_INFO* pPtGInfo)
-{
-	PVOID pBlock = (PVOID)pPtGInfo->pArrInfoList;
-	while (DetachPageTableInfoBlockToList(pPtGInfo, pBlock))
-	{
-		FreePageTableInfoBlock(pPtGInfo, pBlock);
-		pBlock = (PVOID)pPtGInfo->pArrInfoList;
-	}
-	FreePageTableInfoBlock(pPtGInfo, pBlock);
-	pPtGInfo->pArrInfoList = NULL;
-	pPtGInfo->pPxe = NULL;
-}
-
-BOOLEAN ComparePtInfo(const PT_INFO* pPtInfo1, const PT_INFO* pPtInfo2)
-{
-	return pPtInfo1->phyAddressThis == pPtInfo2->phyAddressThis &&
-		pPtInfo1->virtAddressMapping == pPtInfo2->virtAddressMapping &&
-		pPtInfo1->virtAddressThis == pPtInfo2->virtAddressThis;
-}
-
-BOOLEAN InsertPageTableInfo(PT_G_INFO* pPtGInfo, const PT_INFO* pPtInfo)
-{
-	BOOLEAN bResult = FALSE;
-	while (InterlockedCompareExchange(&pPtGInfo->lockFlag, 1, 0)) continue;
-	PTR_TYPE* pStartBlock = (PTR_TYPE*)pPtGInfo->pArrInfoList, * pEndBlock = pStartBlock;
 	do
 	{
-		PTR_TYPE count = (PTR_TYPE) * (pStartBlock + 2);
-		PT_INFO* pPtInfoStart = (PT_INFO*)(pStartBlock + 3);
-		if ((PAGE_SIZE - sizeof * pPtInfoStart * (count + 1)) > sizeof * pPtInfoStart)
+		//获取Windows页表地址
+		//Windows 10 1607之后有页表随机化，确认随机化之后的页表基址
+		GetSysPXEVirtAddr(&pSystemPxe);
+		if (pSystemPxe == NULL)
 		{
-			bResult = TRUE;
-			pPtInfoStart[count + 1] = *pPtInfo;
-			++(*(pStartBlock + 2));
+			KdPrint(("PageTableManager::Init(): Can not find system PXE virtual address."));
+			status = STATUS_INVALID_PARAMETER;
+			break;
 		}
-		pStartBlock = (PTR_TYPE*)*pStartBlock;
-	} while (pStartBlock != pEndBlock);
-	InterlockedDecrement(&pPtGInfo->lockFlag);
-	return bResult;
+
+	} while (false);
+
+	return status;
 }
 
-BOOLEAN RemovePageTableInfo(PT_G_INFO* pPtGInfo, const PT_INFO* pPtInfo)
+#pragma code_seg("PAGE")
+void PageTableManager::Deinit()
 {
-	BOOLEAN bResult = FALSE;
-	while (InterlockedCompareExchange(&pPtGInfo->lockFlag, 1, 0)) continue;
-	PTR_TYPE* pStartBlock = (PTR_TYPE*)pPtGInfo->pArrInfoList, * pEndBlock = pStartBlock;
-	do
-	{
-		PTR_TYPE index = 0, count = (PTR_TYPE) * (pStartBlock + 2);
-		PT_INFO* pPtInfoStart = (PT_INFO*)(pStartBlock + 3);
-		while (index < count)
-		{
-			if (ComparePtInfo(&pPtInfoStart[index], pPtInfo))
-			{
-				bResult = TRUE;
-				PTR_TYPE copyBytes = sizeof * pPtInfoStart * (count - index - 1);
-				if (copyBytes)
-					RtlCopyMemory(&pPtInfoStart[index], &pPtInfoStart[index + 1], copyBytes);
-			}
-			++index;
-		}
-		pStartBlock = (PTR_TYPE*)*pStartBlock;
-	} while (pStartBlock != pEndBlock);
-	InterlockedDecrement(&pPtGInfo->lockFlag);
-	return bResult;
+	PAGED_CODE();
 }
