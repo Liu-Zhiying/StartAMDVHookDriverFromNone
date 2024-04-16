@@ -9,7 +9,6 @@
 
 //头文件包含，一些基础定义
 #include <ntddk.h>
-#include <wdm.h>
 
 //一些类型别名
 typedef unsigned char UINT8;
@@ -65,6 +64,8 @@ SIZE_T GetArrayElementCnt(T (&)[n])
 {
 	return n;
 }
+
+const PHYSICAL_ADDRESS highestPhyAddr { (ULONG)- 1,-1};
 
 #endif // !BASIC_H
 

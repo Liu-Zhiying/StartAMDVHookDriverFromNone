@@ -98,7 +98,10 @@
     <ClInclude Include="Basic.h" />
     <ClInclude Include="PageTable.h" />
     <ClInclude Include="SVM.h" />
-    <ClInclude Include="Vmcb.h" />
+    <ClInclude Include="VMCB.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <MASM Include="SVM_asm.asm" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

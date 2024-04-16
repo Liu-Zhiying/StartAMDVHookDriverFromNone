@@ -39,11 +39,16 @@
     <ClInclude Include="PageTable.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Vmcb.h">
+    <ClInclude Include="VMCB.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="SVM.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <MASM Include="SVM_asm.asm">
+      <Filter>Source Files</Filter>
+    </MASM>
   </ItemGroup>
 </Project>

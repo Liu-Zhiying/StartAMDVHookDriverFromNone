@@ -13,7 +13,7 @@ enum Opcode1InterceptBits
 	INIT = 0x8,
 	VINITR = 0x10,
 	//这个特殊 指的是 CR0 除了 bit 1 (CR0.MP) 和 bit 3 (CR0.TS) 之外的 bit 更改
-	CR0_CHANGE_NOT_TSMP = 0x20,
+	ChangeNonTsMpCr0 = 0x20,
 	ReadIDTR = 0x40,
 	ReadGDTR = 0x80,
 	ReadLDTR = 0x100,
@@ -29,7 +29,8 @@ enum Opcode1InterceptBits
 	CPUID = 0x40000,
 	RSM = 0x80000,
 	IRET = 0x100000,
-	INT = 0x200000,
+	//int指令，和内置定义的INT类型冲突，改为INTn，n代表中断号
+	INTn = 0x200000,
 	INVD = 0x400000,
 	PAUSE = 0x800000,
 	HLT = 0x1000000,
@@ -85,23 +86,23 @@ union VIntr
 	UINT64 data;
 	struct
 	{
-		UINT8 V_IPR;
-		UINT8 V_IRQ : 1;
-		UINT8 V_GIF : 1;
+		UINT8 vipr;
+		UINT8 virq : 1;
+		UINT8 vgif : 1;
 		UINT8 reservedBit : 1;
-		UINT8 V_NMI : 1;
-		UINT8 V_NMI_MASK : 1;
+		UINT8 vnmi : 1;
+		UINT8 vnmiMask : 1;
 		UINT8 reservedBits1 : 3;
-		UINT8 V_INTR_PRIO : 4;
-		UINT8 V_IGN_TPR : 1;
+		UINT8 vIntrPrio : 4;
+		UINT8 vIgnTpr : 1;
 		UINT8 reservedBits2 : 3;
-		UINT8 V_INTR_MASKING : 1;
-		UINT8 EnableGIFForGuest : 1;
-		UINT8 V_NMI_ENABLE : 1;
-		UINT8 ReservedBits3 : 3;
+		UINT8 vIntrMasking : 1;
+		UINT8 enableGIFForGuest : 1;
+		UINT8 vNmiEnable : 1;
+		UINT8 reservedBits3 : 3;
 		UINT8 enableX2AVIC : 1;
 		UINT8 enableAVIC : 1;
-		UINT8 V_INTR_VECTOR;
+		UINT8 vIntrVector;
 		UINT8 reservedBits4[3];
 	} fields;
 };
@@ -111,8 +112,8 @@ union InterruptBits
 	UINT64 data;
 	struct
 	{
-		UINT8 INTERRUCT_SHADOW : 1;
-		UINT8 GUEST_INTERRUTP_MASK : 1;
+		UINT8 interructShadow : 1;
+		UINT8 guestInterruptMask : 1;
 		UINT64 reservedBits : 62;
 	} fields;
 };
@@ -129,17 +130,17 @@ union SVMExtendFeatureBits1
 		UINT8 enableSSSCheck : 1;
 		UINT8 virtualTransparentTrap : 1;
 		UINT8 enableReadonlyGuestPage : 1;
-		UINT8 INVLPGB_TLBSYNC_AS_UD : 1;
+		UINT8 invlpgbTlbsynAsUd : 1;
 		UINT8 reservedBits[7];
 	} fields;
 };
 
-union APIC_BAR
+union ApicBar
 {
 	UINT64 data;
 	struct 
 	{
-		UINT64 APIC_BAR : 52;
+		UINT64 apicBar : 52;
 		UINT64 reservedBits : 12;
 	} fields;
 };
@@ -149,11 +150,11 @@ union EventInj
 	UINT64 data;
 	struct
 	{
-		UINT8 vector : 8;
-		UINT8 type : 3;
-		UINT8 ev : 1;
-		UINT8 resvd1 : 19;
-		UINT8 v : 1;
+		UINT64 vector : 8;
+		UINT64 type : 3;
+		UINT64 ev : 1;
+		UINT64 resvd1 : 19;
+		UINT64 v : 1;
 		UINT64 errorcode : 32;
 	} fields;
 };
@@ -163,9 +164,9 @@ struct SVMExtendFeatureBits2
 	UINT64 data;
 	struct
 	{
-		UINT8 enableLBRVirtualcation : 1;
-		UINT8 enableVirtualized_VMSAVE_VMLOAD : 1;
-		UINT8 reservedBits : 62;
+		UINT64 enableLBRVirtualcation : 1;
+		UINT64 enableVirtualizedVmsaveVmload : 1;
+		UINT64 reservedBits : 62;
 	} fields;
 };
 
@@ -175,35 +176,35 @@ struct VMCBCleanBits
 	UINT32 reservedBits;
 };
 
-union APIC_BACKING_PAGE
+union ApicBackingPage
 {
 	UINT64 data;
 	struct
 	{
-		UINT64 APIC_BACKING_PAGE : 52;
+		UINT64 apicBackingPage : 52;
 		UINT64 reservedBits : 12;
 	} fields;
 };
 
-union AVIC_LOGICAL_TABLE
+union AvicLogicalTable
 {
 	UINT64 data;
 	struct
 	{
 		UINT64 reservedBits1 : 12;
-		UINT64 AVIC_LOGICAL_TABLE : 40;
+		UINT64 avicLogicalTable : 40;
 		UINT64 reservedBits2 : 12;
 	} fields;
 };
 
-union AVIC_PHYSICAL_TABLE
+union AvicPhysicalTable
 {
 	UINT64 data;
 	struct
 	{
-		UINT8 AVIC_PHYSICAL_NAX_INDEX;
+		UINT8 avicPhyNaxIdx;
 		UINT64 reservedBits1 : 4;
-		UINT64 AVIC_PHYSICAL_TABLE : 40;
+		UINT64 avicPhyTable : 40;
 		UINT64 reservedBits2 : 12;
 	} fields;
 };
@@ -214,7 +215,7 @@ union VMSA
 	struct
 	{
 		UINT64 reservedBits1 : 12;
-		UINT64 WMSA : 40;
+		UINT64 wmsa : 40;
 		UINT64 reservedBits2 : 12;
 	} fields;
 };
@@ -227,7 +228,7 @@ struct SegmentRegStatus
 	UINT64 base;
 };
 
-struct VMCB
+typedef struct
 {
 	struct
 	{
@@ -249,34 +250,35 @@ struct VMCB
 		UINT16 pauseFilterTheshold;
 		UINT16 pauseFilterCount;
 		UINT64 iopmBasePA;
+		//MSR中断标记，被标记的MSR产生读写之后会产生vmexit事件
 		UINT64 msrpmBasePA;
 		UINT64 tscOffset;
 		UINT32 guestASID;
 		UINT8 tlbControl;
 		UINT8 reserved2[3];
-		VIntr vintr;
+		VIntr vIntr;
 		InterruptBits interruptBIts;
 		UINT64 exitCode;
 		UINT64 exitInfo1;
 		UINT64 exitInfo2;
 		UINT64 exitIntInfo;
 		SVMExtendFeatureBits1 extendFeatures1;
-		APIC_BAR apicBar;
+		ApicBar apicBar;
 		UINT64 physicalAddressGHCB;
 		EventInj eventInj;
-		UINT64 n_Cr3;
+		UINT64 nCr3;
 		SVMExtendFeatureBits2 extendFeatures2;
 		VMCBCleanBits cleanBits;
-		UINT64 n_Rip;
+		UINT64 nRip;
 		struct
 		{
 			UINT64 reservedQword1;
 			UINT64 reservedQword2;
 		} reservedBits1;
-		APIC_BACKING_PAGE apicBackingPage;
+		ApicBackingPage apicBackingPage;
 		UINT64 reservedBits2;
-		AVIC_LOGICAL_TABLE avicLogicalTable;
-		AVIC_PHYSICAL_TABLE avicPhysicalTable;
+		AvicLogicalTable avicLogicalTable;
+		AvicPhysicalTable avicPhysicalTable;
 		UINT64 reservedBits3;
 		VMSA vmsa;
 		UINT64 VMGEXIT_RAX;
@@ -284,7 +286,7 @@ struct VMCB
 		UINT16 busThresoldCounter;
 		UINT8 reservedBits4[0x2bd];
 		UINT8 hostDefined[0x20];
-	} control_fields;
+	} controlFields;
 	struct
 	{
 		SegmentRegStatus es;
@@ -334,7 +336,7 @@ struct VMCB
 		UINT8 reservedBits6[0x48];
 		UINT64 specCtrl;
 		UINT8 reservedBits7[0x388];
-		UINT8 lbrStackFrom_To[0x100];
+		UINT8 lbrStackFromTo[0x100];
 		UINT64 lbrSelect;
 		UINT64 lbsFetchCtl;
 		UINT64 lbsFetchLinaddr;
@@ -346,7 +348,9 @@ struct VMCB
 		UINT64 lbsDcLinaddr;
 		UINT64 bpIhstgtRip;
 		UINT64 icIhsExtdCtl;
-	} status_fields;
-};
+	} statusFields;
+} VMCB;
+
+
 
 #endif

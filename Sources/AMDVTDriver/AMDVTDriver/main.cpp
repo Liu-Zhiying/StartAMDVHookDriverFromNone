@@ -41,7 +41,7 @@ public:
 	virtual ~GlobalManager()
 	{
 		PAGED_CODE();
-		Deinit();
+		GlobalManager::Deinit();
 	}
 };
 
@@ -79,9 +79,9 @@ void UnloadDriver(IN PDRIVER_OBJECT drvObj)
 extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject,
 	IN PUNICODE_STRING)
 {
-	//过ObRegisterCallbacks驱动签名检测
-	PVOID thisDrvSection = pDriverObject->DriverSection;
-	*((PUINT32)((PUCHAR)thisDrvSection + 0x68)) |= 0x20;
+	////过ObRegisterCallbacks驱动签名检测
+	//PVOID thisDrvSection = pDriverObject->DriverSection;
+	//*((PUINT32)((PUCHAR)thisDrvSection + 0x68)) |= 0x20;
 
 	pDriverObject->MajorFunction[IRP_MJ_CLOSE] =
 		pDriverObject->MajorFunction[IRP_MJ_CREATE] =

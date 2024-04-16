@@ -1,23 +1,39 @@
 #include "PageTable.h"
 #include <intrin.h>
 
-//页表项标志位判断
-//见https://www.iaik.tugraz.at/teaching/materials/os/tutorials/paging-on-intel-x86-64/
-//这个判断的方式会修改
-#define GET_PHY_BASEARRD_IN_PAGETABLE(item) (((PTR_TYPE)(item)) & 0x7FFFFFF000)
-//页表项目是否映射内存
-#define IS_PAGETABLE_ITEM_ACCESSABLE(item) (((PTR_TYPE)(item)) & 0x20)
-//页表项目的数据是否启用（如果这个判断失败，前两个（和其他页表项数据）全部作废）
-#define IS_PAGETABLE_ITEM_PRESENT(item) (((PTR_TYPE)(item)) & 0x1)
+const ULONG PT_TAG = MAKE_TAG('p', 't', 'm', ' ');
 
-const ULONG ptTag = MAKE_TAG('p', 't', 'm', ' ');
+//见https://www.iaik.tugraz.at/teaching/materials/os/tutorials/paging-on-intel-x86-64/
+//这个结构体的size成员我改成了is_large_page
+typedef struct
+{
+	UINT64 present : 1;				//这个页表项是否有效
+	UINT64 writeable : 1;			//是否可写
+	UINT64 user_access : 1;			//可以被Ring3访问
+	UINT64 write_through : 1;		//写入是否缓存
+	UINT64 cache_disabled : 1;		//禁止缓存
+	UINT64 accessed : 1;			//这一页可以访问
+	UINT64 ignored_3 : 1;			//没有作用
+	UINT64 is_large_page : 1;		//是否大页（2mb页）
+	UINT64 ignored_2 : 4;			//没有作用
+	UINT64 page_ppn : 28;			//物理地址（要右移12位才是真实物理地址）
+	UINT64 reserved_1 : 12;			//必须为0
+	UINT64 ignored_1 : 11;			//没有作用
+	UINT64 execution_disabled : 1;	//禁止执行位
+} PageTableItem;
+
+//从页表项中取得物理地址
+inline PTR_TYPE GetPhyAddrFromPageTableItem(const PageTableItem* pItem)
+{
+	return ((PTR_TYPE)pItem->page_ppn) << 12;
+}
 
 //封装一下Windows内核内存分配函数
 #pragma code_seg()
 PVOID AllocNonPagedMem(SIZE_T byteCnt)
 {
 #ifdef _BUILD_WIN_2004
-	return ExAllocatePool2(POOL_FLAG_NON_PAGED, byteCnt, ptTag);
+	return ExAllocatePool2(POOL_FLAG_NON_PAGED, byteCnt, PT_TAG);
 #else
 	return ExAllocatePoolWithTag(POOL_TYPE::NonPagedPool, byteCnt, ptTag);
 #endif
@@ -26,7 +42,7 @@ PVOID AllocNonPagedMem(SIZE_T byteCnt)
 #pragma code_seg()
 void FreeNonPagedMem(PVOID pMem)
 {
-	ExFreePoolWithTag(pMem, ptTag);
+	ExFreePoolWithTag(pMem, PT_TAG);
 }
 
 //获取页表基地址（虚拟地址）
@@ -117,7 +133,6 @@ NTSTATUS PageTableManager::Init()
 			status = STATUS_INVALID_PARAMETER;
 			break;
 		}
-
 	} while (false);
 
 	return status;

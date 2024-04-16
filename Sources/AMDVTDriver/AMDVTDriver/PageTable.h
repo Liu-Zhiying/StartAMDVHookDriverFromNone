@@ -13,6 +13,9 @@ public:
 	PageTableManager() : pSystemPxe(NULL) { PAGED_CODE(); KeInitializeSpinLock(&operationLock); }
 	virtual NTSTATUS Init() override;
 	virtual void Deinit() override;
+	
+	#pragma code_seg("PAGE")
+	virtual ~PageTableManager() { PAGED_CODE(); PageTableManager::Deinit(); }
 };
 
 #endif
