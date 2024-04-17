@@ -8,15 +8,7 @@ struct VirtCpuInfo
 {
 	DECLSPEC_ALIGN(PAGE_SIZE) VMCB guestVmcb;
 	DECLSPEC_ALIGN(PAGE_SIZE) VMCB hostVmcb;
-	DECLSPEC_ALIGN(PAGE_SIZE) struct HostStack
-	{
-		UINT8 stack[KERNEL_STACK_SIZE - 4 * sizeof(PTR_TYPE)];
-		PVOID pGuestVmcb;
-		PVOID pHostVmcb;
-		PVOID pCpuInfo;
-		PVOID pRetAddr;
-	} hostStack;
-	DECLSPEC_ALIGN(PAGE_SIZE) UINT8 HostStateArea[PAGE_SIZE];
+	DECLSPEC_ALIGN(PAGE_SIZE) UINT8 stack[KERNEL_STACK_SIZE];
 	DECLSPEC_ALIGN(PAGE_SIZE) struct
 	{
 		UINT32 isInVirtualizaion;

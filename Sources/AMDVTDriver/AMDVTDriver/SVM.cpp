@@ -14,6 +14,7 @@ const UINT32 IA32_MSR_SF_MASK = 0xC0000084;
 const UINT32 IA32_MSR_SYSENTER_CS = 0x174;
 const UINT32 IA32_MSR_SYSENTER_ESP = 0x175;
 const UINT32 IA32_MSR_SYSENTER_EIP = 0x176;
+const UINT32 IA32_MSR_SVM_MSR_VM_HSAVE_PA = 0xC0010117;
 const UINT32 EFER_SVME_OFFSET = 12;
 const UINT32 SVM_TAG = MAKE_TAG('s', 'v', 'm', ' ');
 
@@ -88,6 +89,11 @@ extern "C" UINT16 _fs_selector();
 extern "C" UINT16 _gs_selector();
 extern "C" UINT16 _ss_selector();
 extern "C" void _save_rip_rsp_rflags(PUINT64 pRip, PUINT64 pRsp, PUINT64 pRflags);
+//这个函数是在host模式下切换栈的，就是修改rsp
+//返回原rsp
+extern "C" PVOID _switch_stack(PVOID rsp);
+//执行vmrun相关操作
+extern "C" void RunVM(VirtCpuInfo * pInfo, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr, PVOID pStack);
 
 //这个函数完全照抄https://github.com/tandasat/SimpleSvm
 //原函数名字是SvGetSegmentAccessRight
@@ -299,14 +305,7 @@ NTSTATUS SVMManager::Init()
 			break;
 		}
 
-		UINT64 gdtbase = 0, idtbase = 0;
-		UINT16 gdtlimit = 0, idtlimit = 0;
-		UINT16 ldtselector = 0, trselector = 0;
-
-		_mysgdt(&gdtbase, &gdtlimit);
-		_mysidt(&idtbase, &idtlimit);
-		_mysldt(&ldtselector);
-		_mystr(&trselector);
+		EnterVirtualization();
 
 	} while (false);
 
@@ -373,8 +372,8 @@ NTSTATUS SVMManager::EnterVirtualization()
 
 				pVirtCpuInfo[idx]->guestVmcb.controlFields.interceptOpcodes1
 					= Opcode1InterceptBits::CPUID | Opcode1InterceptBits::RDMSR_WRMSR;
-				pVirtCpuInfo[idx]->guestVmcb.controlFields.interceptOpcodes2
-					= Opcode2InterceptBits::VMRUN;
+				//pVirtCpuInfo[idx]->guestVmcb.controlFields.interceptOpcodes2
+				//	= Opcode2InterceptBits::VMRUN;
 				pVirtCpuInfo[idx]->guestVmcb.controlFields.msrpmBasePA = msrPremissionMap.GetPhyAddress();
 				pVirtCpuInfo[idx]->guestVmcb.controlFields.guestASID = 1;
 
@@ -457,6 +456,17 @@ NTSTATUS SVMManager::EnterVirtualization()
 
 				pVirtCpuInfo[idx]->guestVmcb.statusFields.cpl = 3;
 
+				pVirtCpuInfo[idx]->hostVmcb.statusFields = pVirtCpuInfo[idx]->guestVmcb.statusFields;
+
+				__writemsr(IA32_MSR_SVM_MSR_VM_HSAVE_PA, MmGetPhysicalAddress(&pVirtCpuInfo[idx]->hostVmcb).QuadPart);
+
+				RunVM
+				(
+					pVirtCpuInfo[idx], 
+					(PVOID)MmGetPhysicalAddress(&pVirtCpuInfo[idx]->guestVmcb).QuadPart, 
+					(PVOID)MmGetPhysicalAddress(&pVirtCpuInfo[idx]->hostVmcb).QuadPart, 
+					 pVirtCpuInfo[idx]->stack + sizeof pVirtCpuInfo[idx]->stack
+				);
 			} while (false);
 		}
 

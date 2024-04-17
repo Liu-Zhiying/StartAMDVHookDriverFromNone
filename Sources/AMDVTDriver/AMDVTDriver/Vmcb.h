@@ -81,6 +81,19 @@ enum Opcode2InterceptBits
 	WriteCR15 = 0x80000000,
 };
 
+enum Opcode3InterceptBits
+{
+	INVLPGB = 0x1,
+	ILLEGALLY_INVLPGB = 0x2,
+	INVPCID = 0x4,
+	MCOMMIT = 0x8,
+	//Presence of this bit is indicated by CPUID Fn8000_000A, EDX[24] = 1.
+	TLBSYNC = 0x10,
+	//Intercept bus lock operations when Bus Lock Threshold
+	//Counter is 0 (occurs before guest instruction executes)
+	BUS_LOCK = 0x20,
+};
+
 union VIntr
 {
 	UINT64 data;
@@ -107,13 +120,13 @@ union VIntr
 	} fields;
 };
 
-union InterruptBits
+union GuestInterruptStatus
 {
 	UINT64 data;
 	struct
 	{
-		UINT8 interructShadow : 1;
-		UINT8 guestInterruptMask : 1;
+		UINT64 interructShadow : 1;
+		UINT64 guestInterruptMask : 1;
 		UINT64 reservedBits : 62;
 	} fields;
 };
@@ -121,7 +134,7 @@ union InterruptBits
 union SVMExtendFeatureBits1
 {
 	UINT64 data;
-	struct 
+	struct
 	{
 		UINT8 enableNestedPage : 1;
 		UINT8 enableSecureEncrypted : 1;
@@ -138,7 +151,7 @@ union SVMExtendFeatureBits1
 union ApicBar
 {
 	UINT64 data;
-	struct 
+	struct
 	{
 		UINT64 apicBar : 52;
 		UINT64 reservedBits : 12;
@@ -159,7 +172,7 @@ union EventInj
 	} fields;
 };
 
-struct SVMExtendFeatureBits2
+union SVMExtendFeatureBits2
 {
 	UINT64 data;
 	struct
@@ -202,7 +215,7 @@ union AvicPhysicalTable
 	UINT64 data;
 	struct
 	{
-		UINT8 avicPhyNaxIdx;
+		UINT64 avicPhyNaxIdx : 8;
 		UINT64 reservedBits1 : 4;
 		UINT64 avicPhyTable : 40;
 		UINT64 reservedBits2 : 12;
@@ -245,6 +258,7 @@ typedef struct
 		//特殊指令的中断
 		UINT32 interceptOpcodes1;
 		UINT32 interceptOpcodes2;
+		UINT32 interceptOpcodes3;
 		//保留不使用
 		UINT8 reserved1[0x24];
 		UINT16 pauseFilterTheshold;
@@ -257,7 +271,7 @@ typedef struct
 		UINT8 tlbControl;
 		UINT8 reserved2[3];
 		VIntr vIntr;
-		InterruptBits interruptBIts;
+		GuestInterruptStatus guestInterruptStatus;
 		UINT64 exitCode;
 		UINT64 exitInfo1;
 		UINT64 exitInfo2;
@@ -284,7 +298,7 @@ typedef struct
 		UINT64 VMGEXIT_RAX;
 		UINT8 VMGEXIT_CPL;
 		UINT16 busThresoldCounter;
-		UINT8 reservedBits4[0x2bd];
+		UINT8 reservedBits4[0x2c0];
 		UINT8 hostDefined[0x20];
 	} controlFields;
 	struct

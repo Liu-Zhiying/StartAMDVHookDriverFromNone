@@ -88,4 +88,34 @@ _save_rip_rsp_rflags Proc
 	ret
 _save_rip_rsp_rflags Endp
 
+_switch_stack Proc
+;把返回地址pop到rdx，不会用原来的栈返回，可以确保栈平衡
+;而且切换到新栈时需要返回地址让函数正确返回
+pop rdx
+;保留旧栈作为返回值
+mov rax, rsp
+;切换栈
+mov rsp, rcx
+;push返回地址用于返回
+push rdx
+ret
+_switch_stack Endp
+
+RunVM Proc
+;mov rsp, r9
+;push r9
+;push r8
+;push rdx
+;push rcx
+
+mov rax, rdx
+enter_guest:
+vmload rax
+;vmrun rax
+vmsave rax
+;jmp enter_guest
+ret
+
+RunVM Endp
+
 End
