@@ -295,8 +295,8 @@ typedef struct
 		AvicPhysicalTable avicPhysicalTable;
 		UINT64 reservedBits3;
 		VMSA vmsa;
-		UINT64 VMGEXIT_RAX;
-		UINT8 VMGEXIT_CPL;
+		UINT64 vmgExitRax;
+		UINT8 vmgExitCpl;
 		UINT16 busThresoldCounter;
 		UINT8 reservedBits4[0x2c0];
 		UINT8 hostDefined[0x20];
@@ -329,7 +329,7 @@ typedef struct
 		UINT64 rsp;
 		UINT64 s_cet;
 		UINT64 ssp;
-		UINT64 dsstAddr;
+		UINT64 isstAddr;
 		UINT64 rax;
 		UINT64 star;
 		UINT64 lstar;

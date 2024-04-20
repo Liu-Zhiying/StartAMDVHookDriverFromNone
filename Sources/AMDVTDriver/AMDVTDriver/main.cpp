@@ -4,6 +4,9 @@
 #include "SVM.h"
 #include "PageTable.h"
 
+#pragma code_seg()
+UINT8 teststack[KERNEL_STACK_SIZE];
+
 class GlobalManager : public IManager
 {
 	PageTableManager ptManager;
@@ -74,6 +77,8 @@ void UnloadDriver(IN PDRIVER_OBJECT drvObj)
 	}
 	KdPrint(("AMD-V driver has exited\n"));
 }
+
+extern "C" void RunVM(VirtCpuInfo * pInfo, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr, PVOID pStack);
 
 #pragma code_seg("INIT")
 extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject,

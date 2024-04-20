@@ -102,18 +102,31 @@ ret
 _switch_stack Endp
 
 RunVM Proc
-;mov rsp, r9
-;push r9
-;push r8
-;push rdx
-;push rcx
+mov rax, rsp
+mov rsp, r9
+push rax
+push r9
+push r8
+push rdx
+push rcx
 
-mov rax, rdx
+
 enter_guest:
+mov rax, [rsp + 8h]
 vmload rax
-;vmrun rax
+vmrun rax
 vmsave rax
-;jmp enter_guest
+
+mov rax, [rsp]
+mov rax, [rax + 70h]
+cmp rax, -1
+je return
+jmp enter_guest
+
+return:
+
+mov rax, [rsp + 20h]
+mov rsp, rax
 ret
 
 RunVM Endp

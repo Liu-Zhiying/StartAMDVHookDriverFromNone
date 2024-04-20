@@ -65,7 +65,7 @@ SIZE_T GetArrayElementCnt(T (&)[n])
 	return n;
 }
 
-const PHYSICAL_ADDRESS highestPhyAddr { (ULONG)- 1,-1};
+const PHYSICAL_ADDRESS highestPhyAddr = { (ULONG)-1,-1 };
 
 #endif // !BASIC_H
 

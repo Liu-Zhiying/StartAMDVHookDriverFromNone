@@ -305,13 +305,19 @@ NTSTATUS SVMManager::Init()
 			break;
 		}
 
-		EnterVirtualization();
+		result = EnterVirtualization();
+
+		if (!NT_SUCCESS(result))
+		{
+			KdPrint(("SVMManager::Init(): Can not enter virtualization!\n"));
+			break;
+		}
 
 	} while (false);
 
 	if (!NT_SUCCESS(result))
 		Deinit();
-	
+
 	return result;
 }
 
@@ -329,6 +335,7 @@ void SVMManager::Deinit()
 		}
 		ExFreePoolWithTag(pVirtCpuInfo, SVM_TAG);
 		pVirtCpuInfo = NULL;
+		cpuCnt = 0;
 	}
 	msrPremissionMap.Deinit();
 }
@@ -356,118 +363,126 @@ NTSTATUS SVMManager::EnterVirtualization()
 
 		if (!pVirtCpuInfo[idx]->otherInfo.isInVirtualizaion)
 		{
-			do
-			{
-				pVirtCpuInfo[idx]->otherInfo.isInVirtualizaion = TRUE;
 
-				UINT64 gdtrBase = 0, idtrBase = 0;
-				UINT16 gdtrLimit = 0, idtrLimit = 0;
-				UINT16 trSelector = 0, ldtrSelector = 0;
-				_mysgdt(&gdtrBase, &gdtrLimit);
-				_mysidt(&idtrBase, &idtrLimit);
-				_mystr(&trSelector);
-				_mysldt(&ldtrSelector);
+			pVirtCpuInfo[idx]->otherInfo.isInVirtualizaion = TRUE;
 
-				__writemsr(IA32_MSR_EFER, __readmsr(IA32_MSR_EFER) | (((UINT32)1) << EFER_SVME_OFFSET));
+			UINT64 gdtrBase = 0, idtrBase = 0;
+			UINT16 gdtrLimit = 0, idtrLimit = 0;
+			UINT16 trSelector = 0, ldtrSelector = 0;
+			_mysgdt(&gdtrBase, &gdtrLimit);
+			_mysidt(&idtrBase, &idtrLimit);
+			_mystr(&trSelector);
+			_mysldt(&ldtrSelector);
 
-				pVirtCpuInfo[idx]->guestVmcb.controlFields.interceptOpcodes1
-					= Opcode1InterceptBits::CPUID | Opcode1InterceptBits::RDMSR_WRMSR;
-				//pVirtCpuInfo[idx]->guestVmcb.controlFields.interceptOpcodes2
-				//	= Opcode2InterceptBits::VMRUN;
-				pVirtCpuInfo[idx]->guestVmcb.controlFields.msrpmBasePA = msrPremissionMap.GetPhyAddress();
-				pVirtCpuInfo[idx]->guestVmcb.controlFields.guestASID = 1;
+			UINT64 eferBackup = __readmsr(IA32_MSR_EFER);
+			__writemsr(IA32_MSR_SVM_MSR_VM_HSAVE_PA, MmGetPhysicalAddress(&pVirtCpuInfo[idx]->hostStatus).QuadPart);
+			__writemsr(IA32_MSR_EFER, eferBackup | (1ULL << EFER_SVME_OFFSET));
 
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.gdtr.base = gdtrBase;
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.gdtr.limit = gdtrLimit;
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.idtr.base = idtrBase;
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.idtr.limit = idtrLimit;
+			//pVirtCpuInfo[idx]->guestVmcb.controlFields.interceptOpcodes1
+			//	= Opcode1InterceptBits::RDMSR_WRMSR;
+			//vmrun拦截必须打开，否则vmrun会失败
+			pVirtCpuInfo[idx]->guestVmcb.controlFields.interceptOpcodes2
+				= Opcode2InterceptBits::VMRUN;
+			pVirtCpuInfo[idx]->guestVmcb.controlFields.msrpmBasePA = msrPremissionMap.GetPhyAddress();
+			pVirtCpuInfo[idx]->guestVmcb.controlFields.guestASID = 1;
 
-				//X64 代码段和数据段的base和limit是无效的
-				//base 强制为 0（强制平坦段）
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.cs.selector = _cs_selector();
-				//pVirtCpuInfo[idx]->guestVmcb.statusFields.cs.base = _GetSegmentBaseAddress(_cs_selector(), gdtrBase);
-				//pVirtCpuInfo[idx]->guestVmcb.statusFields.cs.limit = _GetSegmentLimit(_cs_selector(), gdtrBase);
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.cs.attrib = _GetSegmentAttribute(_cs_selector(), gdtrBase);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.gdtr.base = gdtrBase;
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.gdtr.limit = gdtrLimit;
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.idtr.base = idtrBase;
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.idtr.limit = idtrLimit;
 
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.ds.selector = _ds_selector();
-				//pVirtCpuInfo[idx]->guestVmcb.statusFields.ds.base = _GetSegmentBaseAddress(_ds_selector(), gdtrBase);
-				//pVirtCpuInfo[idx]->guestVmcb.statusFields.ds.limit = _GetSegmentLimit(_ds_selector(), gdtrBase);
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.ds.attrib = _GetSegmentAttribute(_ds_selector(), gdtrBase);
+			//X64 代码段和数据段的base和limit是无效的
+			//base 强制为 0（强制平坦段）
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.cs.selector = _cs_selector();
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.cs.attrib = _GetSegmentAttribute(_cs_selector(), gdtrBase);
 
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.es.selector = _es_selector();
-				//pVirtCpuInfo[idx]->guestVmcb.statusFields.es.base = _GetSegmentBaseAddress(_es_selector(), gdtrBase);
-				//pVirtCpuInfo[idx]->guestVmcb.statusFields.es.limit = _GetSegmentLimit(_es_selector(), gdtrBase);
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.es.attrib = _GetSegmentAttribute(_es_selector(), gdtrBase);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.ds.selector = _ds_selector();
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.ds.attrib = _GetSegmentAttribute(_ds_selector(), gdtrBase);
 
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.fs.selector = _fs_selector();
-				//pVirtCpuInfo[idx]->guestVmcb.statusFields.fs.base = _GetSegmentBaseAddress(_fs_selector(), gdtrBase);
-				//pVirtCpuInfo[idx]->guestVmcb.statusFields.fs.limit = _GetSegmentLimit(_fs_selector(), gdtrBase);
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.fs.attrib = _GetSegmentAttribute(_fs_selector(), gdtrBase);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.es.selector = _es_selector();
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.es.attrib = _GetSegmentAttribute(_es_selector(), gdtrBase);
 
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.gs.selector = _gs_selector();
-				//pVirtCpuInfo[idx]->guestVmcb.statusFields.gs.base = _GetSegmentBaseAddress(_gs_selector(), gdtrBase);
-				//pVirtCpuInfo[idx]->guestVmcb.statusFields.gs.limit = _GetSegmentLimit(_gs_selector(), gdtrBase);
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.gs.attrib = _GetSegmentAttribute(_gs_selector(), gdtrBase);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.ss.selector = _ss_selector();
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.ss.attrib = _GetSegmentAttribute(_ss_selector(), gdtrBase);
 
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.ss.selector = _ss_selector();
-				//pVirtCpuInfo[idx]->guestVmcb.statusFields.ss.base = _GetSegmentBaseAddress(_ss_selector(), gdtrBase);
-				//pVirtCpuInfo[idx]->guestVmcb.statusFields.ss.limit = _GetSegmentLimit(_gs_selector(), gdtrBase);
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.ss.attrib = _GetSegmentAttribute(_gs_selector(), gdtrBase);
+			//下面的这一组信息可以使用vmsave指令直接获取
+			//这里为了研究原理手动获取
+			//*************************************** BEGIN ***************************************
 
-				//对于TR LDTR base limit 依然有效
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.ldtr.selector = ldtrSelector;
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.ldtr.base = _GetSegmentBaseAddress(ldtrSelector, gdtrBase);
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.ldtr.limit = _GetSegmentLimit(ldtrSelector, gdtrBase);
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.ldtr.attrib = _GetSegmentAttribute(ldtrSelector, gdtrBase);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.fs.selector = _fs_selector();
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.fs.limit = _GetSegmentLimit(_fs_selector(), gdtrBase);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.fs.attrib = _GetSegmentAttribute(_fs_selector(), gdtrBase);
 
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.tr.selector = trSelector;
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.tr.base = _GetSegmentBaseAddress(trSelector, gdtrBase);
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.tr.limit = _GetSegmentLimit(trSelector, gdtrBase);
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.tr.attrib = _GetSegmentAttribute(trSelector, gdtrBase);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.gs.selector = _gs_selector();
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.gs.limit = _GetSegmentLimit(_gs_selector(), gdtrBase);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.gs.attrib = _GetSegmentAttribute(_gs_selector(), gdtrBase);
 
-				//FSBase GSBase KenrelGSBase 可以不为0 但是是放在MSR寄存器里面的
-				/*
-				IA32_MSR_FS_BASE（下标0xC0000100）
-				IA32_MSR_GS_BASE（下标0xC0000101）
-				IA32_MSR_KERNEL_GS_BASE（下标0xC0000102）
-				*/
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.fs.base = __readmsr(IA32_MSR_FS_BASE);
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.gs.base = __readmsr(IA32_MSR_GS_BASE);
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.kernelGsBase = __readmsr(IA32_MSR_KERNEL_GS_BASE);
+			//对于TR LDTR base limit 依然有效
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.ldtr.selector = ldtrSelector;
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.ldtr.base = _GetSegmentBaseAddress(ldtrSelector, gdtrBase);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.ldtr.limit = _GetSegmentLimit(ldtrSelector, gdtrBase);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.ldtr.attrib = _GetSegmentAttribute(ldtrSelector, gdtrBase);
 
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.sysenterCs = __readmsr(IA32_MSR_SYSENTER_CS);
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.sysenterEsp = __readmsr(IA32_MSR_SYSENTER_ESP);
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.sysenterEip = __readmsr(IA32_MSR_SYSENTER_EIP);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.tr.selector = trSelector;
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.tr.base = _GetSegmentBaseAddress(trSelector, gdtrBase);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.tr.limit = _GetSegmentLimit(trSelector, gdtrBase);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.tr.attrib = _GetSegmentAttribute(trSelector, gdtrBase);
 
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.star = __readmsr(IA32_MSR_STAR);
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.lstar = __readmsr(IA32_MSR_LSTAR);
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.cstar = __readmsr(IA32_MSR_CSTAR);
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.sfmask = __readmsr(IA32_MSR_SF_MASK);
+			//FSBase GSBase KenrelGSBase 可以不为0 但是是放在MSR寄存器里面的
+			/*
+			IA32_MSR_FS_BASE（下标0xC0000100）
+			IA32_MSR_GS_BASE（下标0xC0000101）
+			IA32_MSR_KERNEL_GS_BASE（下标0xC0000102）
+			*/
 
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.efer = __readmsr(IA32_MSR_EFER);
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.cr0 = __readcr0();
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.cr2 = __readcr2();
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.cr3 = __readcr3();
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.cr4 = __readcr4();
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.rflags = rflags;
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.rsp = rsp;
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.rip = rip;
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.gPat = __readmsr(IA32_MSR_PAT);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.fs.base = __readmsr(IA32_MSR_FS_BASE);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.gs.base = __readmsr(IA32_MSR_GS_BASE);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.kernelGsBase = __readmsr(IA32_MSR_KERNEL_GS_BASE);
 
-				pVirtCpuInfo[idx]->guestVmcb.statusFields.cpl = 3;
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.sysenterCs = __readmsr(IA32_MSR_SYSENTER_CS);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.sysenterEsp = __readmsr(IA32_MSR_SYSENTER_ESP);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.sysenterEip = __readmsr(IA32_MSR_SYSENTER_EIP);
 
-				pVirtCpuInfo[idx]->hostVmcb.statusFields = pVirtCpuInfo[idx]->guestVmcb.statusFields;
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.star = __readmsr(IA32_MSR_STAR);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.lstar = __readmsr(IA32_MSR_LSTAR);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.cstar = __readmsr(IA32_MSR_CSTAR);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.sfmask = __readmsr(IA32_MSR_SF_MASK);
 
-				__writemsr(IA32_MSR_SVM_MSR_VM_HSAVE_PA, MmGetPhysicalAddress(&pVirtCpuInfo[idx]->hostVmcb).QuadPart);
+			//*************************************** END ***************************************
 
-				RunVM
-				(
-					pVirtCpuInfo[idx], 
-					(PVOID)MmGetPhysicalAddress(&pVirtCpuInfo[idx]->guestVmcb).QuadPart, 
-					(PVOID)MmGetPhysicalAddress(&pVirtCpuInfo[idx]->hostVmcb).QuadPart, 
-					 pVirtCpuInfo[idx]->stack + sizeof pVirtCpuInfo[idx]->stack
-				);
-			} while (false);
+			//填充 VMCB EFER 的 EFER 值中SVME位必须为1，否则vmrun会失败
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.efer = __readmsr(IA32_MSR_EFER);
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.cr0 = __readcr0();
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.cr2 = __readcr2();
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.cr3 = __readcr3();
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.cr4 = __readcr4();
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.rflags = rflags;
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.rsp = rsp;
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.rip = rip;
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.gPat = __readmsr(IA32_MSR_PAT);
+
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.cpl = _cs_selector() & 0x3;
+
+			pVirtCpuInfo[idx]->hostVmcb.statusFields = pVirtCpuInfo[idx]->guestVmcb.statusFields;
+
+			//__svm_vmsave((size_t)MmGetPhysicalAddress(&pVirtCpuInfo[idx]->guestVmcb).QuadPart);
+			//__svm_vmsave((size_t)MmGetPhysicalAddress(&pVirtCpuInfo[idx]->hostVmcb).QuadPart);
+
+			RunVM
+			(
+				pVirtCpuInfo[idx],
+				(PVOID)MmGetPhysicalAddress(&pVirtCpuInfo[idx]->guestVmcb).QuadPart,
+				(PVOID)MmGetPhysicalAddress(&pVirtCpuInfo[idx]->hostVmcb).QuadPart,
+				pVirtCpuInfo[idx]->stack + sizeof pVirtCpuInfo[idx]->stack
+			);
+
+			////不应该返回
+			////如果返回代表vmrun失败
+
+			status = STATUS_INVALID_PARAMETER;
+
+			__writemsr(IA32_MSR_SVM_MSR_VM_HSAVE_PA, NULL);
+			__writemsr(IA32_MSR_EFER, eferBackup);
 		}
 
 		KeRevertToUserGroupAffinityThread(&oldAffinity);
@@ -475,9 +490,6 @@ NTSTATUS SVMManager::EnterVirtualization()
 		if (!NT_SUCCESS(status))
 			break;
 	}
-
-	if (!NT_SUCCESS(status))
-		LeaveVirtualization();
 
 	return status;
 }
