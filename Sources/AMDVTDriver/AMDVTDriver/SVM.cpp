@@ -75,6 +75,42 @@ typedef struct _SEGMENT_ATTRIBUTE
 	};
 } SEGMENT_ATTRIBUTE, * PSEGMENT_ATTRIBUTE;
 
+// 传入 #VMEXIT 处理函数，用于处理修改guest寄存器状态
+// rax在VMCB中有保存，这里不保存
+struct GuestGeneralRegisters
+{
+	M128A xmm0;
+	M128A xmm1;
+	M128A xmm2;
+	M128A xmm3;
+	M128A xmm4;
+	M128A xmm5;
+	M128A xmm6;
+	M128A xmm7;
+	M128A xmm8;
+	M128A xmm9;
+	M128A xmm10;
+	M128A xmm11;
+	M128A xmm12;
+	M128A xmm13;
+	M128A xmm14;
+	M128A xmm15;
+	UINT64 r15;
+	UINT64 r14;
+	UINT64 r13;
+	UINT64 r12;
+	UINT64 r11;
+	UINT64 r10;
+	UINT64 r9;
+	UINT64 r8;
+	UINT64 rbp;
+	UINT64 rsi;
+	UINT64 rdi;
+	UINT64 rdx;
+	UINT64 rcx;
+	UINT64 rbx;
+};
+
 //一系列汇编函数
 //源代码在SVM_asm.asm里面
 //主要都是寄存器读取操作
@@ -89,18 +125,16 @@ extern "C" UINT16 _fs_selector();
 extern "C" UINT16 _gs_selector();
 extern "C" UINT16 _ss_selector();
 extern "C" void _save_rip_rsp_rflags(PUINT64 pRip, PUINT64 pRsp, PUINT64 pRflags);
-//这个函数是在host模式下切换栈的，就是修改rsp
-//返回原rsp
-extern "C" PVOID _switch_stack(PVOID rsp);
 //执行vmrun相关操作
 extern "C" void RunVM(VirtCpuInfo * pInfo, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr, PVOID pStack);
 
 //这个函数完全照抄https://github.com/tandasat/SimpleSvm
 //原函数名字是SvGetSegmentAccessRight
 //获取段寄存器Attribute
-#pragma code_seg()
+#pragma code_seg("PAGE")
 UINT16 _GetSegmentAttribute(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 {
+	PAGED_CODE();
 	PSEGMENT_DESCRIPTOR descriptor;
 	SEGMENT_ATTRIBUTE attribute;
 
@@ -123,9 +157,10 @@ UINT16 _GetSegmentAttribute(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 }
 
 //获取段寄存器Base
-#pragma code_seg()
+#pragma code_seg("PAGE")
 UINT64 _GetSegmentBaseAddress(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 {
+	PAGED_CODE();
 	PSEGMENT_DESCRIPTOR descriptor;
 	UINT64 baseAddress = 0;
 
@@ -141,9 +176,10 @@ UINT64 _GetSegmentBaseAddress(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBas
 }
 
 //获取段寄存器Limit
-#pragma code_seg()
+#pragma code_seg("PAGE")
 UINT32 _GetSegmentLimit(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 {
+	PAGED_CODE();
 	PSEGMENT_DESCRIPTOR descriptor;
 	UINT32 limit = 0;
 
@@ -154,6 +190,52 @@ UINT32 _GetSegmentLimit(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 	limit |= ((UINT64)descriptor->Fields.LimitHigh) << 16;
 
 	return limit;
+}
+
+//#VMEXIT处理函数
+#pragma code_seg()
+extern "C" PVOID VmExitHandler(VirtCpuInfo * pVirtCpuInfo, GuestGeneralRegisters * pGuestRegisters)
+{
+	PVOID result = NULL;
+	switch ((VmExitReasons)pVirtCpuInfo->guestVmcb.controlFields.exitCode)
+	{
+	case VMEXIT_REASON_CPUID:
+	{
+		int cpuidResult[4] = {};
+
+		KdPrint(("CPUID Parameter: function = %x, subleaf = %x\n", (int)pVirtCpuInfo->guestVmcb.statusFields.rax, (int)pGuestRegisters->rcx));
+
+		__cpuidex(cpuidResult, (int)pVirtCpuInfo->guestVmcb.statusFields.rax, (int)pGuestRegisters->rcx);
+
+		/**reinterpret_cast<UINT32*>(&pVirtCpuInfo->guestVmcb.statusFields.rax) = cpuidResult[0];
+		*reinterpret_cast<UINT32*>(&pGuestRegisters->rbx) = cpuidResult[1];
+		*reinterpret_cast<UINT32*>(&pGuestRegisters->rcx) = cpuidResult[2];
+		*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = cpuidResult[3];*/
+
+		pVirtCpuInfo->guestVmcb.statusFields.rax = cpuidResult[0];
+		pGuestRegisters->rbx = cpuidResult[1];
+		pGuestRegisters->rcx = cpuidResult[2];
+		pGuestRegisters->rdx = cpuidResult[3];
+
+		KdPrint(("CPUID Result: eax = %x, ebx = %x, ecx = %x, edx = %x\n",  (int)pVirtCpuInfo->guestVmcb.statusFields.rax, 
+																			(int)pGuestRegisters->rbx,
+																			(int)pGuestRegisters->rcx,
+																			(int)pGuestRegisters->rdx));
+
+		//guest到下一条指令执行，不这样做系统会卡死
+		pVirtCpuInfo->guestVmcb.statusFields.rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
+		break;
+	}
+	case VMEXIT_REASON_VMRUN:
+	{
+		KeBugCheck(MANUALLY_INITIATED_CRASH);
+		break;
+	}
+	default:
+		break;
+	}
+	
+	return result;
 }
 
 #pragma code_seg("PAGE")
@@ -340,9 +422,10 @@ void SVMManager::Deinit()
 	msrPremissionMap.Deinit();
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 NTSTATUS SVMManager::EnterVirtualization()
 {
+	PAGED_CODE();
 	NTSTATUS status = STATUS_SUCCESS;
 	PROCESSOR_NUMBER processorNum = {};
 	GROUP_AFFINITY affinity = {}, oldAffinity = {};
@@ -378,8 +461,8 @@ NTSTATUS SVMManager::EnterVirtualization()
 			__writemsr(IA32_MSR_SVM_MSR_VM_HSAVE_PA, MmGetPhysicalAddress(&pVirtCpuInfo[idx]->hostStatus).QuadPart);
 			__writemsr(IA32_MSR_EFER, eferBackup | (1ULL << EFER_SVME_OFFSET));
 
-			//pVirtCpuInfo[idx]->guestVmcb.controlFields.interceptOpcodes1
-			//	= Opcode1InterceptBits::RDMSR_WRMSR;
+			pVirtCpuInfo[idx]->guestVmcb.controlFields.interceptOpcodes1
+				= Opcode1InterceptBits::CPUID;//Opcode1InterceptBits::RDMSR_WRMSR;
 			//vmrun拦截必须打开，否则vmrun会失败
 			pVirtCpuInfo[idx]->guestVmcb.controlFields.interceptOpcodes2
 				= Opcode2InterceptBits::VMRUN;
@@ -410,11 +493,9 @@ NTSTATUS SVMManager::EnterVirtualization()
 			//*************************************** BEGIN ***************************************
 
 			pVirtCpuInfo[idx]->guestVmcb.statusFields.fs.selector = _fs_selector();
-			pVirtCpuInfo[idx]->guestVmcb.statusFields.fs.limit = _GetSegmentLimit(_fs_selector(), gdtrBase);
 			pVirtCpuInfo[idx]->guestVmcb.statusFields.fs.attrib = _GetSegmentAttribute(_fs_selector(), gdtrBase);
 
 			pVirtCpuInfo[idx]->guestVmcb.statusFields.gs.selector = _gs_selector();
-			pVirtCpuInfo[idx]->guestVmcb.statusFields.gs.limit = _GetSegmentLimit(_gs_selector(), gdtrBase);
 			pVirtCpuInfo[idx]->guestVmcb.statusFields.gs.attrib = _GetSegmentAttribute(_gs_selector(), gdtrBase);
 
 			//对于TR LDTR base limit 依然有效
@@ -439,9 +520,11 @@ NTSTATUS SVMManager::EnterVirtualization()
 			pVirtCpuInfo[idx]->guestVmcb.statusFields.gs.base = __readmsr(IA32_MSR_GS_BASE);
 			pVirtCpuInfo[idx]->guestVmcb.statusFields.kernelGsBase = __readmsr(IA32_MSR_KERNEL_GS_BASE);
 
-			pVirtCpuInfo[idx]->guestVmcb.statusFields.sysenterCs = __readmsr(IA32_MSR_SYSENTER_CS);
-			pVirtCpuInfo[idx]->guestVmcb.statusFields.sysenterEsp = __readmsr(IA32_MSR_SYSENTER_ESP);
-			pVirtCpuInfo[idx]->guestVmcb.statusFields.sysenterEip = __readmsr(IA32_MSR_SYSENTER_EIP);
+			//对于32位系统才需要填充 SYSENTER_CS SYSENTER_ESP SYSENTER_EIP
+
+			//pVirtCpuInfo[idx]->guestVmcb.statusFields.sysenterCs = __readmsr(IA32_MSR_SYSENTER_CS);
+			//pVirtCpuInfo[idx]->guestVmcb.statusFields.sysenterEsp = __readmsr(IA32_MSR_SYSENTER_ESP);
+			//pVirtCpuInfo[idx]->guestVmcb.statusFields.sysenterEip = __readmsr(IA32_MSR_SYSENTER_EIP);
 
 			pVirtCpuInfo[idx]->guestVmcb.statusFields.star = __readmsr(IA32_MSR_STAR);
 			pVirtCpuInfo[idx]->guestVmcb.statusFields.lstar = __readmsr(IA32_MSR_LSTAR);
@@ -476,13 +559,11 @@ NTSTATUS SVMManager::EnterVirtualization()
 				pVirtCpuInfo[idx]->stack + sizeof pVirtCpuInfo[idx]->stack
 			);
 
-			////不应该返回
-			////如果返回代表vmrun失败
+			//不应该返回
+			//如果返回代表vmrun失败
+			//直接 BugCheck
 
-			status = STATUS_INVALID_PARAMETER;
-
-			__writemsr(IA32_MSR_SVM_MSR_VM_HSAVE_PA, NULL);
-			__writemsr(IA32_MSR_EFER, eferBackup);
+			KeBugCheck(MANUALLY_INITIATED_CRASH);
 		}
 
 		KeRevertToUserGroupAffinityThread(&oldAffinity);
@@ -494,7 +575,8 @@ NTSTATUS SVMManager::EnterVirtualization()
 	return status;
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 void SVMManager::LeaveVirtualization()
 {
+	PAGED_CODE();
 }
