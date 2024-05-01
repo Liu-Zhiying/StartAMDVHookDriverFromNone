@@ -15,7 +15,14 @@ const UINT32 IA32_MSR_SYSENTER_CS = 0x174;
 const UINT32 IA32_MSR_SYSENTER_ESP = 0x175;
 const UINT32 IA32_MSR_SYSENTER_EIP = 0x176;
 const UINT32 IA32_MSR_SVM_MSR_VM_HSAVE_PA = 0xC0010117;
+const UINT32 IA32_MSR_VM_CR = 0xC0010114;
 const UINT32 EFER_SVME_OFFSET = 12;
+const UINT32 CPUID_FN_80000001_ECX_SVM_OFFSET = 2;
+const UINT32 VM_CR_SVMDIS_OFFSET = 4;
+const UINT32 CPUID_FN_SVM_FEATURE = 0x80000001;
+//AMD SVM 没有专门的VMMCALL指令，只能使用自定义CPUID
+//AMD 手册上给虚拟化预留的CPUID ID 为 0x40000000~0x400000ff
+const UINT32 GUEST_CALL_VMM_CPUID_FUNCTION = 0x400000ff;
 const UINT32 SVM_TAG = MAKE_TAG('s', 'v', 'm', ' ');
 
 //GDT表项，参考https://wiki.osdev.org/Global_Descriptor_Table#System_Segment_Descriptor
@@ -124,9 +131,10 @@ extern "C" UINT16 _es_selector();
 extern "C" UINT16 _fs_selector();
 extern "C" UINT16 _gs_selector();
 extern "C" UINT16 _ss_selector();
+//获取函数当前Rflags和退出函数后的第一条指令的地址（RIP）
 extern "C" void _save_rip_rsp_rflags(PUINT64 pRip, PUINT64 pRsp, PUINT64 pRflags);
 //执行vmrun相关操作
-extern "C" void RunVM(VirtCpuInfo * pInfo, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr, PVOID pStack);
+extern "C" void _run_svm_vmrun(VirtCpuInfo * pInfo, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr, PVOID pStack);
 
 //这个函数完全照抄https://github.com/tandasat/SimpleSvm
 //原函数名字是SvGetSegmentAccessRight
@@ -135,8 +143,8 @@ extern "C" void RunVM(VirtCpuInfo * pInfo, PVOID pGuestVmcbPhyAddr, PVOID pHostV
 UINT16 _GetSegmentAttribute(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 {
 	PAGED_CODE();
-	PSEGMENT_DESCRIPTOR descriptor;
-	SEGMENT_ATTRIBUTE attribute;
+	PSEGMENT_DESCRIPTOR descriptor = NULL;
+	SEGMENT_ATTRIBUTE attribute = {};
 
 	//关于段选择子的结构参考https://wiki.osdev.org/Segment_Selector
 	//低3bit是标志，这里不管基址是LDT的情况，这个函数设计就是假设基址是GDT
@@ -194,8 +202,10 @@ UINT32 _GetSegmentLimit(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 
 //#VMEXIT处理函数
 #pragma code_seg()
-extern "C" PVOID VmExitHandler(VirtCpuInfo * pVirtCpuInfo, GuestGeneralRegisters * pGuestRegisters)
+extern "C" PVOID VmExitHandler(VirtCpuInfo * pVirtCpuInfo, GuestGeneralRegisters * pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
 {
+	UNREFERENCED_PARAMETER(pHostVmcbPhyAddr);
+
 	PVOID result = NULL;
 	switch ((VmExitReasons)pVirtCpuInfo->guestVmcb.controlFields.exitCode)
 	{
@@ -203,27 +213,78 @@ extern "C" PVOID VmExitHandler(VirtCpuInfo * pVirtCpuInfo, GuestGeneralRegisters
 	{
 		int cpuidResult[4] = {};
 
-		KdPrint(("CPUID Parameter: function = %x, subleaf = %x\n", (int)pVirtCpuInfo->guestVmcb.statusFields.rax, (int)pGuestRegisters->rcx));
+		//KdPrint(("CPUID Parameter: function = %x, subleaf = %x\n", (int)pVirtCpuInfo->guestVmcb.statusFields.rax, (int)pGuestRegisters->rcx));
 
 		__cpuidex(cpuidResult, (int)pVirtCpuInfo->guestVmcb.statusFields.rax, (int)pGuestRegisters->rcx);
 
-		/**reinterpret_cast<UINT32*>(&pVirtCpuInfo->guestVmcb.statusFields.rax) = cpuidResult[0];
+		if (((int)pVirtCpuInfo->guestVmcb.statusFields.rax) == GUEST_CALL_VMM_CPUID_FUNCTION)
+		{
+			switch (pGuestRegisters->rcx)
+			{
+			case 0:
+			{
+				result = (PVOID)pVirtCpuInfo->guestVmcb.controlFields.nRip;
+
+				KdPrint(("Exit virtualization, guest next ip = %p\n", result));
+
+				pGuestRegisters->rbx = pVirtCpuInfo->guestVmcb.statusFields.rsp;
+				*reinterpret_cast<UINT32*>(&pGuestRegisters->rcx) = (UINT32)-1;
+				*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = (UINT32)-1;
+
+				//在退出VMM时打开GIF，否则退出后系统会接收不了中断假死，在进入Host模式的时候GIF是关闭状态
+				__svm_stgi();
+				__svm_vmload((SIZE_T)pGuestVmcbPhyAddr);
+
+				//退出虚拟化并继续执行guest
+				UINT64 eferVal = __readmsr(IA32_MSR_EFER);
+				__writemsr(IA32_MSR_EFER, eferVal & ~(1ULL << EFER_SVME_OFFSET));
+				__writeeflags((UINT32)pVirtCpuInfo->guestVmcb.statusFields.rflags);
+
+				break;
+			}
+			}
+			break;
+		}
+
+		if (((int)pVirtCpuInfo->guestVmcb.statusFields.rax) == CPUID_FN_SVM_FEATURE)
+			cpuidResult[2] &= ~(1UL << CPUID_FN_80000001_ECX_SVM_OFFSET);
+
+		*reinterpret_cast<UINT32*>(&pVirtCpuInfo->guestVmcb.statusFields.rax) = cpuidResult[0];
 		*reinterpret_cast<UINT32*>(&pGuestRegisters->rbx) = cpuidResult[1];
 		*reinterpret_cast<UINT32*>(&pGuestRegisters->rcx) = cpuidResult[2];
-		*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = cpuidResult[3];*/
+		*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = cpuidResult[3];
 
-		pVirtCpuInfo->guestVmcb.statusFields.rax = cpuidResult[0];
-		pGuestRegisters->rbx = cpuidResult[1];
-		pGuestRegisters->rcx = cpuidResult[2];
-		pGuestRegisters->rdx = cpuidResult[3];
+		//KdPrint(("CPUID Result: eax = %x, ebx = %x, ecx = %x, edx = %x\n", (int)pVirtCpuInfo->guestVmcb.statusFields.rax,
+		//	(int)pGuestRegisters->rbx,
+		//	(int)pGuestRegisters->rcx,
+		//	(int)pGuestRegisters->rdx));
+		break;
+	}
+	case VMEXIT_REASON_MSR:
+	{
+		ULARGE_INTEGER value = {};
+		UINT32 msrNum = (UINT32)pGuestRegisters->rcx;
+		bool isWriteAccess = pVirtCpuInfo->guestVmcb.controlFields.exitInfo1;
 
-		KdPrint(("CPUID Result: eax = %x, ebx = %x, ecx = %x, edx = %x\n",  (int)pVirtCpuInfo->guestVmcb.statusFields.rax, 
-																			(int)pGuestRegisters->rbx,
-																			(int)pGuestRegisters->rcx,
-																			(int)pGuestRegisters->rdx));
+		KdPrint(("%s address = %x", isWriteAccess ? "wrmsr" : "rdmsr", msrNum));
 
-		//guest到下一条指令执行，不这样做系统会卡死
-		pVirtCpuInfo->guestVmcb.statusFields.rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
+		if (isWriteAccess)
+		{
+			value.LowPart = (UINT32)pVirtCpuInfo->guestVmcb.statusFields.rax;
+			value.HighPart = (UINT32)pGuestRegisters->rdx;
+
+			//不允许客户机设置 EFER MSR 的 SVME 位
+			if (msrNum == IA32_MSR_EFER && !(value.LowPart & (1UL << EFER_SVME_OFFSET)))
+				KeBugCheck(MANUALLY_INITIATED_CRASH);
+
+			__writemsr(msrNum, value.QuadPart);
+		}
+		else
+		{
+			value.QuadPart = __readmsr(msrNum);
+			*reinterpret_cast<UINT32*>(&pVirtCpuInfo->guestVmcb.statusFields.rax) = value.LowPart;
+			*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = value.HighPart;
+		}
 		break;
 	}
 	case VMEXIT_REASON_VMRUN:
@@ -234,7 +295,10 @@ extern "C" PVOID VmExitHandler(VirtCpuInfo * pVirtCpuInfo, GuestGeneralRegisters
 	default:
 		break;
 	}
-	
+
+	//guest到下一条指令执行
+	pVirtCpuInfo->guestVmcb.statusFields.rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
+
 	return result;
 }
 
@@ -250,6 +314,7 @@ void CPUString(char* outputString)
 	outputString[3 * sizeof(UINT32)] = 0;
 }
 
+//分配MSR拦截标志位map
 #pragma code_seg("PAGE")
 NTSTATUS MsrPremissionsMapManager::Init()
 {
@@ -261,11 +326,14 @@ NTSTATUS MsrPremissionsMapManager::Init()
 	const UINT32 BITS_PER_MSR = 2;
 	const UINT32 SECOND_MSR_RANGE_BASE = 0xc0000000;
 	const UINT32 SECOND_MSRPM_OFFSET = 0x800 * CHAR_BIT;
+	//const UINT32 THIRD_MSR_RANGE_BASE = 0xc0000000;
+	//const UINT32 THIRD_MSRPM_OFFSET = 0x800 * CHAR_BIT;
 	const ULONG EFER_OFFSET = SECOND_MSRPM_OFFSET + ((IA32_MSR_EFER - SECOND_MSR_RANGE_BASE) * BITS_PER_MSR);
+	//const ULONG VM_CR
 	RTL_BITMAP bitmapHeader = {};
 
 	//分配物理连续内存
-	pMsrPremissionsMapVirtAddr = MmAllocateContiguousMemory(2 * PAGE_SIZE, highestPhyAddr);
+	pMsrPremissionsMapVirtAddr = MmAllocateContiguousMemory(2ULL * PAGE_SIZE, highestPhyAddr);
 	if (pMsrPremissionsMapVirtAddr == NULL)
 	{
 		KdPrint(("MsrPremissionsMapManager::Init(): Memory not enough!\n"));
@@ -309,22 +377,22 @@ SVMStatus SVMManager::CheckSVM()
 	do
 	{
 		//查询SMV支持
-		__cpuidex((int*)cpuid_result, 0x80000001, 0);
+		__cpuidex((int*)cpuid_result, CPUID_FN_SVM_FEATURE, 0);
 
-		//ecx 第 1 位 (0 base 下同)
-		if (!(cpuid_result[2] & 0x4))
-			break;
-
-		result = ((SVMStatus)(result | SVMS_ENABLED));
-
-		//查询SVM启用
-		UINT64 msrValue = __readmsr(0xC0010114);
-
-		//eax 第 4 位
-		if (msrValue & 0x10)
+		//CPUID Fn 8000_0001h ecx 第 2 位 (0 base 下同) 是否为 1
+		if (!(cpuid_result[2] & (1UL << CPUID_FN_80000001_ECX_SVM_OFFSET)))
 			break;
 
 		result = ((SVMStatus)(result | SVMS_SUPPORTED));
+
+		//查询SVM启用
+		UINT64 msrValue = __readmsr(IA32_MSR_VM_CR);
+
+		//VM_CR MSR 寄存器 第 4 位 SVMDIS 是否为 0
+		if (msrValue & 1ULL << VM_CR_SVMDIS_OFFSET)
+			break;
+
+		result = ((SVMStatus)(result | SVMS_ENABLED));
 	} while (false);
 
 	return result;
@@ -338,6 +406,7 @@ NTSTATUS SVMManager::Init()
 	UINT32 idx = 0;
 	do
 	{
+		//检查是否支持AMD-V
 		SVMStatus svmStatus = CheckSVM();
 
 		result = STATUS_INSUFFICIENT_RESOURCES;
@@ -360,6 +429,8 @@ NTSTATUS SVMManager::Init()
 			break;
 		}
 
+		//为每一个CPU分配进入虚拟化必备的资源
+		//这里先初始化每个CPU的资源指针
 		cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
 		pVirtCpuInfo = (VirtCpuInfo**)ExAllocatePool2(POOL_FLAG_NON_PAGED, cpuCnt * sizeof(VirtCpuInfo*), SVM_TAG);
 		if (pVirtCpuInfo == NULL || !NT_SUCCESS(msrPremissionMap.Init()))
@@ -369,7 +440,7 @@ NTSTATUS SVMManager::Init()
 		}
 
 		result = STATUS_SUCCESS;
-
+		//为每个CPU分配进入虚拟化所需的内存
 		for (idx = 0; idx < cpuCnt; ++idx)
 		{
 			pVirtCpuInfo[idx] = (VirtCpuInfo*)MmAllocateContiguousMemory(sizeof(VirtCpuInfo), highestPhyAddr);
@@ -386,7 +457,7 @@ NTSTATUS SVMManager::Init()
 			KdPrint(("SVMManager::Init(): Memory not enough!\n"));
 			break;
 		}
-
+		//进入虚拟化
 		result = EnterVirtualization();
 
 		if (!NT_SUCCESS(result))
@@ -409,11 +480,31 @@ void SVMManager::Deinit()
 	PAGED_CODE();
 	if (pVirtCpuInfo != NULL && cpuCnt)
 	{
-		UINT64 idx;
+		UINT64 idx = 0;
+		PROCESSOR_NUMBER processorNum = {};
+		GROUP_AFFINITY affinity = {}, oldAffinity = {};
+
 		for (idx = 0; idx < cpuCnt; ++idx)
 		{
 			if (pVirtCpuInfo[idx] != NULL)
+			{
+				//如果已经进入虚拟化，则按照核心退出虚拟化
+				if (pVirtCpuInfo[idx]->otherInfo.isInVirtualizaion)
+				{
+					KeGetProcessorNumberFromIndex((ULONG)idx, &processorNum);
+
+					affinity = {};
+					affinity.Group = processorNum.Group;
+					affinity.Mask = 1ULL << processorNum.Number;
+					KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
+
+					LeaveVirtualization();
+
+					KeRevertToUserGroupAffinityThread(&oldAffinity);
+				}
 				MmFreeContiguousMemory(pVirtCpuInfo[idx]);
+				pVirtCpuInfo[idx] = NULL;
+			}
 		}
 		ExFreePoolWithTag(pVirtCpuInfo, SVM_TAG);
 		pVirtCpuInfo = NULL;
@@ -446,7 +537,6 @@ NTSTATUS SVMManager::EnterVirtualization()
 
 		if (!pVirtCpuInfo[idx]->otherInfo.isInVirtualizaion)
 		{
-
 			pVirtCpuInfo[idx]->otherInfo.isInVirtualizaion = TRUE;
 
 			UINT64 gdtrBase = 0, idtrBase = 0;
@@ -551,7 +641,7 @@ NTSTATUS SVMManager::EnterVirtualization()
 			//__svm_vmsave((size_t)MmGetPhysicalAddress(&pVirtCpuInfo[idx]->guestVmcb).QuadPart);
 			//__svm_vmsave((size_t)MmGetPhysicalAddress(&pVirtCpuInfo[idx]->hostVmcb).QuadPart);
 
-			RunVM
+			_run_svm_vmrun
 			(
 				pVirtCpuInfo[idx],
 				(PVOID)MmGetPhysicalAddress(&pVirtCpuInfo[idx]->guestVmcb).QuadPart,
@@ -579,4 +669,7 @@ NTSTATUS SVMManager::EnterVirtualization()
 void SVMManager::LeaveVirtualization()
 {
 	PAGED_CODE();
+	int result[4] = {};
+	//调用CPUID指令通知VMM退出
+	__cpuidex(result, GUEST_CALL_VMM_CPUID_FUNCTION, 0);
 }

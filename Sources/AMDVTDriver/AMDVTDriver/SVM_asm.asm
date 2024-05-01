@@ -91,7 +91,7 @@ _save_rip_rsp_rflags Proc
 	ret
 _save_rip_rsp_rflags Endp
 
-RunVM Proc
+_run_svm_vmrun Proc
 ;备份原栈指针
 mov rax, rsp
 ;切换栈
@@ -129,6 +129,15 @@ push rax
 mov rax, [rsp + 10h]
 vmsave rax
 pop rax
+;载入host状态
+push rax
+mov rax, [rsp + 18h]
+vmload rax
+pop rax
+;预留空间保存#VMEXIT处理函数的返回值，并且保持对齐到16字节
+sub rsp, 10h
+mov qword ptr [rsp], 0h;
+mov qword ptr [rsp + 8h], 0h;
 ;备份guest寄存器
 ;rax在VMCB中有保存，这里不保存
 push rbx
@@ -163,21 +172,19 @@ movaps xmmword ptr [rsp + 0D0h], xmm13
 movaps xmmword ptr [rsp + 0E0h], xmm14
 movaps xmmword ptr [rsp + 0F0h], xmm15
 
-;载入host状态
-mov rax, [rsp + 180h]
-vmload rax
-
 ;调用exit handler
 ;pVirtCpuInfo 参数
-mov rcx, [rsp + 170h]
+mov rcx, [rsp + 180h]
 ;pGuestRegisters 参数
 mov rdx, rsp
+;pGuestVmcbPhyAddr 参数
+mov r8, [rsp + 188h]
+;pHostVmcbPhyAddr 参数
+mov r9, [rsp + 190h]
 
 call VmExitHandler
-
-;保存host状态
-mov rax, [rsp + 180h]
-vmsave rax
+;保留#VMEXIT函数的返回值
+mov [rsp + 178h], rax
 
 ;恢复guest寄存器
 movaps xmm0, xmmword ptr [rsp + 000h]
@@ -212,6 +219,17 @@ pop rdx
 pop rcx
 pop rbx
 
+;判断是否已经退出虚拟化，需要跳转到guest的下一条指令
+mov rax, [rsp + 8h]
+add rsp, 10h
+test rax, rax
+jnz exit_virtualization
+
+push rax
+mov rax, [rsp + 18h]
+vmsave rax
+pop rax
+
 ;调回去，执行vmrun再次进入guest
 jmp enter_guest
 
@@ -223,6 +241,10 @@ mov rax, [rsp + 20h]
 mov rsp, rax
 ret
 
-RunVM Endp
+exit_virtualization:
+mov rsp, rbx
+jmp rax
+
+_run_svm_vmrun Endp
 
 End

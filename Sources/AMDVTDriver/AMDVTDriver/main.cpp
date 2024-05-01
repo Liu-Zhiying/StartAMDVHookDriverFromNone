@@ -21,7 +21,7 @@ public:
 		do
 		{
 			SIZE_T idx = 0;
-			for (idx = 0; idx < GetArrayElementCnt(subManagers); idx++)
+			for (idx = 0; idx < GetArrayElementCnt(subManagers); ++idx)
 			{
 				status = subManagers[idx]->Init();
 				if (!NT_SUCCESS(status))
@@ -37,8 +37,8 @@ public:
 	{
 		PAGED_CODE();
 		SIZE_T idx = 0;
-		for (idx = 0; idx < GetArrayElementCnt(subManagers); idx++)
-			subManagers[idx]->Deinit();
+		for (idx = GetArrayElementCnt(subManagers); idx; --idx)
+			subManagers[idx - 1]->Deinit();
 	}
 	#pragma code_seg("PAGE")
 	virtual ~GlobalManager()
@@ -77,8 +77,6 @@ void UnloadDriver(IN PDRIVER_OBJECT drvObj)
 	}
 	KdPrint(("AMD-V driver has exited\n"));
 }
-
-extern "C" void RunVM(VirtCpuInfo * pInfo, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr, PVOID pStack);
 
 #pragma code_seg("INIT")
 extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject,
