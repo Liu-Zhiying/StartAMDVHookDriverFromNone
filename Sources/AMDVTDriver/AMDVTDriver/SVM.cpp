@@ -118,6 +118,46 @@ struct GuestGeneralRegisters
 	UINT64 rbx;
 };
 
+struct GenericRegisters
+{
+	M128A xmm0;
+	M128A xmm1;
+	M128A xmm2;
+	M128A xmm3;
+	M128A xmm4;
+	M128A xmm5;
+	M128A xmm6;
+	M128A xmm7;
+	M128A xmm8;
+	M128A xmm9;
+	M128A xmm10;
+	M128A xmm11;
+	M128A xmm12;
+	M128A xmm13;
+	M128A xmm14;
+	M128A xmm15;
+	UINT64 r15;
+	UINT64 r14;
+	UINT64 r13;
+	UINT64 r12;
+	UINT64 r11;
+	UINT64 r10;
+	UINT64 r9;
+	UINT64 r8;
+	UINT64 rbp;
+	UINT64 rsi;
+	UINT64 rdi;
+	UINT64 rdx;
+	UINT64 rcx;
+	UINT64 rbx;
+	UINT64 rax;
+	UINT64 rflags;
+	UINT64 rip;
+	UINT64 rsp;
+	UINT64 extraInfo1;
+	UINT64 extraInfo2;
+};
+
 //一系列汇编函数
 //源代码在SVM_asm.asm里面
 //主要都是寄存器读取操作
@@ -131,8 +171,8 @@ extern "C" UINT16 _es_selector();
 extern "C" UINT16 _fs_selector();
 extern "C" UINT16 _gs_selector();
 extern "C" UINT16 _ss_selector();
-//获取函数当前Rflags和退出函数后的第一条指令的地址（RIP）
-extern "C" void _save_rip_rsp_rflags(PUINT64 pRip, PUINT64 pRsp, PUINT64 pRflags);
+//用于备份和还原寄存器上下文
+extern "C" void _save_or_load_regs(GenericRegisters* pRegisters);
 //执行vmrun相关操作
 extern "C" void _run_svm_vmrun(VirtCpuInfo * pInfo, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr, PVOID pStack);
 
@@ -532,8 +572,10 @@ NTSTATUS SVMManager::EnterVirtualization()
 		affinity.Mask = 1ULL << processorNum.Number;
 		KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
 
-		UINT64 rflags = 0, rsp = 0, rip = 0;
-		_save_rip_rsp_rflags(&rip, &rsp, &rflags);
+		GenericRegisters registerBackup = {};
+		_save_or_load_regs(&registerBackup);
+
+		registerBackup.rax = (UINT64)&registerBackup;
 
 		if (!pVirtCpuInfo[idx]->otherInfo.isInVirtualizaion)
 		{
@@ -629,9 +671,10 @@ NTSTATUS SVMManager::EnterVirtualization()
 			pVirtCpuInfo[idx]->guestVmcb.statusFields.cr2 = __readcr2();
 			pVirtCpuInfo[idx]->guestVmcb.statusFields.cr3 = __readcr3();
 			pVirtCpuInfo[idx]->guestVmcb.statusFields.cr4 = __readcr4();
-			pVirtCpuInfo[idx]->guestVmcb.statusFields.rflags = rflags;
-			pVirtCpuInfo[idx]->guestVmcb.statusFields.rsp = rsp;
-			pVirtCpuInfo[idx]->guestVmcb.statusFields.rip = rip;
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.rax = registerBackup.rax;
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.rflags = registerBackup.rflags;
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.rsp = registerBackup.rsp;
+			pVirtCpuInfo[idx]->guestVmcb.statusFields.rip = registerBackup.rip;
 			pVirtCpuInfo[idx]->guestVmcb.statusFields.gPat = __readmsr(IA32_MSR_PAT);
 
 			pVirtCpuInfo[idx]->guestVmcb.statusFields.cpl = _cs_selector() & 0x3;

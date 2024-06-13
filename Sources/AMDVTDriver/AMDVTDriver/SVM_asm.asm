@@ -74,22 +74,117 @@ _ss_selector Proc
 	ret
 _ss_selector Endp
 
-_save_rip_rsp_rflags Proc
-	;取函数返回之后的第一条地址
-	mov rax, [rsp]
-	mov [rcx], rax
-	;取函数返回之后的rsp，加8抵消call压入的返回地址
-	mov rax, rsp
-	add rax, 8h
-	mov [rdx], rax
+_save_or_load_regs Proc	
+	movaps xmmword ptr [rcx + 000h], xmm0
+	movaps xmmword ptr [rcx + 010h], xmm1
+	movaps xmmword ptr [rcx + 020h], xmm2
+	movaps xmmword ptr [rcx + 030h], xmm3
+	movaps xmmword ptr [rcx + 040h], xmm4
+	movaps xmmword ptr [rcx + 050h], xmm5
+	movaps xmmword ptr [rcx + 060h], xmm6
+	movaps xmmword ptr [rcx + 070h], xmm7
+	movaps xmmword ptr [rcx + 080h], xmm8
+	movaps xmmword ptr [rcx + 090h], xmm9
+	movaps xmmword ptr [rcx + 0A0h], xmm10
+	movaps xmmword ptr [rcx + 0B0h], xmm11
+	movaps xmmword ptr [rcx + 0C0h], xmm12
+	movaps xmmword ptr [rcx + 0D0h], xmm13
+	movaps xmmword ptr [rcx + 0E0h], xmm14
+	movaps xmmword ptr [rcx + 0F0h], xmm15
+	mov [rcx + 100h], r15
+	mov [rcx + 108h], r14
+	mov [rcx + 110h], r13
+	mov [rcx + 118h], r12
+	mov [rcx + 120h], r11
+	mov [rcx + 128h], r10
+	mov [rcx + 130h], r9
+	mov [rcx + 138h], r8
+	mov [rcx + 140h], rbp
+	mov [rcx + 148h], rsi
+	mov [rcx + 150h], rdi
+	mov [rcx + 158h], rdx
+	mov [rcx + 160h], rcx
+	mov [rcx + 168h], rbx
+	mov qword ptr [rcx + 170h], 0h
+	
 	;取当前Rflags
 	pushfq
 	mov rax, [rsp]
-	mov [r8], rax
+	mov [rcx + 178h], rax
 	popfq
 
+	;把rip指向判断是否load寄存器的位置
+	mov rax, offset if_load_regs
+	mov [rcx + 180h], rax
+
+	;取rsp，这个值没啥用
+	mov [rcx + 188h], rsp
+	
+	;取函数返回之后的第一条地址
+	;如果是进入虚拟化之后执行到if_load_regs时，这个会作为load寄存器之后的执行地址
+	mov rax, [rsp]
+	mov [rcx + 190h], rax
+
+	;取函数返回之后的rsp，加8抵消call压入的返回地址
+	;如果是进入虚拟化之后执行到if_load_regs时，这个会作为最后还原的rsp
+	mov rax, rsp
+	add rax, 8h
+	mov [rcx + 198h], rax
+
+	;rax置0，跳过load寄存器
+	;如果是进入虚拟化之后再次执行到if_load_regs
+	;因为rax参数设置，会load寄存器
+
+	mov rax, 0h
+
+if_load_regs:
+	test rax, rax
+	jz return
+
+	movaps xmm0, xmmword ptr [rax + 000h]
+	movaps xmm1, xmmword ptr [rax + 010h]
+	movaps xmm2, xmmword ptr [rax + 020h]
+	movaps xmm3, xmmword ptr [rax + 030h]
+	movaps xmm4, xmmword ptr [rax + 040h]
+	movaps xmm5, xmmword ptr [rax + 050h]
+	movaps xmm6, xmmword ptr [rax + 060h]
+	movaps xmm7, xmmword ptr [rax + 070h]
+	movaps xmm8, xmmword ptr [rax + 080h]
+	movaps xmm9, xmmword ptr [rax + 090h]
+	movaps xmm10, xmmword ptr [rax + 0A0h]
+	movaps xmm11, xmmword ptr [rax + 0B0h] 
+	movaps xmm12, xmmword ptr [rax + 0C0h] 
+	movaps xmm13, xmmword ptr [rax + 0D0h]
+	movaps xmm14, xmmword ptr [rax + 0E0h]
+	movaps xmm15, xmmword ptr [rax + 0F0h]
+	mov r15, [rax + 100h]
+	mov r14, [rax + 108h]
+	mov r13, [rax + 110h]
+	mov r12, [rax + 118h]
+	mov r11, [rax + 120h]
+	mov r10, [rax + 128h]
+	mov r9, [rax + 130h] 
+	mov r8, [rax + 138h]
+	mov rbp, [rax + 140h]
+	mov rsi, [rax + 148h] 
+	mov rdi, [rax + 150h]
+	mov rdx, [rax + 158h]
+	mov rcx, [rax + 160h]
+	mov rbx, [rax + 168h]
+	;rax 不还原
+	;mov rax, [rcx + 170h]
+	;还原rflags
+	push qword ptr [rcx + 178h]
+	popfq
+	;还原rsp
+	mov rsp, [rax + 198h]
+	;跳转指令
+	mov rax, [rax + 190h]
+	jmp rax
+
+return:
 	ret
-_save_rip_rsp_rflags Endp
+_save_or_load_regs Endp
 
 _run_svm_vmrun Proc
 ;备份原栈指针
