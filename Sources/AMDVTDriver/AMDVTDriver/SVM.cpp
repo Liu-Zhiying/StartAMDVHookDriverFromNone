@@ -83,41 +83,7 @@ typedef struct _SEGMENT_ATTRIBUTE
 } SEGMENT_ATTRIBUTE, * PSEGMENT_ATTRIBUTE;
 
 // 传入 #VMEXIT 处理函数，用于处理修改guest寄存器状态
-// rax在VMCB中有保存，这里不保存
-struct GuestGeneralRegisters
-{
-	M128A xmm0;
-	M128A xmm1;
-	M128A xmm2;
-	M128A xmm3;
-	M128A xmm4;
-	M128A xmm5;
-	M128A xmm6;
-	M128A xmm7;
-	M128A xmm8;
-	M128A xmm9;
-	M128A xmm10;
-	M128A xmm11;
-	M128A xmm12;
-	M128A xmm13;
-	M128A xmm14;
-	M128A xmm15;
-	UINT64 r15;
-	UINT64 r14;
-	UINT64 r13;
-	UINT64 r12;
-	UINT64 r11;
-	UINT64 r10;
-	UINT64 r9;
-	UINT64 r8;
-	UINT64 rbp;
-	UINT64 rsi;
-	UINT64 rdi;
-	UINT64 rdx;
-	UINT64 rcx;
-	UINT64 rbx;
-};
-
+// 也用于 进入虚拟化前后的寄存器备份和恢复
 struct GenericRegisters
 {
 	M128A xmm0;
@@ -242,11 +208,15 @@ UINT32 _GetSegmentLimit(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 
 //#VMEXIT处理函数
 #pragma code_seg()
-extern "C" PVOID VmExitHandler(VirtCpuInfo * pVirtCpuInfo, GuestGeneralRegisters * pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
+extern "C" void VmExitHandler(VirtCpuInfo * pVirtCpuInfo, GenericRegisters * pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
 {
 	UNREFERENCED_PARAMETER(pHostVmcbPhyAddr);
+	UNREFERENCED_PARAMETER(pGuestVmcbPhyAddr);
 
-	PVOID result = NULL;
+	//先清空寄存器，代表这次执行货不退出虚拟机
+	pGuestRegisters->extraInfo1 = 0;
+	pGuestRegisters->extraInfo2 = 0;
+
 	switch ((VmExitReasons)pVirtCpuInfo->guestVmcb.controlFields.exitCode)
 	{
 	case VMEXIT_REASON_CPUID:
@@ -263,17 +233,16 @@ extern "C" PVOID VmExitHandler(VirtCpuInfo * pVirtCpuInfo, GuestGeneralRegisters
 			{
 			case 0:
 			{
-				result = (PVOID)pVirtCpuInfo->guestVmcb.controlFields.nRip;
-
-				KdPrint(("Exit virtualization, guest next ip = %p\n", result));
-
-				pGuestRegisters->rbx = pVirtCpuInfo->guestVmcb.statusFields.rsp;
-				*reinterpret_cast<UINT32*>(&pGuestRegisters->rcx) = (UINT32)-1;
-				*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = (UINT32)-1;
+				//设置退出虚拟化之后的指令寄存器和栈寄存器
+				pGuestRegisters->extraInfo1 = pVirtCpuInfo->guestVmcb.controlFields.nRip;
+				pGuestRegisters->extraInfo2 = pVirtCpuInfo->guestVmcb.statusFields.rsp;
+				
+				//设置RFlags
+				pGuestRegisters->rflags = pVirtCpuInfo->guestVmcb.statusFields.rflags;
 
 				//在退出VMM时打开GIF，否则退出后系统会接收不了中断假死，在进入Host模式的时候GIF是关闭状态
 				__svm_stgi();
-				__svm_vmload((SIZE_T)pGuestVmcbPhyAddr);
+				__svm_vmsave((SIZE_T)pGuestVmcbPhyAddr);
 
 				//退出虚拟化并继续执行guest
 				UINT64 eferVal = __readmsr(IA32_MSR_EFER);
@@ -339,7 +308,7 @@ extern "C" PVOID VmExitHandler(VirtCpuInfo * pVirtCpuInfo, GuestGeneralRegisters
 	//guest到下一条指令执行
 	pVirtCpuInfo->guestVmcb.statusFields.rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
 
-	return result;
+	return;
 }
 
 #pragma code_seg("PAGE")
@@ -575,10 +544,11 @@ NTSTATUS SVMManager::EnterVirtualization()
 		GenericRegisters registerBackup = {};
 		_save_or_load_regs(&registerBackup);
 
-		registerBackup.rax = (UINT64)&registerBackup;
-
 		if (!pVirtCpuInfo[idx]->otherInfo.isInVirtualizaion)
 		{
+			//标记进入虚拟化之后，需要恢复的寄存器
+			registerBackup.rax = (UINT64)&registerBackup;
+			//标记已经进入过虚拟化
 			pVirtCpuInfo[idx]->otherInfo.isInVirtualizaion = TRUE;
 
 			UINT64 gdtrBase = 0, idtrBase = 0;

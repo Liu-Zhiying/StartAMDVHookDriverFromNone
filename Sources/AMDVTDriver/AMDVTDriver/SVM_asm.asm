@@ -189,12 +189,15 @@ _save_or_load_regs Endp
 _run_svm_vmrun Proc
 ;备份原栈指针
 mov rax, rsp
+
 ;切换栈
 mov rsp, r9
+
 ;把原来的栈指针压到内存中
 ;多一个push是为了rsp对齐到16
 push rax
 push rax
+
 ;备份参数
 push r9
 push r8
@@ -207,9 +210,12 @@ mov rax, [rsp + 8h]
 vmload rax
 ;进入guest模式
 vmrun rax
+
+;备份rax
+push rax
+
 ;检查exitcode是否是 VMEXIT_INVALID(-1) VMEXIT_BUSY(-2) VMEXIT_IDLE_REQUIRED(-3)
 ;如果是，转到return标号，这个标号会负责切换会原栈指针并返回，返回之后直接蓝屏（见EnterVirtualization中调用RunVM之后的代码）
-push rax
 mov rax, [rsp + 8h]
 mov rax, [rax + 70h]
 cmp rax, -1
@@ -218,23 +224,28 @@ cmp rax, -2
 je return
 cmp rax, -3
 je return
-pop rax
+
 ;保存guest状态
-push rax
 mov rax, [rsp + 10h]
 vmsave rax
-pop rax
+
 ;载入host状态
-push rax
 mov rax, [rsp + 18h]
 vmload rax
+
+;还原rax
 pop rax
-;预留空间保存#VMEXIT处理函数的返回值，并且保持对齐到16字节
-sub rsp, 10h
-mov qword ptr [rsp], 0h;
-mov qword ptr [rsp + 8h], 0h;
+
+sub rsp, 20h
+
 ;备份guest寄存器
 ;rax在VMCB中有保存，这里不保存
+push 0
+push 0
+push 0
+push 0
+push 0
+push 0
 push rbx
 push rcx
 push rdx
@@ -269,17 +280,15 @@ movaps xmmword ptr [rsp + 0F0h], xmm15
 
 ;调用exit handler
 ;pVirtCpuInfo 参数
-mov rcx, [rsp + 180h]
+mov rcx, [rsp + 1C0h]
 ;pGuestRegisters 参数
 mov rdx, rsp
 ;pGuestVmcbPhyAddr 参数
-mov r8, [rsp + 188h]
+mov r8, [rsp + 1C8h]
 ;pHostVmcbPhyAddr 参数
-mov r9, [rsp + 190h]
+mov r9, [rsp + 1D0h]
 
 call VmExitHandler
-;保留#VMEXIT函数的返回值
-mov [rsp + 178h], rax
 
 ;恢复guest寄存器
 movaps xmm0, xmmword ptr [rsp + 000h]
@@ -313,17 +322,24 @@ pop rdi
 pop rdx
 pop rcx
 pop rbx
+add rsp, 30h
+
+;备份rax
+mov [rsp], rax
 
 ;判断是否已经退出虚拟化，需要跳转到guest的下一条指令
-mov rax, [rsp + 8h]
-add rsp, 10h
+mov rax, [rsp - 8h]
 test rax, rax
 jnz exit_virtualization
 
-push rax
-mov rax, [rsp + 18h]
+;保存host状态
+mov rax, [rsp + 30h]
 vmsave rax
-pop rax
+
+;还原rax
+mov rax, [rsp]
+
+add rsp, 20h
 
 ;调回去，执行vmrun再次进入guest
 jmp enter_guest
@@ -337,8 +353,23 @@ mov rsp, rax
 ret
 
 exit_virtualization:
-mov rsp, rbx
-jmp rax
+mov [rsp + 8], rbx
+add rsp, 10h
+mov rax, [rsp - 18h]
+sub rax, 20h
+mov rbx, [rsp - 20h]
+mov [rax + 18h], rbx
+mov rbx, [rsp - 10h]
+mov [rax + 10h], rbx
+mov rbx, [rsp - 8h]
+mov [rax + 8h], rbx
+mov rbx, [rsp - 38h]
+mov [rax], rbx
+mov rsp, rax
+popfq
+pop rbx
+pop rax
+ret
 
 _run_svm_vmrun Endp
 
