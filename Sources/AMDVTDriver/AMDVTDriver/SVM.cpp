@@ -282,8 +282,9 @@ extern "C" void VmExitHandler(VirtCpuInfo * pVirtCpuInfo, GenericRegisters * pGu
 			value.LowPart = (UINT32)pVirtCpuInfo->guestVmcb.statusFields.rax;
 			value.HighPart = (UINT32)pGuestRegisters->rdx;
 
-			//不允许客户机设置 EFER MSR 的 SVME 位
-			if (msrNum == IA32_MSR_EFER && !(value.LowPart & (1UL << EFER_SVME_OFFSET)))
+			//不允许客户机设置 EFER MSR 的 SVME 位 和 VM_CR MSR 的 SVMDIS 位
+			if (msrNum == IA32_MSR_EFER && !(value.LowPart & (1UL << EFER_SVME_OFFSET)) || 
+				msrNum == IA32_MSR_VM_CR && !(value.LowPart & (1ULL << VM_CR_SVMDIS_OFFSET)))
 				KeBugCheck(MANUALLY_INITIATED_CRASH);
 
 			__writemsr(msrNum, value.QuadPart);
@@ -291,6 +292,12 @@ extern "C" void VmExitHandler(VirtCpuInfo * pVirtCpuInfo, GenericRegisters * pGu
 		else
 		{
 			value.QuadPart = __readmsr(msrNum);
+
+			if (msrNum == IA32_MSR_VM_CR)
+				value.QuadPart |= (1ULL << VM_CR_SVMDIS_OFFSET);
+			if (msrNum == IA32_MSR_EFER)
+				value.QuadPart &= ~(1UL << EFER_SVME_OFFSET);
+
 			*reinterpret_cast<UINT32*>(&pVirtCpuInfo->guestVmcb.statusFields.rax) = value.LowPart;
 			*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = value.HighPart;
 		}
@@ -333,12 +340,14 @@ NTSTATUS MsrPremissionsMapManager::Init()
 		return STATUS_SUCCESS;
 
 	const UINT32 BITS_PER_MSR = 2;
+	const UINT32 FIRST_MSR_RANGE_BASE = 0x00000000;
+	const UINT32 FIRST_MSRPM_OFFSET = 0x000 * CHAR_BIT;
 	const UINT32 SECOND_MSR_RANGE_BASE = 0xc0000000;
 	const UINT32 SECOND_MSRPM_OFFSET = 0x800 * CHAR_BIT;
-	//const UINT32 THIRD_MSR_RANGE_BASE = 0xc0000000;
-	//const UINT32 THIRD_MSRPM_OFFSET = 0x800 * CHAR_BIT;
+	const UINT32 THIRD_MSR_RANGE_BASE = 0xc0010000;
+	const UINT32 THIRD_MSRPM_OFFSET = 0x1000 * CHAR_BIT;
 	const ULONG EFER_OFFSET = SECOND_MSRPM_OFFSET + ((IA32_MSR_EFER - SECOND_MSR_RANGE_BASE) * BITS_PER_MSR);
-	//const ULONG VM_CR
+	const ULONG VM_CR_OFFSET = THIRD_MSRPM_OFFSET + ((IA32_MSR_VM_CR - THIRD_MSR_RANGE_BASE) * BITS_PER_MSR);
 	RTL_BITMAP bitmapHeader = {};
 
 	//分配物理连续内存
@@ -352,7 +361,15 @@ NTSTATUS MsrPremissionsMapManager::Init()
 	//初始化内存的值
 	RtlInitializeBitMap(&bitmapHeader, (PULONG)pMsrPremissionsMapVirtAddr, 2 * PAGE_SIZE * CHAR_BIT);
 	RtlClearAllBits(&bitmapHeader);
+
+	//EFER读取拦截
+	RtlSetBits(&bitmapHeader, EFER_OFFSET, 1);
+	//EFER写入拦截
 	RtlSetBits(&bitmapHeader, EFER_OFFSET + 1, 1);
+	//VM_CR读取拦截
+	RtlSetBits(&bitmapHeader, VM_CR_OFFSET, 1);
+	//VM_CR写入拦截
+	RtlSetBits(&bitmapHeader, VM_CR_OFFSET + 1, 1);
 
 	//获取物理地址
 	pMsrPremissionsMapPhyAddr = (PVOID)MmGetPhysicalAddress(pMsrPremissionsMapVirtAddr).QuadPart;
