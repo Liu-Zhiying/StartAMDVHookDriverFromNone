@@ -2,6 +2,7 @@
 #include <wdm.h>
 #include <stdio.h>
 #include "SVM.h"
+#include "Hook.h"
 #include "PageTable.h"
 
 #pragma code_seg()
@@ -11,12 +12,29 @@ class GlobalManager : public IManager
 {
 	PageTableManager ptManager;
 	SVMManager svmManager;
-	IManager* subManagers[2] = { &ptManager, &svmManager };
+	MsrHookManager<1> msrHookManager;
+	IManager* subManagers[3] = { &msrHookManager, &ptManager, &svmManager };
 public:
+
+	#pragma code_seg("PAGE")
+	void SetMsrHookParameters()
+	{
+		PAGED_CODE();
+
+		//设置要hook的msr
+		UINT32 msrNums[1] = { 0xC0000082 };
+		msrHookManager.SetHookMsrs(msrNums);
+
+		//和SVMManager绑定
+		svmManager.SetCpuIdInterceptPlugin(&msrHookManager);
+		svmManager.SetMsrInterceptPlugin(&msrHookManager);
+	}
+
 	#pragma code_seg("PAGE")
 	virtual NTSTATUS Init() override
 	{
 		PAGED_CODE();
+		SetMsrHookParameters();
 		NTSTATUS status = STATUS_SUCCESS;
 		do
 		{

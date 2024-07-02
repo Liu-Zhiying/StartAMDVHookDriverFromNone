@@ -82,48 +82,6 @@ typedef struct _SEGMENT_ATTRIBUTE
 	};
 } SEGMENT_ATTRIBUTE, * PSEGMENT_ATTRIBUTE;
 
-// 传入 #VMEXIT 处理函数，用于处理修改guest寄存器状态
-// 也用于 进入虚拟化前后的寄存器备份和恢复
-struct GenericRegisters
-{
-	M128A xmm0;
-	M128A xmm1;
-	M128A xmm2;
-	M128A xmm3;
-	M128A xmm4;
-	M128A xmm5;
-	M128A xmm6;
-	M128A xmm7;
-	M128A xmm8;
-	M128A xmm9;
-	M128A xmm10;
-	M128A xmm11;
-	M128A xmm12;
-	M128A xmm13;
-	M128A xmm14;
-	M128A xmm15;
-	UINT64 r15;
-	UINT64 r14;
-	UINT64 r13;
-	UINT64 r12;
-	UINT64 r11;
-	UINT64 r10;
-	UINT64 r9;
-	UINT64 r8;
-	UINT64 rbp;
-	UINT64 rsi;
-	UINT64 rdi;
-	UINT64 rdx;
-	UINT64 rcx;
-	UINT64 rbx;
-	UINT64 rax;
-	UINT64 rflags;
-	UINT64 rip;
-	UINT64 rsp;
-	UINT64 extraInfo1;
-	UINT64 extraInfo2;
-};
-
 //一系列汇编函数
 //源代码在SVM_asm.asm里面
 //主要都是寄存器读取操作
@@ -223,6 +181,10 @@ extern "C" void VmExitHandler(VirtCpuInfo * pVirtCpuInfo, GenericRegisters * pGu
 	{
 		int cpuidResult[4] = {};
 
+		if (pVirtCpuInfo->otherInfo.pMsrInterceptPlugin != NULL &&
+			pVirtCpuInfo->otherInfo.pCpuIdInterceptPlugin->HandleCpuid(pGuestRegisters, &pVirtCpuInfo->guestVmcb.statusFields.rax))
+			return;
+
 		//KdPrint(("CPUID Parameter: function = %x, subleaf = %x\n", (int)pVirtCpuInfo->guestVmcb.statusFields.rax, (int)pGuestRegisters->rcx));
 
 		__cpuidex(cpuidResult, (int)pVirtCpuInfo->guestVmcb.statusFields.rax, (int)pGuestRegisters->rcx);
@@ -282,6 +244,10 @@ extern "C" void VmExitHandler(VirtCpuInfo * pVirtCpuInfo, GenericRegisters * pGu
 			value.LowPart = (UINT32)pVirtCpuInfo->guestVmcb.statusFields.rax;
 			value.HighPart = (UINT32)pGuestRegisters->rdx;
 
+			if (pVirtCpuInfo->otherInfo.pMsrInterceptPlugin != NULL &&
+				pVirtCpuInfo->otherInfo.pMsrInterceptPlugin->HandleMsrInterceptWrite(msrNum, value))
+				return;
+
 			//不允许客户机设置 EFER MSR 的 SVME 位 和 VM_CR MSR 的 SVMDIS 位
 			if (msrNum == IA32_MSR_EFER && !(value.LowPart & (1UL << EFER_SVME_OFFSET)) || 
 				msrNum == IA32_MSR_VM_CR && !(value.LowPart & (1ULL << VM_CR_SVMDIS_OFFSET)))
@@ -291,12 +257,20 @@ extern "C" void VmExitHandler(VirtCpuInfo * pVirtCpuInfo, GenericRegisters * pGu
 		}
 		else
 		{
-			value.QuadPart = __readmsr(msrNum);
+			if (pVirtCpuInfo->otherInfo.pMsrInterceptPlugin != NULL &&
+				pVirtCpuInfo->otherInfo.pMsrInterceptPlugin->HandleMsrImterceptRead(msrNum, &value))
+			{
 
-			if (msrNum == IA32_MSR_VM_CR)
-				value.QuadPart |= (1ULL << VM_CR_SVMDIS_OFFSET);
-			if (msrNum == IA32_MSR_EFER)
-				value.QuadPart &= ~(1UL << EFER_SVME_OFFSET);
+			}
+			else
+			{
+				value.QuadPart = __readmsr(msrNum);
+
+				if (msrNum == IA32_MSR_VM_CR)
+					value.QuadPart |= (1ULL << VM_CR_SVMDIS_OFFSET);
+				if (msrNum == IA32_MSR_EFER)
+					value.QuadPart &= ~(1UL << EFER_SVME_OFFSET);
+			}
 
 			*reinterpret_cast<UINT32*>(&pVirtCpuInfo->guestVmcb.statusFields.rax) = value.LowPart;
 			*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = value.HighPart;
@@ -340,8 +314,8 @@ NTSTATUS MsrPremissionsMapManager::Init()
 		return STATUS_SUCCESS;
 
 	const UINT32 BITS_PER_MSR = 2;
-	const UINT32 FIRST_MSR_RANGE_BASE = 0x00000000;
-	const UINT32 FIRST_MSRPM_OFFSET = 0x000 * CHAR_BIT;
+	//const UINT32 FIRST_MSR_RANGE_BASE = 0x00000000;
+	//const UINT32 FIRST_MSRPM_OFFSET = 0x000 * CHAR_BIT;
 	const UINT32 SECOND_MSR_RANGE_BASE = 0xc0000000;
 	const UINT32 SECOND_MSRPM_OFFSET = 0x800 * CHAR_BIT;
 	const UINT32 THIRD_MSR_RANGE_BASE = 0xc0010000;
@@ -370,6 +344,9 @@ NTSTATUS MsrPremissionsMapManager::Init()
 	RtlSetBits(&bitmapHeader, VM_CR_OFFSET, 1);
 	//VM_CR写入拦截
 	RtlSetBits(&bitmapHeader, VM_CR_OFFSET + 1, 1);
+
+	if (pMsrInterceptPlugin != NULL)
+		pMsrInterceptPlugin->SetMsrPremissionMap(bitmapHeader);
 
 	//获取物理地址
 	pMsrPremissionsMapPhyAddr = (PVOID)MmGetPhysicalAddress(pMsrPremissionsMapVirtAddr).QuadPart;
@@ -455,6 +432,8 @@ NTSTATUS SVMManager::Init()
 			break;
 		}
 
+		msrPremissionMap.SetPlugin(pMsrInterceptPlugin);
+
 		//为每一个CPU分配进入虚拟化必备的资源
 		//这里先初始化每个CPU的资源指针
 		cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
@@ -476,6 +455,8 @@ NTSTATUS SVMManager::Init()
 				break;
 			}
 			RtlZeroMemory(pVirtCpuInfo[idx], sizeof(VirtCpuInfo));
+			pVirtCpuInfo[idx]->otherInfo.pMsrInterceptPlugin = pMsrInterceptPlugin;
+			pVirtCpuInfo[idx]->otherInfo.pCpuIdInterceptPlugin = pCpuIdInterceptPlugin;
 		}
 
 		if (!NT_SUCCESS(result))

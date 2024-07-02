@@ -106,17 +106,20 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Basic.cpp" />
+    <ClCompile Include="Hook.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="PageTable.cpp" />
     <ClCompile Include="SVM.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Basic.h" />
+    <ClInclude Include="Hook.h" />
     <ClInclude Include="PageTable.h" />
     <ClInclude Include="SVM.h" />
     <ClInclude Include="VMCB.h" />
   </ItemGroup>
   <ItemGroup>
+    <MASM Include="Hook_asm.asm" />
     <MASM Include="SVM_asm.asm" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

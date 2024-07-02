@@ -31,6 +31,9 @@
     <ClCompile Include="Basic.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Hook.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Basic.h">
@@ -45,9 +48,15 @@
     <ClInclude Include="SVM.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Hook.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <MASM Include="SVM_asm.asm">
+      <Filter>Source Files</Filter>
+    </MASM>
+    <MASM Include="Hook_asm.asm">
       <Filter>Source Files</Filter>
     </MASM>
   </ItemGroup>
