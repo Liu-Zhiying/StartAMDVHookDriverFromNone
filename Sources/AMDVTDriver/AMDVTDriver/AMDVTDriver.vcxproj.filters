@@ -34,6 +34,9 @@
     <ClCompile Include="Hook.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="HookSysCallTest.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Basic.h">
@@ -57,6 +60,9 @@
       <Filter>Source Files</Filter>
     </MASM>
     <MASM Include="Hook_asm.asm">
+      <Filter>Source Files</Filter>
+    </MASM>
+    <MASM Include="HookSysCallTest_asm.asm">
       <Filter>Source Files</Filter>
     </MASM>
   </ItemGroup>

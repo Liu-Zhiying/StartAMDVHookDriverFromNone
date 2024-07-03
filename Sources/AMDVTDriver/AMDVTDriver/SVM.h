@@ -46,25 +46,8 @@ struct GenericRegisters
 	UINT64 extraInfo2;
 };
 
-class IMsrInterceptPlugin
-{
-public:
-	//设置拦截的msr寄存器
-	virtual void SetMsrPremissionMap(RTL_BITMAP& bitmap) = 0;
-	//处理拦截的msr读取，true代表已经处理，false代表未处理
-	virtual bool HandleMsrImterceptRead(UINT32 msrNum, PULARGE_INTEGER msrValueOut) = 0;
-	//处理拦截的Mst写入，true代表已经处理，false代表未处理
-	virtual bool HandleMsrInterceptWrite(UINT32 msrNum, ULARGE_INTEGER mstValueIn) = 0;
-	virtual ~IMsrInterceptPlugin() {}
-};
-
-class ICpuidInterceptPlugin
-{
-public:
-	//处理拦截的cpuid指令，true代表已经处理，false代表未处理
-	virtual bool HandleCpuid(GenericRegisters* pRegisters, PTR_TYPE* pRax) = 0;
-	virtual ~ICpuidInterceptPlugin() {}
-};
+class IMsrInterceptPlugin;
+class ICpuidInterceptPlugin;
 
 struct VirtCpuInfo
 {
@@ -78,6 +61,31 @@ struct VirtCpuInfo
 		IMsrInterceptPlugin* pMsrInterceptPlugin;
 		ICpuidInterceptPlugin* pCpuIdInterceptPlugin;
 	} otherInfo;
+};
+
+class IMsrInterceptPlugin
+{
+public:
+	//设置拦截的msr寄存器
+	virtual void SetMsrPremissionMap(RTL_BITMAP& bitmap) = 0;
+	//处理拦截的msr读取，true代表已经处理，false代表未处理
+	virtual bool HandleMsrImterceptRead(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, 
+										PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr, 
+										UINT32 msrNum, PULARGE_INTEGER msrValueOut) = 0;
+	//处理拦截的Mst写入，true代表已经处理，false代表未处理
+	virtual bool HandleMsrInterceptWrite(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
+										 PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr, 
+										 UINT32 msrNum, ULARGE_INTEGER mstValueIn) = 0;
+	virtual ~IMsrInterceptPlugin() {}
+};
+
+class ICpuidInterceptPlugin
+{
+public:
+	//处理拦截的cpuid指令，true代表已经处理，false代表未处理
+	virtual bool HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
+							 PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) = 0;
+	virtual ~ICpuidInterceptPlugin() {}
 };
 
 //VMCB的msrpmBasePA指向的内容，全局只需要一份

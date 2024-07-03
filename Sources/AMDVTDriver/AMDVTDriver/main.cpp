@@ -1,9 +1,13 @@
 #include <ntddk.h>
 #include <wdm.h>
 #include <stdio.h>
+#include <intrin.h>
 #include "SVM.h"
 #include "Hook.h"
 #include "PageTable.h"
+
+extern "C" void SysCallHookEntry();
+extern "C" PTR_TYPE OldSysCallFunctionAddr;
 
 #pragma code_seg()
 UINT8 teststack[KERNEL_STACK_SIZE];
@@ -13,7 +17,6 @@ class GlobalManager : public IManager
 	PageTableManager ptManager;
 	SVMManager svmManager;
 	MsrHookManager<1> msrHookManager;
-	IManager* subManagers[3] = { &msrHookManager, &ptManager, &svmManager };
 public:
 
 	#pragma code_seg("PAGE")
@@ -22,7 +25,8 @@ public:
 		PAGED_CODE();
 
 		//设置要hook的msr
-		UINT32 msrNums[1] = { 0xC0000082 };
+		//Hook IA32_MSR_LSTAR
+		UINT32 msrNums[1] = { IA32_MSR_LSTAR };
 		msrHookManager.SetHookMsrs(msrNums);
 
 		//和SVMManager绑定
@@ -30,33 +34,51 @@ public:
 		svmManager.SetMsrInterceptPlugin(&msrHookManager);
 	}
 
+	void EnableMsrHook()
+	{
+		OldSysCallFunctionAddr = __readmsr(IA32_MSR_LSTAR);
+		msrHookManager.DisableMsrHook(IA32_MSR_LSTAR, TRUE);
+		//msrHookManager.EnableMsrHook(IA32_MSR_LSTAR, (PTR_TYPE)SysCallHookEntry);
+	}
+
 	#pragma code_seg("PAGE")
 	virtual NTSTATUS Init() override
 	{
 		PAGED_CODE();
+
 		SetMsrHookParameters();
+
 		NTSTATUS status = STATUS_SUCCESS;
 		do
 		{
-			SIZE_T idx = 0;
-			for (idx = 0; idx < GetArrayElementCnt(subManagers); ++idx)
-			{
-				status = subManagers[idx]->Init();
-				if (!NT_SUCCESS(status))
-					break;
-			}
+			status = msrHookManager.Init();
 			if (!NT_SUCCESS(status))
-				Deinit();
+				break;
+
+			status = ptManager.Init();
+			if (!NT_SUCCESS(status))
+				break;
+
+			status = svmManager.Init();
+			if (!NT_SUCCESS(status))
+				break;
+
+			EnableMsrHook();
+
 		} while (false);
+
+		if (!NT_SUCCESS(status))
+			Deinit();
+
 		return status;
 	}
 	#pragma code_seg("PAGE")
 	virtual void Deinit() override
 	{
 		PAGED_CODE();
-		SIZE_T idx = 0;
-		for (idx = GetArrayElementCnt(subManagers); idx; --idx)
-			subManagers[idx - 1]->Deinit();
+		msrHookManager.Deinit();
+		svmManager.Deinit();
+		ptManager.Deinit();
 	}
 	#pragma code_seg("PAGE")
 	virtual ~GlobalManager()

@@ -2,24 +2,6 @@
 #include "VMCB.h"
 #include <intrin.h>
 
-const UINT32 IA32_MSR_EFER = 0xc0000080;
-const UINT32 IA32_MSR_PAT = 0x00000277;
-const UINT32 IA32_MSR_FS_BASE = 0xC0000100;
-const UINT32 IA32_MSR_GS_BASE = 0xC0000101;
-const UINT32 IA32_MSR_KERNEL_GS_BASE = 0xC0000102;
-const UINT32 IA32_MSR_STAR = 0xC0000081;
-const UINT32 IA32_MSR_LSTAR = 0xC0000082;
-const UINT32 IA32_MSR_CSTAR = 0xC0000083;
-const UINT32 IA32_MSR_SF_MASK = 0xC0000084;
-const UINT32 IA32_MSR_SYSENTER_CS = 0x174;
-const UINT32 IA32_MSR_SYSENTER_ESP = 0x175;
-const UINT32 IA32_MSR_SYSENTER_EIP = 0x176;
-const UINT32 IA32_MSR_SVM_MSR_VM_HSAVE_PA = 0xC0010117;
-const UINT32 IA32_MSR_VM_CR = 0xC0010114;
-const UINT32 EFER_SVME_OFFSET = 12;
-const UINT32 CPUID_FN_80000001_ECX_SVM_OFFSET = 2;
-const UINT32 VM_CR_SVMDIS_OFFSET = 4;
-const UINT32 CPUID_FN_SVM_FEATURE = 0x80000001;
 //AMD SVM 没有专门的VMMCALL指令，只能使用自定义CPUID
 //AMD 手册上给虚拟化预留的CPUID ID 为 0x40000000~0x400000ff
 const UINT32 GUEST_CALL_VMM_CPUID_FUNCTION = 0x400000ff;
@@ -85,10 +67,10 @@ typedef struct _SEGMENT_ATTRIBUTE
 //一系列汇编函数
 //源代码在SVM_asm.asm里面
 //主要都是寄存器读取操作
-extern "C" void _mysgdt(UINT64 * pBase, UINT16 * pLImit);
-extern "C" void _mysidt(UINT64 * pBase, UINT16 * pLImit);
-extern "C" void _mysldt(UINT16 * pSelector);
-extern "C" void _mystr(UINT16 * pSelector);
+extern "C" void _mysgdt(UINT64* pBase, UINT16* pLImit);
+extern "C" void _mysidt(UINT64* pBase, UINT16* pLImit);
+extern "C" void _mysldt(UINT16* pSelector);
+extern "C" void _mystr(UINT16* pSelector);
 extern "C" UINT16 _cs_selector();
 extern "C" UINT16 _ds_selector();
 extern "C" UINT16 _es_selector();
@@ -98,7 +80,7 @@ extern "C" UINT16 _ss_selector();
 //用于备份和还原寄存器上下文
 extern "C" void _save_or_load_regs(GenericRegisters* pRegisters);
 //执行vmrun相关操作
-extern "C" void _run_svm_vmrun(VirtCpuInfo * pInfo, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr, PVOID pStack);
+extern "C" void _run_svm_vmrun(VirtCpuInfo* pInfo, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr, PVOID pStack);
 
 //这个函数完全照抄https://github.com/tandasat/SimpleSvm
 //原函数名字是SvGetSegmentAccessRight
@@ -166,7 +148,7 @@ UINT32 _GetSegmentLimit(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 
 //#VMEXIT处理函数
 #pragma code_seg()
-extern "C" void VmExitHandler(VirtCpuInfo * pVirtCpuInfo, GenericRegisters * pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
+extern "C" void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
 {
 	UNREFERENCED_PARAMETER(pHostVmcbPhyAddr);
 	UNREFERENCED_PARAMETER(pGuestVmcbPhyAddr);
@@ -182,12 +164,9 @@ extern "C" void VmExitHandler(VirtCpuInfo * pVirtCpuInfo, GenericRegisters * pGu
 		int cpuidResult[4] = {};
 
 		if (pVirtCpuInfo->otherInfo.pMsrInterceptPlugin != NULL &&
-			pVirtCpuInfo->otherInfo.pCpuIdInterceptPlugin->HandleCpuid(pGuestRegisters, &pVirtCpuInfo->guestVmcb.statusFields.rax))
+			pVirtCpuInfo->otherInfo.pCpuIdInterceptPlugin->HandleCpuid(pVirtCpuInfo, pGuestRegisters,
+																	  pGuestVmcbPhyAddr, pHostVmcbPhyAddr))
 			return;
-
-		//KdPrint(("CPUID Parameter: function = %x, subleaf = %x\n", (int)pVirtCpuInfo->guestVmcb.statusFields.rax, (int)pGuestRegisters->rcx));
-
-		__cpuidex(cpuidResult, (int)pVirtCpuInfo->guestVmcb.statusFields.rax, (int)pGuestRegisters->rcx);
 
 		if (((int)pVirtCpuInfo->guestVmcb.statusFields.rax) == GUEST_CALL_VMM_CPUID_FUNCTION)
 		{
@@ -198,7 +177,7 @@ extern "C" void VmExitHandler(VirtCpuInfo * pVirtCpuInfo, GenericRegisters * pGu
 				//设置退出虚拟化之后的指令寄存器和栈寄存器
 				pGuestRegisters->extraInfo1 = pVirtCpuInfo->guestVmcb.controlFields.nRip;
 				pGuestRegisters->extraInfo2 = pVirtCpuInfo->guestVmcb.statusFields.rsp;
-				
+
 				//设置RFlags
 				pGuestRegisters->rflags = pVirtCpuInfo->guestVmcb.statusFields.rflags;
 
@@ -214,21 +193,26 @@ extern "C" void VmExitHandler(VirtCpuInfo * pVirtCpuInfo, GenericRegisters * pGu
 				break;
 			}
 			}
-			break;
 		}
+		else
+		{
+			//KdPrint(("CPUID Parameter: function = %x, subleaf = %x\n", (int)pVirtCpuInfo->guestVmcb.statusFields.rax, (int)pGuestRegisters->rcx));
 
-		if (((int)pVirtCpuInfo->guestVmcb.statusFields.rax) == CPUID_FN_SVM_FEATURE)
-			cpuidResult[2] &= ~(1UL << CPUID_FN_80000001_ECX_SVM_OFFSET);
+			__cpuidex(cpuidResult, (int)pVirtCpuInfo->guestVmcb.statusFields.rax, (int)pGuestRegisters->rcx);
 
-		*reinterpret_cast<UINT32*>(&pVirtCpuInfo->guestVmcb.statusFields.rax) = cpuidResult[0];
-		*reinterpret_cast<UINT32*>(&pGuestRegisters->rbx) = cpuidResult[1];
-		*reinterpret_cast<UINT32*>(&pGuestRegisters->rcx) = cpuidResult[2];
-		*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = cpuidResult[3];
+			if (((int)pVirtCpuInfo->guestVmcb.statusFields.rax) == CPUID_FN_SVM_FEATURE)
+				cpuidResult[2] &= ~(1UL << CPUID_FN_80000001_ECX_SVM_OFFSET);
 
-		//KdPrint(("CPUID Result: eax = %x, ebx = %x, ecx = %x, edx = %x\n", (int)pVirtCpuInfo->guestVmcb.statusFields.rax,
-		//	(int)pGuestRegisters->rbx,
-		//	(int)pGuestRegisters->rcx,
-		//	(int)pGuestRegisters->rdx));
+			*reinterpret_cast<UINT32*>(&pVirtCpuInfo->guestVmcb.statusFields.rax) = cpuidResult[0];
+			*reinterpret_cast<UINT32*>(&pGuestRegisters->rbx) = cpuidResult[1];
+			*reinterpret_cast<UINT32*>(&pGuestRegisters->rcx) = cpuidResult[2];
+			*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = cpuidResult[3];
+
+			//KdPrint(("CPUID Result: eax = %x, ebx = %x, ecx = %x, edx = %x\n", (int)pVirtCpuInfo->guestVmcb.statusFields.rax,
+			//(int)pGuestRegisters->rbx,
+			//(int)pGuestRegisters->rcx,
+			//(int)pGuestRegisters->rdx));
+		}
 		break;
 	}
 	case VMEXIT_REASON_MSR:
@@ -245,11 +229,13 @@ extern "C" void VmExitHandler(VirtCpuInfo * pVirtCpuInfo, GenericRegisters * pGu
 			value.HighPart = (UINT32)pGuestRegisters->rdx;
 
 			if (pVirtCpuInfo->otherInfo.pMsrInterceptPlugin != NULL &&
-				pVirtCpuInfo->otherInfo.pMsrInterceptPlugin->HandleMsrInterceptWrite(msrNum, value))
+				pVirtCpuInfo->otherInfo.pMsrInterceptPlugin->HandleMsrInterceptWrite(pVirtCpuInfo, pGuestRegisters,
+																					 pGuestVmcbPhyAddr, pHostVmcbPhyAddr,
+																					 msrNum, value))
 				return;
 
 			//不允许客户机设置 EFER MSR 的 SVME 位 和 VM_CR MSR 的 SVMDIS 位
-			if (msrNum == IA32_MSR_EFER && !(value.LowPart & (1UL << EFER_SVME_OFFSET)) || 
+			if (msrNum == IA32_MSR_EFER && !(value.LowPart & (1UL << EFER_SVME_OFFSET)) ||
 				msrNum == IA32_MSR_VM_CR && !(value.LowPart & (1ULL << VM_CR_SVMDIS_OFFSET)))
 				KeBugCheck(MANUALLY_INITIATED_CRASH);
 
@@ -258,19 +244,17 @@ extern "C" void VmExitHandler(VirtCpuInfo * pVirtCpuInfo, GenericRegisters * pGu
 		else
 		{
 			if (pVirtCpuInfo->otherInfo.pMsrInterceptPlugin != NULL &&
-				pVirtCpuInfo->otherInfo.pMsrInterceptPlugin->HandleMsrImterceptRead(msrNum, &value))
-			{
+				pVirtCpuInfo->otherInfo.pMsrInterceptPlugin->HandleMsrImterceptRead(pVirtCpuInfo, pGuestRegisters, 
+																					pGuestVmcbPhyAddr, pHostVmcbPhyAddr, 
+																					msrNum, &value))
+				return;
 
-			}
-			else
-			{
-				value.QuadPart = __readmsr(msrNum);
+			value.QuadPart = __readmsr(msrNum);
 
-				if (msrNum == IA32_MSR_VM_CR)
-					value.QuadPart |= (1ULL << VM_CR_SVMDIS_OFFSET);
-				if (msrNum == IA32_MSR_EFER)
-					value.QuadPart &= ~(1UL << EFER_SVME_OFFSET);
-			}
+			if (msrNum == IA32_MSR_VM_CR)
+				value.QuadPart |= (1ULL << VM_CR_SVMDIS_OFFSET);
+			if (msrNum == IA32_MSR_EFER)
+				value.QuadPart &= ~(1UL << EFER_SVME_OFFSET);
 
 			*reinterpret_cast<UINT32*>(&pVirtCpuInfo->guestVmcb.statusFields.rax) = value.LowPart;
 			*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = value.HighPart;
@@ -314,8 +298,8 @@ NTSTATUS MsrPremissionsMapManager::Init()
 		return STATUS_SUCCESS;
 
 	const UINT32 BITS_PER_MSR = 2;
-	//const UINT32 FIRST_MSR_RANGE_BASE = 0x00000000;
-	//const UINT32 FIRST_MSRPM_OFFSET = 0x000 * CHAR_BIT;
+	//FIRST_MSR_RANGE_BASE = 0x00000000;
+	//FIRST_MSRPM_OFFSET = 0x000 * CHAR_BIT;
 	const UINT32 SECOND_MSR_RANGE_BASE = 0xc0000000;
 	const UINT32 SECOND_MSRPM_OFFSET = 0x800 * CHAR_BIT;
 	const UINT32 THIRD_MSR_RANGE_BASE = 0xc0010000;
