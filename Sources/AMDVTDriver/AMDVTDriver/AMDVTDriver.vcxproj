@@ -107,7 +107,6 @@
   <ItemGroup>
     <ClCompile Include="Basic.cpp" />
     <ClCompile Include="Hook.cpp" />
-    <ClCompile Include="HookSysCallTest.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="PageTable.cpp" />
     <ClCompile Include="SVM.cpp" />
@@ -120,7 +119,6 @@
     <ClInclude Include="VMCB.h" />
   </ItemGroup>
   <ItemGroup>
-    <MASM Include="HookSysCallTest_asm.asm" />
     <MASM Include="Hook_asm.asm" />
     <MASM Include="SVM_asm.asm" />
   </ItemGroup>

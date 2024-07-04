@@ -50,13 +50,13 @@ public:
 	virtual void Deinit() override;
 	virtual void SetMsrPremissionMap(RTL_BITMAP& bitmap) override;
 	virtual bool HandleMsrImterceptRead(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
-										 PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr,
-										 UINT32 msrNum, PULARGE_INTEGER msrValueOut) override;
+		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr,
+		UINT32 msrNum, PULARGE_INTEGER msrValueOut) override;
 	virtual bool HandleMsrInterceptWrite(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
-										 PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr,
-										 UINT32 msrNum, ULARGE_INTEGER mstValueIn) override;
+		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr,
+		UINT32 msrNum, ULARGE_INTEGER mstValueIn) override;
 	virtual bool HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
-							 PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
+		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
 	//启用 msr hook
 	void EnableMsrHook(UINT32 msrNum, PTR_TYPE readValue);
 	//禁用 msr hook writeFakeValueToMsr代表是否将欺骗值写入msr以还原msr
@@ -200,8 +200,8 @@ inline void MsrHookManager<msrHookCount>::SetMsrPremissionMap(RTL_BITMAP& bitmap
 #pragma code_seg()
 template<SIZE_T msrHookCount>
 inline bool MsrHookManager<msrHookCount>::HandleMsrImterceptRead(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
-																 PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr,
-																 UINT32 msrNum, PULARGE_INTEGER msrValueOut)
+	PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr,
+	UINT32 msrNum, PULARGE_INTEGER msrValueOut)
 {
 	UNREFERENCED_PARAMETER(pVirtCpuInfo);
 	UNREFERENCED_PARAMETER(pGuestRegisters);
@@ -230,8 +230,8 @@ inline bool MsrHookManager<msrHookCount>::HandleMsrImterceptRead(VirtCpuInfo* pV
 #pragma code_seg()
 template<SIZE_T msrHookCount>
 inline bool MsrHookManager<msrHookCount>::HandleMsrInterceptWrite(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
-																  PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr,
-																  UINT32 msrNum, ULARGE_INTEGER mstValueIn)
+	PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr,
+	UINT32 msrNum, ULARGE_INTEGER mstValueIn)
 {
 	UNREFERENCED_PARAMETER(pVirtCpuInfo);
 	UNREFERENCED_PARAMETER(pGuestRegisters);
@@ -260,7 +260,7 @@ inline bool MsrHookManager<msrHookCount>::HandleMsrInterceptWrite(VirtCpuInfo* p
 #pragma code_seg()
 template<SIZE_T msrHookCount>
 inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
-													  PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
+	PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
 {
 	UNREFERENCED_PARAMETER(pGuestVmcbPhyAddr);
 	UNREFERENCED_PARAMETER(pHostVmcbPhyAddr);
@@ -329,7 +329,7 @@ inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo,
 				*pOptParam->pValueInOut = __readmsr(pOptParam->msrNum);
 				break;
 			}
-			
+
 			pVirtCpuInfo->guestVmcb.statusFields.rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
 			handled = true;
 		}
@@ -394,7 +394,7 @@ inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo,
 				break;
 			}
 
-			
+
 			pVirtCpuInfo->guestVmcb.statusFields.rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
 			handled = true;
 		}
@@ -485,6 +485,25 @@ inline void MsrHookManager<msrHookCount>::DisableMsrHook(UINT32 msrNum, bool wri
 	}
 
 	KeReleaseMutex(&operationLock, FALSE);
+}
+
+typedef void(*pLStarHookCallback)();
+
+
+//启用IA32_MSR_LSTAR HOOK 使用之前需要调用MsrHookManager::SetHookMsrs注册IA32_MSR_LSTAR
+template<SIZE_T msrCnt>
+void EnableLStrHook(MsrHookManager<msrCnt>* pMsrHookManager, pLStarHookCallback pCallback)
+{
+	extern void SetLStrHookEntryParameters(PTR_TYPE oldEntry, PTR_TYPE pCallback);	
+	extern PTR_TYPE GetLStarHookEntry();
+	SetLStrHookEntryParameters((PTR_TYPE)__readmsr(IA32_MSR_LSTAR), (PTR_TYPE)pCallback);
+	pMsrHookManager->EnableMsrHook(IA32_MSR_LSTAR, (PTR_TYPE)GetLStarHookEntry());
+}
+
+template<SIZE_T msrCnt>
+void DisableLStrHook(MsrHookManager<msrCnt>* pMsrHookManager)
+{
+	pMsrHookManager->DisableMsrHook(IA32_MSR_LSTAR);
 }
 
 #endif

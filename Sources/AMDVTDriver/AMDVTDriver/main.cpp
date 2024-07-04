@@ -6,8 +6,10 @@
 #include "Hook.h"
 #include "PageTable.h"
 
-extern "C" void SysCallHookEntry();
-extern "C" PTR_TYPE OldSysCallFunctionAddr;
+extern "C" void TestLStarHookCallback()
+{
+	KdPrint(("Hook OK!\n"));
+}
 
 #pragma code_seg()
 UINT8 teststack[KERNEL_STACK_SIZE];
@@ -36,9 +38,7 @@ public:
 
 	void EnableMsrHook()
 	{
-		OldSysCallFunctionAddr = __readmsr(IA32_MSR_LSTAR);
-		msrHookManager.DisableMsrHook(IA32_MSR_LSTAR, TRUE);
-		//msrHookManager.EnableMsrHook(IA32_MSR_LSTAR, (PTR_TYPE)SysCallHookEntry);
+		EnableLStrHook<1>(&msrHookManager, TestLStarHookCallback);
 	}
 
 	#pragma code_seg("PAGE")
