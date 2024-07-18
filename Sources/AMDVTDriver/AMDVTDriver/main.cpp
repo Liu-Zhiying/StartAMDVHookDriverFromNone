@@ -8,11 +8,8 @@
 
 extern "C" void TestLStarHookCallback()
 {
-	KdPrint(("Hook OK!\n"));
+	//KdPrint(("Hook OK!\n"));
 }
-
-#pragma code_seg()
-UINT8 teststack[KERNEL_STACK_SIZE];
 
 class GlobalManager : public IManager
 {
@@ -36,8 +33,10 @@ public:
 		svmManager.SetMsrInterceptPlugin(&msrHookManager);
 	}
 
+	#pragma code_seg("PAGE")
 	void EnableMsrHook()
 	{
+		//hook lstar
 		EnableLStrHook<1>(&msrHookManager, TestLStarHookCallback);
 	}
 
@@ -51,6 +50,7 @@ public:
 		NTSTATUS status = STATUS_SUCCESS;
 		do
 		{
+
 			status = msrHookManager.Init();
 			if (!NT_SUCCESS(status))
 				break;
@@ -158,10 +158,15 @@ extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject,
 			break;
 		initStep = 2;
 
+		//KdPrint(("Raw IA32_MSR_LSTAR: %p", __readmsr(IA32_MSR_CSTAR)));
+
 		status = pGlobalManager->Init();
 		if (!NT_SUCCESS(status))
 			break;
+
 		initStep = 3;
+
+		//KdPrint(("Hooked IA32_MSR_LSTAR: %p", __readmsr(IA32_MSR_CSTAR)));
 
 		fdo->Flags |= DO_BUFFERED_IO;
 		KdPrint(("DriverEntry(): AMD-V Driver Start successfully.\n"));

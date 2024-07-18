@@ -14,3 +14,36 @@ void operator delete(void*, UINT64)
 	PAGED_CODE();
 	return;
 }
+
+//封装一下Windows内核内存分配函数
+#pragma code_seg()
+PVOID AllocNonPagedMem(SIZE_TYPE byteCnt, ULONG tag)
+{
+#ifdef _BUILD_WIN_2004
+	return ExAllocatePool2(POOL_FLAG_NON_PAGED, byteCnt, tag);
+#else
+	return ExAllocatePoolWithTag(POOL_TYPE::NonPagedPool, byteCnt, ptTag);
+#endif
+}
+
+#pragma code_seg()
+void FreeNonPagedMem(PVOID pMem, ULONG tag)
+{
+	ExFreePoolWithTag(pMem, tag);
+}
+
+#pragma code_seg()
+PVOID AllocPagedMem(SIZE_TYPE byteCnt, ULONG tag)
+{
+#ifdef _BUILD_WIN_2004
+	return ExAllocatePool2(POOL_FLAG_PAGED, byteCnt, tag);
+#else
+	return ExAllocatePoolWithTag(POOL_TYPE::PagedPool, byteCnt, tag);
+#endif
+}
+
+#pragma code_seg()
+void FreePagedMem(PVOID pMem, ULONG tag)
+{
+	ExFreePoolWithTag(pMem, tag);
+}

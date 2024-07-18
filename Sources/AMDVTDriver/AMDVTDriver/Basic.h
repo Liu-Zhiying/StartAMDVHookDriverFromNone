@@ -59,11 +59,16 @@ public:
 };
 
 //帮助函数，取数组的元素数目
-template<typename T, SIZE_T n>
-SIZE_T GetArrayElementCnt(T (&)[n])
+template<typename T, SIZE_TYPE n>
+SIZE_TYPE GetArrayElementCnt(T (&)[n])
 {
 	return n;
 }
+
+PVOID AllocNonPagedMem(SIZE_TYPE byteCnt, ULONG tag);
+void FreeNonPagedMem(PVOID pMem, ULONG tag);
+PVOID AllocPagedMem(SIZE_TYPE byteCnt, ULONG tag);
+void FreePagedMem(PVOID pMem, ULONG tag);
 
 const PHYSICAL_ADDRESS highestPhyAddr = { (ULONG)-1,-1 };
 
@@ -81,10 +86,179 @@ const UINT32 IA32_MSR_SYSENTER_ESP = 0x175;
 const UINT32 IA32_MSR_SYSENTER_EIP = 0x176;
 const UINT32 IA32_MSR_SVM_MSR_VM_HSAVE_PA = 0xC0010117;
 const UINT32 IA32_MSR_VM_CR = 0xC0010114;
+const UINT32 IA32_MSR_APIC_BASE = 0x0000001b;
 const UINT32 EFER_SVME_OFFSET = 12;
 const UINT32 CPUID_FN_80000001_ECX_SVM_OFFSET = 2;
 const UINT32 VM_CR_SVMDIS_OFFSET = 4;
 const UINT32 CPUID_FN_SVM_FEATURE = 0x80000001;
 
-#endif // !BASIC_H
+template<typename ElementType, bool isNonPagedMem = true>
+class KernelVector
+{
+	ElementType* pData;
+	SIZE_TYPE length;
+	SIZE_TYPE capacity;
 
+	const ULONG VECTOR_TAG = MAKE_TAG('v', 'e', 'c', ' ');
+
+	PVOID(*pMemAlloc)(SIZE_TYPE byteCnt, ULONG tag);
+	void (*pMemFree)(PVOID pMem, ULONG tag);
+
+public:
+	KernelVector();
+	~KernelVector();
+
+	void PushBack(ElementType e);
+	ElementType PopBack();
+	const ElementType& operator[](SIZE_TYPE idx) const;
+	ElementType& operator[](SIZE_TYPE idx);
+	void Insert(ElementType e, SIZE_TYPE idx);
+	void Remove(SIZE_TYPE idx);
+	SIZE_TYPE Length() const;
+	SIZE_TYPE Capacity() const;
+	bool SetCapacity(SIZE_TYPE newCapacity);
+	void Clear();
+};
+
+template<typename ElementType, bool isNonPagedMem>
+inline KernelVector<ElementType, isNonPagedMem>::KernelVector() : pData(NULL), length(0), capacity(0)
+{
+	if (isNonPagedMem)
+	{
+		pMemAlloc = AllocNonPagedMem;
+		pMemFree = FreeNonPagedMem;
+	}
+	else
+	{
+		pMemAlloc = AllocPagedMem;
+		pMemFree = FreeNonPagedMem;
+	}
+}
+
+template<typename ElementType, bool isNonPagedMem>
+inline KernelVector<ElementType, isNonPagedMem>::~KernelVector()
+{
+	if (pData != NULL)
+	{
+		for (SIZE_TYPE idx = 0; idx < length; ++idx)
+			CallDestroyer(pData + idx);
+
+		pMemFree(pData, VECTOR_TAG);
+
+		pData = NULL;
+	}
+}
+
+template<typename ElementType, bool isNonPagedMem>
+inline void KernelVector<ElementType, isNonPagedMem>::PushBack(ElementType e)
+{
+	if (length == capacity)
+		SetCapacity(length + 50);
+	pData[length++] = e;
+}
+
+template<typename ElementType, bool isNonPagedMem>
+inline ElementType KernelVector<ElementType, isNonPagedMem>::PopBack()
+{
+	ElementType result = static_cast<ElementType&&>(pData[--length]);
+	return result;
+}
+
+template<typename ElementType, bool isNonPagedMem>
+inline const ElementType& KernelVector<ElementType, isNonPagedMem>::operator[](SIZE_TYPE idx) const
+{
+	if (idx < Length())
+		return pData[idx];
+	else
+		KeBugCheck(MEMORY_MANAGEMENT);
+}
+
+template<typename ElementType, bool isNonPagedMem>
+inline ElementType& KernelVector<ElementType, isNonPagedMem>::operator[](SIZE_TYPE idx)
+{
+	if (idx < Length())
+		return pData[idx];
+	else
+		KeBugCheck(MEMORY_MANAGEMENT);
+}
+
+template<typename ElementType, bool isNonPagedMem>
+inline void KernelVector<ElementType, isNonPagedMem>::Insert(ElementType e, SIZE_TYPE idx)
+{
+	if (idx >= Length())
+		KeBugCheck(MEMORY_MANAGEMENT);
+
+	if (length == capacity)
+		SetCapacity(length + 50);
+
+	for(SIZE_T idx2 = length; idx2 > idx; --idx2)
+		pData[idx2] = static_cast<ElementType&&>(pData[idx2 - 1]);
+
+	pData[idx] = e;
+
+	++length;
+}
+
+template<typename ElementType, bool isNonPagedMem>
+inline void KernelVector<ElementType, isNonPagedMem>::Remove(SIZE_TYPE idx)
+{
+	if (idx >= Length())
+		KeBugCheck(MEMORY_MANAGEMENT);
+
+	CallDestroyer(pData[idx]);
+
+	for (SIZE_TYPE idx2 = idx; idx2 < Length() - 1; ++idx2)
+		pData[idx2] = static_cast<ElementType&&>(pData[idx2 + 1]);
+}
+
+template<typename ElementType, bool isNonPagedMem>
+inline SIZE_TYPE KernelVector<ElementType, isNonPagedMem>::Length() const
+{
+	return length;
+}
+
+template<typename ElementType, bool isNonPagedMem>
+inline SIZE_TYPE KernelVector<ElementType, isNonPagedMem>::Capacity() const
+{
+	return capacity;
+}
+
+template<typename ElementType, bool isNonPagedMem>
+inline bool KernelVector<ElementType, isNonPagedMem>::SetCapacity(SIZE_TYPE newCapacity)
+{
+	SIZE_TYPE copyLength = newCapacity > capacity ? capacity : newCapacity;
+
+	ElementType* pNewData = (ElementType*)pMemAlloc(newCapacity * sizeof(ElementType), VECTOR_TAG);
+
+	if (pNewData == NULL)
+		return false;
+
+	for (SIZE_TYPE idx = 0; idx < copyLength; ++idx)
+		pNewData[idx] = static_cast<ElementType&&>(pData[idx]);
+
+	if (copyLength < capacity)
+	{
+		for (SIZE_T idx = 0; idx < capacity; ++idx)
+			CallDestroyer(pNewData[idx]);
+	}
+
+	if (pData != NULL)
+		pMemFree(pData, VECTOR_TAG);
+
+	pData = pNewData;
+	capacity = newCapacity;
+	length = copyLength;
+
+	return true;
+}
+
+template<typename ElementType, bool isNonPagedMem>
+inline void KernelVector<ElementType, isNonPagedMem>::Clear()
+{
+	for (SIZE_TYPE idx = 0; idx < length; ++idx)
+		CallDestroyer(pData + idx);
+
+	length = 0;
+}
+
+#endif // !BASIC_H

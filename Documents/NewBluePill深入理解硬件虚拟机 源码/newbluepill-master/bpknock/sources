@@ -1,0 +1,10 @@
+TARGETNAME=bpknock
+TARGETPATH=bin
+TARGETTYPE=PROGRAM
+UMTYPE=console
+USE_LIBCMT=1
+
+SOURCES=bpknock.c
+
+
+

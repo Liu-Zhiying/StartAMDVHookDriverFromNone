@@ -276,6 +276,7 @@ typedef struct
 		UINT64 exitInfo1;
 		UINT64 exitInfo2;
 		UINT64 exitIntInfo;
+		//NP_ENABLE
 		SVMExtendFeatureBits1 extendFeatures1;
 		ApicBar apicBar;
 		UINT64 physicalAddressGHCB;

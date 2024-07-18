@@ -29,19 +29,21 @@ struct MsrHookParameter
 
 const UINT32 INVALID_MSRNUM = (UINT32)-1;
 
-template<SIZE_T msrHookCount>
+typedef void(*pLStarHookCallback)();
+
+struct MsrOperationParameter
+{
+	UINT32 msrNum;
+	PTR_TYPE* pValueInOut;
+};
+
+template<SIZE_TYPE msrHookCount>
 class MsrHookManager : public IManager, public IMsrInterceptPlugin, public ICpuidInterceptPlugin
 {
 	KMUTEX operationLock;
 	MsrHookParameter parameters[msrHookCount];
 	bool inited;
 	ULONG cpuCnt;
-
-	struct MsrOperationParameter
-	{
-		UINT32 msrNum;
-		PTR_TYPE* pValueInOut;
-	};
 
 public:
 	MsrHookManager();
@@ -51,22 +53,22 @@ public:
 	virtual void SetMsrPremissionMap(RTL_BITMAP& bitmap) override;
 	virtual bool HandleMsrImterceptRead(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr,
-		UINT32 msrNum, PULARGE_INTEGER msrValueOut) override;
+		UINT32 msrNum) override;
 	virtual bool HandleMsrInterceptWrite(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr,
-		UINT32 msrNum, ULARGE_INTEGER mstValueIn) override;
+		UINT32 msrNum) override;
 	virtual bool HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
 	//启用 msr hook
 	void EnableMsrHook(UINT32 msrNum, PTR_TYPE readValue);
 	//禁用 msr hook writeFakeValueToMsr代表是否将欺骗值写入msr以还原msr
 	void DisableMsrHook(UINT32 msrNum, bool writeFakeValueToMsr = true);
-#pragma code_seg("PAGE")
+	#pragma code_seg("PAGE")
 	virtual ~MsrHookManager() { PAGED_CODE(); Deinit(); }
 };
 
 #pragma code_seg("PAGE")
-template<SIZE_T msrHookCount>
+template<SIZE_TYPE msrHookCount>
 MsrHookManager<msrHookCount>::MsrHookManager() : inited(false), cpuCnt(0)
 {
 	PAGED_CODE();
@@ -75,57 +77,64 @@ MsrHookManager<msrHookCount>::MsrHookManager() : inited(false), cpuCnt(0)
 	RtlZeroMemory(&parameters, sizeof parameters);
 	for (MsrHookParameter& param : parameters)
 		param.msrNum = INVALID_MSRNUM;
+
+	KeInitializeMutex(&operationLock, 0);
 }
 
 #pragma code_seg("PAGE")
-template<SIZE_T msrHookCount>
+template<SIZE_TYPE msrHookCount>
 void MsrHookManager<msrHookCount>::SetHookMsrs(UINT32(&msrNums)[msrHookCount])
 {
 	PAGED_CODE();
-	for (SIZE_T idx = 0; idx < msrHookCount; ++idx)
+	for (SIZE_TYPE idx = 0; idx < msrHookCount; ++idx)
 		parameters[idx].msrNum = msrNums[idx];
 }
 
 #pragma code_seg("PAGE")
-template<SIZE_T msrHookCount>
+template<SIZE_TYPE msrHookCount>
 NTSTATUS MsrHookManager<msrHookCount>::Init()
 {
 	PAGED_CODE();
-	NTSTATUS result = STATUS_SUCCESS;
-
-	cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
-
-	KeInitializeMutex(&operationLock, 0);
-
-	for (MsrHookParameter& param : parameters)
+	NTSTATUS status = STATUS_SUCCESS;
+	if (!inited)
 	{
-		param.pFakeValues = (PTR_TYPE*)ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof * param.pFakeValues * cpuCnt, HOOK_TAG);
-		if (param.pFakeValues == NULL)
-		{
-			result = STATUS_NO_MEMORY;
-			break;
-		}
-		RtlZeroMemory(param.pFakeValues, sizeof * param.pFakeValues * cpuCnt);
-	}
+		KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
 
-	inited = true;
-	return result;
+		cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
+
+		for (MsrHookParameter& param : parameters)
+		{
+			param.pFakeValues = (PTR_TYPE*)AllocNonPagedMem(sizeof * param.pFakeValues * cpuCnt, HOOK_TAG);
+			if (param.pFakeValues == NULL)
+			{
+				status = STATUS_INSUFFICIENT_RESOURCES;
+				break;
+			}
+			RtlZeroMemory(param.pFakeValues, sizeof * param.pFakeValues * cpuCnt);
+		}
+
+		if (NT_SUCCESS(status))
+			inited = true;
+
+		KeReleaseMutex(&operationLock, FALSE);
+	}
+	return status;
 }
 
 #pragma code_seg("PAGE")
-template <SIZE_T msrHookCount>
+template <SIZE_TYPE msrHookCount>
 void MsrHookManager<msrHookCount>::Deinit()
 {
 	PAGED_CODE();
 	if (inited)
 	{
-		KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
-
 		PROCESSOR_NUMBER processorNum = {};
 		GROUP_AFFINITY affinity = {}, oldAffinity = {};
 		MsrOperationParameter optParam = {};
 
-		for (SIZE_T idx1 = 0; idx1 < msrHookCount; ++idx1)
+		KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
+
+		for (SIZE_TYPE idx1 = 0; idx1 < msrHookCount; ++idx1)
 		{
 			if (parameters[idx1].enabled)
 			{
@@ -150,16 +159,16 @@ void MsrHookManager<msrHookCount>::Deinit()
 			}
 		}
 
-		KeReleaseMutex(&operationLock, FALSE);
-
 		for (MsrHookParameter param : parameters)
 		{
 			if (param.pFakeValues != NULL)
 			{
-				ExFreePool(param.pFakeValues);
+				FreeNonPagedMem(param.pFakeValues, HOOK_TAG);
 				param.pFakeValues = NULL;
 			}
 		}
+
+		KeReleaseMutex(&operationLock, FALSE);
 
 		cpuCnt = 0;
 
@@ -168,7 +177,7 @@ void MsrHookManager<msrHookCount>::Deinit()
 }
 
 #pragma code_seg("PAGE")
-template<SIZE_T msrHookCount>
+template<SIZE_TYPE msrHookCount>
 inline void MsrHookManager<msrHookCount>::SetMsrPremissionMap(RTL_BITMAP& bitmap)
 {
 	PAGED_CODE();
@@ -183,40 +192,42 @@ inline void MsrHookManager<msrHookCount>::SetMsrPremissionMap(RTL_BITMAP& bitmap
 
 	for (const MsrHookParameter& param : parameters)
 	{
-		UINT32 MSRPM_OFFSET = 0;
+		UINT32 msrpmOffset = 0;
 		if (param.msrNum >= FIRST_MSR_RANGE_BASE && param.msrNum < FIRST_MSR_RANGE_BASE + MSRPM_MSR_LENGTH)
-			MSRPM_OFFSET = FIRST_MSRPM_OFFSET + ((param.msrNum - FIRST_MSR_RANGE_BASE) * BITS_PER_MSR);
+			msrpmOffset = FIRST_MSRPM_OFFSET + ((param.msrNum - FIRST_MSR_RANGE_BASE) * BITS_PER_MSR);
 		else if (param.msrNum >= SECOND_MSR_RANGE_BASE && param.msrNum < SECOND_MSR_RANGE_BASE + MSRPM_MSR_LENGTH)
-			MSRPM_OFFSET = SECOND_MSRPM_OFFSET + ((param.msrNum - SECOND_MSR_RANGE_BASE) * BITS_PER_MSR);
+			msrpmOffset = SECOND_MSRPM_OFFSET + ((param.msrNum - SECOND_MSR_RANGE_BASE) * BITS_PER_MSR);
 		else if (param.msrNum >= THIRD_MSR_RANGE_BASE && param.msrNum < THIRD_MSR_RANGE_BASE + MSRPM_MSR_LENGTH)
-			MSRPM_OFFSET = THIRD_MSRPM_OFFSET + ((param.msrNum - THIRD_MSR_RANGE_BASE) * BITS_PER_MSR);
+			msrpmOffset = THIRD_MSRPM_OFFSET + ((param.msrNum - THIRD_MSR_RANGE_BASE) * BITS_PER_MSR);
 		else
 			continue;
-		RtlSetBits(&bitmap, MSRPM_OFFSET, BITS_PER_MSR);
-		RtlSetBits(&bitmap, MSRPM_OFFSET + 1, BITS_PER_MSR);
+		RtlSetBits(&bitmap, msrpmOffset, 2);
 	}
 }
 
 #pragma code_seg()
-template<SIZE_T msrHookCount>
+template<SIZE_TYPE msrHookCount>
 inline bool MsrHookManager<msrHookCount>::HandleMsrImterceptRead(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 	PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr,
-	UINT32 msrNum, PULARGE_INTEGER msrValueOut)
+	UINT32 msrNum)
 {
 	UNREFERENCED_PARAMETER(pVirtCpuInfo);
 	UNREFERENCED_PARAMETER(pGuestRegisters);
 	UNREFERENCED_PARAMETER(pGuestVmcbPhyAddr);
 	UNREFERENCED_PARAMETER(pHostVmcbPhyAddr);
+
 	bool handled = false;
 	KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
 
-	for (SIZE_T idx = 0; idx < msrHookCount; ++idx)
+	for (SIZE_TYPE idx = 0; idx < msrHookCount; ++idx)
 	{
 		//MSR Hook启用且MSR编号匹配则返回欺骗值
 		if (parameters[idx].enabled && msrNum == parameters[idx].msrNum)
 		{
-			ULONG processorIndexx = KeGetCurrentProcessorIndex();
-			msrValueOut->QuadPart = parameters[idx].pFakeValues[processorIndexx];
+			LARGE_INTEGER value = {};
+			value.QuadPart = parameters[idx].pFakeValues[pVirtCpuInfo->otherInfo.cpuIdx];
+			*reinterpret_cast<UINT32*>(&pVirtCpuInfo->guestVmcb.statusFields.rax) = value.LowPart;
+			*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = value.HighPart;
 			pVirtCpuInfo->guestVmcb.statusFields.rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
 			handled = true;
 			break;
@@ -228,25 +239,28 @@ inline bool MsrHookManager<msrHookCount>::HandleMsrImterceptRead(VirtCpuInfo* pV
 }
 
 #pragma code_seg()
-template<SIZE_T msrHookCount>
+template<SIZE_TYPE msrHookCount>
 inline bool MsrHookManager<msrHookCount>::HandleMsrInterceptWrite(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 	PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr,
-	UINT32 msrNum, ULARGE_INTEGER mstValueIn)
+	UINT32 msrNum)
 {
 	UNREFERENCED_PARAMETER(pVirtCpuInfo);
 	UNREFERENCED_PARAMETER(pGuestRegisters);
 	UNREFERENCED_PARAMETER(pGuestVmcbPhyAddr);
 	UNREFERENCED_PARAMETER(pHostVmcbPhyAddr);
+
 	bool handled = false;
 	KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
 
-	for (SIZE_T idx = 0; idx < msrHookCount; ++idx)
+	for (SIZE_TYPE idx = 0; idx < msrHookCount; ++idx)
 	{
 		//MSR Hook启用且MSR编号匹配则保存新值为欺骗值
 		if (parameters[idx].enabled && msrNum == parameters[idx].msrNum)
 		{
-			ULONG processorIndexx = KeGetCurrentProcessorIndex();
-			parameters[idx].pFakeValues[processorIndexx] = mstValueIn.QuadPart;
+			LARGE_INTEGER value = {};
+			value.LowPart = (UINT32)pVirtCpuInfo->guestVmcb.statusFields.rax;
+			value.HighPart = (UINT32)pGuestRegisters->rdx;
+			parameters[idx].pFakeValues[pVirtCpuInfo->otherInfo.cpuIdx] = value.QuadPart;
 			pVirtCpuInfo->guestVmcb.statusFields.rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
 			handled = true;
 			break;
@@ -258,17 +272,19 @@ inline bool MsrHookManager<msrHookCount>::HandleMsrInterceptWrite(VirtCpuInfo* p
 }
 
 #pragma code_seg()
-template<SIZE_T msrHookCount>
+template<SIZE_TYPE msrHookCount>
 inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 	PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
 {
 	UNREFERENCED_PARAMETER(pGuestVmcbPhyAddr);
 	UNREFERENCED_PARAMETER(pHostVmcbPhyAddr);
-	//eax 为配置MSR HOOK的CPUID编号
+
+	//eax为配置MSR HOOK的CPUID编号
 	if (((int)pVirtCpuInfo->guestVmcb.statusFields.rax) == CONFIGURE_MSR_HOOK_CPUID_FUNCTION)
 	{
 		bool handled = false;
 		MsrOperationParameter* pOptParam = (MsrOperationParameter*)pGuestRegisters->rdx;
+
 		if (((int)pGuestRegisters->rcx) == READ_MSR_CPUID_SUBFUNCTION)
 		{
 			/*
@@ -331,6 +347,7 @@ inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo,
 			}
 
 			pVirtCpuInfo->guestVmcb.statusFields.rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
+
 			handled = true;
 		}
 		else if (((int)pGuestRegisters->rcx) == WRITE_MSR_CPUID_SUBFUNCTION)
@@ -394,17 +411,18 @@ inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo,
 				break;
 			}
 
-
 			pVirtCpuInfo->guestVmcb.statusFields.rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
+
 			handled = true;
 		}
+
 		return handled;
 	}
 	return false;
 }
 
 #pragma code_seg()
-template<SIZE_T msrHookCount>
+template<SIZE_TYPE msrHookCount>
 inline void MsrHookManager<msrHookCount>::EnableMsrHook(UINT32 msrNum, PTR_TYPE realValue)
 {
 	KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
@@ -413,7 +431,7 @@ inline void MsrHookManager<msrHookCount>::EnableMsrHook(UINT32 msrNum, PTR_TYPE 
 	GROUP_AFFINITY affinity = {}, oldAffinity = {};
 	MsrOperationParameter optParam = {};
 
-	for (SIZE_T idx1 = 0; idx1 < msrHookCount; ++idx1)
+	for (SIZE_TYPE idx1 = 0; idx1 < msrHookCount; ++idx1)
 	{
 		if (!parameters[idx1].enabled && parameters[idx1].msrNum == msrNum)
 		{
@@ -438,7 +456,6 @@ inline void MsrHookManager<msrHookCount>::EnableMsrHook(UINT32 msrNum, PTR_TYPE 
 
 				KeRevertToUserGroupAffinityThread(&oldAffinity);
 			}
-
 			parameters[idx1].enabled = true;
 		}
 	}
@@ -447,7 +464,7 @@ inline void MsrHookManager<msrHookCount>::EnableMsrHook(UINT32 msrNum, PTR_TYPE 
 }
 
 #pragma code_seg()
-template<SIZE_T msrHookCount>
+template<SIZE_TYPE msrHookCount>
 inline void MsrHookManager<msrHookCount>::DisableMsrHook(UINT32 msrNum, bool writeFakeValueToMsr)
 {
 	KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
@@ -456,7 +473,7 @@ inline void MsrHookManager<msrHookCount>::DisableMsrHook(UINT32 msrNum, bool wri
 	GROUP_AFFINITY affinity = {}, oldAffinity = {};
 	MsrOperationParameter optParam = {};
 
-	for (SIZE_T idx1 = 0; idx1 < msrHookCount; ++idx1)
+	for (SIZE_TYPE idx1 = 0; idx1 < msrHookCount; ++idx1)
 	{
 		if (parameters[idx1].enabled && parameters[idx1].msrNum == msrNum)
 		{
@@ -479,28 +496,31 @@ inline void MsrHookManager<msrHookCount>::DisableMsrHook(UINT32 msrNum, bool wri
 					KeRevertToUserGroupAffinityThread(&oldAffinity);
 				}
 			}
-
-			parameters[idx1].enabled = true;
+			parameters[idx1].enabled = false;
 		}
 	}
 
 	KeReleaseMutex(&operationLock, FALSE);
 }
 
-typedef void(*pLStarHookCallback)();
-
-
 //启用IA32_MSR_LSTAR HOOK 使用之前需要调用MsrHookManager::SetHookMsrs注册IA32_MSR_LSTAR
-template<SIZE_T msrCnt>
+template<SIZE_TYPE msrCnt>
 void EnableLStrHook(MsrHookManager<msrCnt>* pMsrHookManager, pLStarHookCallback pCallback)
 {
 	extern void SetLStrHookEntryParameters(PTR_TYPE oldEntry, PTR_TYPE pCallback);	
 	extern PTR_TYPE GetLStarHookEntry();
-	SetLStrHookEntryParameters((PTR_TYPE)__readmsr(IA32_MSR_LSTAR), (PTR_TYPE)pCallback);
+
+	MsrOperationParameter optParam = {};
+	PTR_TYPE pOldEntry = NULL;
+	optParam.msrNum = IA32_MSR_LSTAR;
+	optParam.pValueInOut = &pOldEntry;
+	SetRegsThenCpuid(CONFIGURE_MSR_HOOK_CPUID_FUNCTION, IA32_MSR_LSTAR, READ_MSR_CPUID_SUBFUNCTION, (PTR_TYPE)&optParam);
+
+	SetLStrHookEntryParameters((PTR_TYPE)pOldEntry, (PTR_TYPE)pCallback);
 	pMsrHookManager->EnableMsrHook(IA32_MSR_LSTAR, (PTR_TYPE)GetLStarHookEntry());
 }
 
-template<SIZE_T msrCnt>
+template<SIZE_TYPE msrCnt>
 void DisableLStrHook(MsrHookManager<msrCnt>* pMsrHookManager)
 {
 	pMsrHookManager->DisableMsrHook(IA32_MSR_LSTAR);

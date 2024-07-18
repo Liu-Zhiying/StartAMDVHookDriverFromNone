@@ -16,7 +16,7 @@ typedef struct _SEGMENT_DESCRIPTOR
 		UINT64 AsUInt64;
 		struct
 		{
-			UINT16 LimitLow;        // [0:15]
+			UINT16 LimitLow;        // [0:15] 
 			UINT16 BaseLow;         // [16:31]
 			UINT32 BaseMiddle : 8;  // [32:39]
 			UINT32 Type : 4;        // [40:43]
@@ -161,11 +161,9 @@ extern "C" void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGues
 	{
 	case VMEXIT_REASON_CPUID:
 	{
-		int cpuidResult[4] = {};
-
-		if (pVirtCpuInfo->otherInfo.pMsrInterceptPlugin != NULL &&
+		if (pVirtCpuInfo->otherInfo.pCpuIdInterceptPlugin != NULL &&
 			pVirtCpuInfo->otherInfo.pCpuIdInterceptPlugin->HandleCpuid(pVirtCpuInfo, pGuestRegisters,
-																	  pGuestVmcbPhyAddr, pHostVmcbPhyAddr))
+				pGuestVmcbPhyAddr, pHostVmcbPhyAddr))
 			return;
 
 		if (((int)pVirtCpuInfo->guestVmcb.statusFields.rax) == GUEST_CALL_VMM_CPUID_FUNCTION)
@@ -183,7 +181,7 @@ extern "C" void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGues
 
 				//在退出VMM时打开GIF，否则退出后系统会接收不了中断假死，在进入Host模式的时候GIF是关闭状态
 				__svm_stgi();
-				__svm_vmsave((SIZE_T)pGuestVmcbPhyAddr);
+				__svm_vmsave((SIZE_TYPE)pGuestVmcbPhyAddr);
 
 				//退出虚拟化并继续执行guest
 				UINT64 eferVal = __readmsr(IA32_MSR_EFER);
@@ -196,6 +194,8 @@ extern "C" void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGues
 		}
 		else
 		{
+			int cpuidResult[4] = {};
+
 			//KdPrint(("CPUID Parameter: function = %x, subleaf = %x\n", (int)pVirtCpuInfo->guestVmcb.statusFields.rax, (int)pGuestRegisters->rcx));
 
 			__cpuidex(cpuidResult, (int)pVirtCpuInfo->guestVmcb.statusFields.rax, (int)pGuestRegisters->rcx);
@@ -230,8 +230,8 @@ extern "C" void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGues
 
 			if (pVirtCpuInfo->otherInfo.pMsrInterceptPlugin != NULL &&
 				pVirtCpuInfo->otherInfo.pMsrInterceptPlugin->HandleMsrInterceptWrite(pVirtCpuInfo, pGuestRegisters,
-																					 pGuestVmcbPhyAddr, pHostVmcbPhyAddr,
-																					 msrNum, value))
+					pGuestVmcbPhyAddr, pHostVmcbPhyAddr,
+					msrNum))
 				return;
 
 			//不允许客户机设置 EFER MSR 的 SVME 位 和 VM_CR MSR 的 SVMDIS 位
@@ -244,9 +244,9 @@ extern "C" void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGues
 		else
 		{
 			if (pVirtCpuInfo->otherInfo.pMsrInterceptPlugin != NULL &&
-				pVirtCpuInfo->otherInfo.pMsrInterceptPlugin->HandleMsrImterceptRead(pVirtCpuInfo, pGuestRegisters, 
-																					pGuestVmcbPhyAddr, pHostVmcbPhyAddr, 
-																					msrNum, &value))
+				pVirtCpuInfo->otherInfo.pMsrInterceptPlugin->HandleMsrImterceptRead(pVirtCpuInfo, pGuestRegisters,
+					pGuestVmcbPhyAddr, pHostVmcbPhyAddr,
+					msrNum))
 				return;
 
 			value.QuadPart = __readmsr(msrNum);
@@ -259,6 +259,7 @@ extern "C" void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGues
 			*reinterpret_cast<UINT32*>(&pVirtCpuInfo->guestVmcb.statusFields.rax) = value.LowPart;
 			*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = value.HighPart;
 		}
+
 		break;
 	}
 	case VMEXIT_REASON_VMRUN:
@@ -320,14 +321,10 @@ NTSTATUS MsrPremissionsMapManager::Init()
 	RtlInitializeBitMap(&bitmapHeader, (PULONG)pMsrPremissionsMapVirtAddr, 2 * PAGE_SIZE * CHAR_BIT);
 	RtlClearAllBits(&bitmapHeader);
 
-	//EFER读取拦截
-	RtlSetBits(&bitmapHeader, EFER_OFFSET, 1);
-	//EFER写入拦截
-	RtlSetBits(&bitmapHeader, EFER_OFFSET + 1, 1);
-	//VM_CR读取拦截
-	RtlSetBits(&bitmapHeader, VM_CR_OFFSET, 1);
-	//VM_CR写入拦截
-	RtlSetBits(&bitmapHeader, VM_CR_OFFSET + 1, 1);
+	//EFER读取写入拦截
+	RtlSetBits(&bitmapHeader, EFER_OFFSET, 2);
+	//VM_CR读取写入拦截
+	RtlSetBits(&bitmapHeader, VM_CR_OFFSET, 2);
 
 	if (pMsrInterceptPlugin != NULL)
 		pMsrInterceptPlugin->SetMsrPremissionMap(bitmapHeader);
@@ -421,7 +418,8 @@ NTSTATUS SVMManager::Init()
 		//为每一个CPU分配进入虚拟化必备的资源
 		//这里先初始化每个CPU的资源指针
 		cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
-		pVirtCpuInfo = (VirtCpuInfo**)ExAllocatePool2(POOL_FLAG_NON_PAGED, cpuCnt * sizeof(VirtCpuInfo*), SVM_TAG);
+		pVirtCpuInfo = (VirtCpuInfo**)AllocNonPagedMem(cpuCnt * sizeof(VirtCpuInfo*), SVM_TAG);
+
 		if (pVirtCpuInfo == NULL || !NT_SUCCESS(msrPremissionMap.Init()))
 		{
 			KdPrint(("SVMManager::Init(): Memory not enough!\n"));
@@ -441,6 +439,7 @@ NTSTATUS SVMManager::Init()
 			RtlZeroMemory(pVirtCpuInfo[idx], sizeof(VirtCpuInfo));
 			pVirtCpuInfo[idx]->otherInfo.pMsrInterceptPlugin = pMsrInterceptPlugin;
 			pVirtCpuInfo[idx]->otherInfo.pCpuIdInterceptPlugin = pCpuIdInterceptPlugin;
+			pVirtCpuInfo[idx]->otherInfo.cpuIdx = idx;
 		}
 
 		if (!NT_SUCCESS(result))
@@ -497,7 +496,7 @@ void SVMManager::Deinit()
 				pVirtCpuInfo[idx] = NULL;
 			}
 		}
-		ExFreePoolWithTag(pVirtCpuInfo, SVM_TAG);
+		FreeNonPagedMem(pVirtCpuInfo, SVM_TAG);
 		pVirtCpuInfo = NULL;
 		cpuCnt = 0;
 	}
@@ -546,12 +545,18 @@ NTSTATUS SVMManager::EnterVirtualization()
 			__writemsr(IA32_MSR_EFER, eferBackup | (1ULL << EFER_SVME_OFFSET));
 
 			pVirtCpuInfo[idx]->guestVmcb.controlFields.interceptOpcodes1
-				= Opcode1InterceptBits::CPUID;//Opcode1InterceptBits::RDMSR_WRMSR;
+				= Opcode1InterceptBits::CPUID | Opcode1InterceptBits::RDMSR_WRMSR;
 			//vmrun拦截必须打开，否则vmrun会失败
 			pVirtCpuInfo[idx]->guestVmcb.controlFields.interceptOpcodes2
 				= Opcode2InterceptBits::VMRUN;
 			pVirtCpuInfo[idx]->guestVmcb.controlFields.msrpmBasePA = msrPremissionMap.GetPhyAddress();
 			pVirtCpuInfo[idx]->guestVmcb.controlFields.guestASID = 1;
+
+			if (pNptPageTable != NULL)
+			{
+				pVirtCpuInfo[idx]->guestVmcb.controlFields.extendFeatures1.fields.enableNestedPage = true;
+				pVirtCpuInfo[idx]->guestVmcb.controlFields.nCr3 = (UINT64)pNptPageTable;
+			}
 
 			pVirtCpuInfo[idx]->guestVmcb.statusFields.gdtr.base = gdtrBase;
 			pVirtCpuInfo[idx]->guestVmcb.statusFields.gdtr.limit = gdtrLimit;

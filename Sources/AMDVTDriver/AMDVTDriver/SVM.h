@@ -60,6 +60,7 @@ struct VirtCpuInfo
 		UINT32 isInVirtualizaion;
 		IMsrInterceptPlugin* pMsrInterceptPlugin;
 		ICpuidInterceptPlugin* pCpuIdInterceptPlugin;
+		ULONG cpuIdx;
 	} otherInfo;
 };
 
@@ -71,11 +72,11 @@ public:
 	//处理拦截的msr读取，true代表已经处理，false代表未处理
 	virtual bool HandleMsrImterceptRead(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, 
 										PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr, 
-										UINT32 msrNum, PULARGE_INTEGER msrValueOut) = 0;
+										UINT32 msrNum) = 0;
 	//处理拦截的Mst写入，true代表已经处理，false代表未处理
 	virtual bool HandleMsrInterceptWrite(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 										 PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr, 
-										 UINT32 msrNum, ULARGE_INTEGER mstValueIn) = 0;
+										 UINT32 msrNum) = 0;
 	virtual ~IMsrInterceptPlugin() {}
 };
 
@@ -132,15 +133,18 @@ class SVMManager : public IManager
 	MsrPremissionsMapManager msrPremissionMap;
 	IMsrInterceptPlugin* pMsrInterceptPlugin;
 	ICpuidInterceptPlugin* pCpuIdInterceptPlugin;
+	PVOID pNptPageTable;
 	NTSTATUS EnterVirtualization();
 	void LeaveVirtualization();
 public:
 	#pragma code_seg("PAGE")
-	SVMManager() : pVirtCpuInfo(NULL), cpuCnt(0), pMsrInterceptPlugin(NULL), pCpuIdInterceptPlugin(NULL) { PAGED_CODE(); }
+	SVMManager() : pVirtCpuInfo(NULL), cpuCnt(0), pMsrInterceptPlugin(NULL), pCpuIdInterceptPlugin(NULL), pNptPageTable(NULL) { PAGED_CODE(); }
 	#pragma code_seg("PAGE")
 	void SetMsrInterceptPlugin(IMsrInterceptPlugin* _pMsrInterceptPlugin) { PAGED_CODE(); pMsrInterceptPlugin = _pMsrInterceptPlugin; }
 	#pragma code_seg("PAGE")
 	void SetCpuIdInterceptPlugin(ICpuidInterceptPlugin* _pCpuIdInterceptPlugin) { PAGED_CODE(); pCpuIdInterceptPlugin = _pCpuIdInterceptPlugin; }
+	#pragma code_seg("PAGE")
+	void SetNptPageTable(PVOID _pNptPageTable) { PAGED_CODE(); pNptPageTable = _pNptPageTable; }
 	static SVMStatus CheckSVM();
 	virtual NTSTATUS Init() override;
 	virtual void Deinit() override;

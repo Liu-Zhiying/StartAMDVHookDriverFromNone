@@ -1,0 +1,9 @@
+TARGETNAME=dbgclient
+TARGETPATH=bin
+TARGETTYPE=DRIVER
+
+TARGETLIBS=$(TARGETLIBS)         
+
+
+SOURCES=dbgclient.c
+
