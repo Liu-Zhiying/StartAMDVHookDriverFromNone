@@ -1,2 +1,0 @@
-# newbluepill
-new blue pill
