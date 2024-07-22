@@ -48,6 +48,8 @@ struct GenericRegisters
 
 class IMsrInterceptPlugin;
 class ICpuidInterceptPlugin;
+class INpfInterceptPlugin;
+class SVMManager;
 
 struct VirtCpuInfo
 {
@@ -58,8 +60,7 @@ struct VirtCpuInfo
 	DECLSPEC_ALIGN(PAGE_SIZE) struct
 	{
 		UINT32 isInVirtualizaion;
-		IMsrInterceptPlugin* pMsrInterceptPlugin;
-		ICpuidInterceptPlugin* pCpuIdInterceptPlugin;
+		SVMManager* pSvmManager;
 		ULONG cpuIdx;
 	} otherInfo;
 };
@@ -89,6 +90,15 @@ public:
 	virtual ~ICpuidInterceptPlugin() {}
 };
 
+class INpfInterceptPlugin
+{
+public:
+	//处理拦截的NPF事件，true代表已经处理，false代表未处理
+	virtual bool HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
+		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) = 0;
+	virtual ~INpfInterceptPlugin() {}
+};
+
 //VMCB的msrpmBasePA指向的内容，全局只需要一份
 //这个类负责初始化该资源
 class MsrPremissionsMapManager : IManager
@@ -104,9 +114,9 @@ public:
 	void SetPlugin(IMsrInterceptPlugin* _pMsrInterceptPlugin) { PAGED_CODE(); pMsrInterceptPlugin = _pMsrInterceptPlugin; }
 	virtual NTSTATUS Init() override;
 	#pragma code_seg("PAGE")
-	PTR_TYPE GetPhyAddress() { PAGED_CODE(); return (PTR_TYPE)pMsrPremissionsMapPhyAddr; }
+	PTR_TYPE GetPhyAddress() const { PAGED_CODE(); return (PTR_TYPE)pMsrPremissionsMapPhyAddr; }
 	#pragma code_seg("PAGE")
-	bool IsInited() { PAGED_CODE(); return pMsrPremissionsMapVirtAddr != NULL; }
+	bool IsInited() const { PAGED_CODE(); return pMsrPremissionsMapVirtAddr != NULL; }
 	virtual void Deinit() override;
 	#pragma code_seg("PAGE")
 	virtual ~MsrPremissionsMapManager() { PAGED_CODE(); MsrPremissionsMapManager::Deinit(); }
@@ -133,18 +143,24 @@ class SVMManager : public IManager
 	MsrPremissionsMapManager msrPremissionMap;
 	IMsrInterceptPlugin* pMsrInterceptPlugin;
 	ICpuidInterceptPlugin* pCpuIdInterceptPlugin;
+	INpfInterceptPlugin* pNpfInterceptPlugin;
 	PVOID pNptPageTable;
 	NTSTATUS EnterVirtualization();
 	void LeaveVirtualization();
+	
 public:
+	//请勿调用该函数，这个函数由VMM自动调用
+	void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr);
 	#pragma code_seg("PAGE")
-	SVMManager() : pVirtCpuInfo(NULL), cpuCnt(0), pMsrInterceptPlugin(NULL), pCpuIdInterceptPlugin(NULL), pNptPageTable(NULL) { PAGED_CODE(); }
+	SVMManager() : pVirtCpuInfo(NULL), cpuCnt(0), pMsrInterceptPlugin(NULL), pCpuIdInterceptPlugin(NULL), pNptPageTable(NULL), pNpfInterceptPlugin(NULL) { PAGED_CODE(); }
 	#pragma code_seg("PAGE")
 	void SetMsrInterceptPlugin(IMsrInterceptPlugin* _pMsrInterceptPlugin) { PAGED_CODE(); pMsrInterceptPlugin = _pMsrInterceptPlugin; }
 	#pragma code_seg("PAGE")
 	void SetCpuIdInterceptPlugin(ICpuidInterceptPlugin* _pCpuIdInterceptPlugin) { PAGED_CODE(); pCpuIdInterceptPlugin = _pCpuIdInterceptPlugin; }
 	#pragma code_seg("PAGE")
-	void SetNptPageTable(PVOID _pNptPageTable) { PAGED_CODE(); pNptPageTable = _pNptPageTable; }
+	void SetNpfInterceptPlugin(INpfInterceptPlugin* _pNpfInterrceptPlugin) { PAGED_CODE(); pNpfInterceptPlugin = _pNpfInterrceptPlugin; }
+	#pragma code_seg("PAGE")
+	void SetNptPageTablePhyAddr(PVOID _pNptPageTable) { PAGED_CODE(); pNptPageTable = _pNptPageTable; }
 	static SVMStatus CheckSVM();
 	virtual NTSTATUS Init() override;
 	virtual void Deinit() override;

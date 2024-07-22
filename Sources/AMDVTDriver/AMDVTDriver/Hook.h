@@ -40,7 +40,7 @@ struct MsrOperationParameter
 template<SIZE_TYPE msrHookCount>
 class MsrHookManager : public IManager, public IMsrInterceptPlugin, public ICpuidInterceptPlugin
 {
-	KMUTEX operationLock;
+	KSPIN_LOCK operationLock;
 	MsrHookParameter parameters[msrHookCount];
 	bool inited;
 	ULONG cpuCnt;
@@ -78,7 +78,7 @@ MsrHookManager<msrHookCount>::MsrHookManager() : inited(false), cpuCnt(0)
 	for (MsrHookParameter& param : parameters)
 		param.msrNum = INVALID_MSRNUM;
 
-	KeInitializeMutex(&operationLock, 0);
+	KeInitializeSpinLock(&operationLock);
 }
 
 #pragma code_seg("PAGE")
@@ -90,15 +90,15 @@ void MsrHookManager<msrHookCount>::SetHookMsrs(UINT32(&msrNums)[msrHookCount])
 		parameters[idx].msrNum = msrNums[idx];
 }
 
-#pragma code_seg("PAGE")
+#pragma code_seg()
 template<SIZE_TYPE msrHookCount>
 NTSTATUS MsrHookManager<msrHookCount>::Init()
 {
-	PAGED_CODE();
 	NTSTATUS status = STATUS_SUCCESS;
+	KIRQL oldIrql = {};
 	if (!inited)
 	{
-		KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
+		KeAcquireSpinLock(&operationLock, &oldIrql);
 
 		cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
 
@@ -116,23 +116,23 @@ NTSTATUS MsrHookManager<msrHookCount>::Init()
 		if (NT_SUCCESS(status))
 			inited = true;
 
-		KeReleaseMutex(&operationLock, FALSE);
+		KeReleaseSpinLock(&operationLock, oldIrql);
 	}
 	return status;
 }
 
-#pragma code_seg("PAGE")
+#pragma code_seg()
 template <SIZE_TYPE msrHookCount>
 void MsrHookManager<msrHookCount>::Deinit()
 {
-	PAGED_CODE();
 	if (inited)
 	{
 		PROCESSOR_NUMBER processorNum = {};
 		GROUP_AFFINITY affinity = {}, oldAffinity = {};
 		MsrOperationParameter optParam = {};
+		KIRQL oldIrql = {};
 
-		KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
+		KeAcquireSpinLock(&operationLock, &oldIrql);
 
 		for (SIZE_TYPE idx1 = 0; idx1 < msrHookCount; ++idx1)
 		{
@@ -168,7 +168,7 @@ void MsrHookManager<msrHookCount>::Deinit()
 			}
 		}
 
-		KeReleaseMutex(&operationLock, FALSE);
+		KeReleaseSpinLock(&operationLock, oldIrql);
 
 		cpuCnt = 0;
 
@@ -217,7 +217,8 @@ inline bool MsrHookManager<msrHookCount>::HandleMsrImterceptRead(VirtCpuInfo* pV
 	UNREFERENCED_PARAMETER(pHostVmcbPhyAddr);
 
 	bool handled = false;
-	KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
+	KIRQL oldIrql = {};
+	KeAcquireSpinLock(&operationLock, &oldIrql);
 
 	for (SIZE_TYPE idx = 0; idx < msrHookCount; ++idx)
 	{
@@ -234,7 +235,7 @@ inline bool MsrHookManager<msrHookCount>::HandleMsrImterceptRead(VirtCpuInfo* pV
 		}
 	}
 
-	KeReleaseMutex(&operationLock, FALSE);
+	KeReleaseSpinLock(&operationLock, oldIrql);
 	return handled;
 }
 
@@ -250,7 +251,8 @@ inline bool MsrHookManager<msrHookCount>::HandleMsrInterceptWrite(VirtCpuInfo* p
 	UNREFERENCED_PARAMETER(pHostVmcbPhyAddr);
 
 	bool handled = false;
-	KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
+	KIRQL oldIrql = {};
+	KeAcquireSpinLock(&operationLock, &oldIrql);
 
 	for (SIZE_TYPE idx = 0; idx < msrHookCount; ++idx)
 	{
@@ -267,7 +269,7 @@ inline bool MsrHookManager<msrHookCount>::HandleMsrInterceptWrite(VirtCpuInfo* p
 		}
 	}
 
-	KeReleaseMutex(&operationLock, FALSE);
+	KeReleaseSpinLock(&operationLock, oldIrql);
 	return handled;
 }
 
@@ -425,7 +427,9 @@ inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo,
 template<SIZE_TYPE msrHookCount>
 inline void MsrHookManager<msrHookCount>::EnableMsrHook(UINT32 msrNum, PTR_TYPE realValue)
 {
-	KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
+	KIRQL oldIrql = {};
+
+	KeAcquireSpinLock(&operationLock, &oldIrql);
 
 	PROCESSOR_NUMBER processorNum = {};
 	GROUP_AFFINITY affinity = {}, oldAffinity = {};
@@ -460,14 +464,16 @@ inline void MsrHookManager<msrHookCount>::EnableMsrHook(UINT32 msrNum, PTR_TYPE 
 		}
 	}
 
-	KeReleaseMutex(&operationLock, FALSE);
+	KeReleaseSpinLock(&operationLock, oldIrql);
 }
 
 #pragma code_seg()
 template<SIZE_TYPE msrHookCount>
 inline void MsrHookManager<msrHookCount>::DisableMsrHook(UINT32 msrNum, bool writeFakeValueToMsr)
 {
-	KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
+	KIRQL oldIrql = {};
+
+	KeAcquireSpinLock(&operationLock, &oldIrql);
 
 	PROCESSOR_NUMBER processorNum = {};
 	GROUP_AFFINITY affinity = {}, oldAffinity = {};
@@ -500,7 +506,7 @@ inline void MsrHookManager<msrHookCount>::DisableMsrHook(UINT32 msrNum, bool wri
 		}
 	}
 
-	KeReleaseMutex(&operationLock, FALSE);
+	KeReleaseSpinLock(&operationLock, oldIrql);
 }
 
 //启用IA32_MSR_LSTAR HOOK 使用之前需要调用MsrHookManager::SetHookMsrs注册IA32_MSR_LSTAR

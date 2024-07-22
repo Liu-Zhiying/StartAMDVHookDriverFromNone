@@ -150,131 +150,7 @@ UINT32 _GetSegmentLimit(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 #pragma code_seg()
 extern "C" void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
 {
-	UNREFERENCED_PARAMETER(pHostVmcbPhyAddr);
-	UNREFERENCED_PARAMETER(pGuestVmcbPhyAddr);
-
-	//先清空寄存器，代表这次执行货不退出虚拟机
-	pGuestRegisters->extraInfo1 = 0;
-	pGuestRegisters->extraInfo2 = 0;
-
-	switch ((VmExitReasons)pVirtCpuInfo->guestVmcb.controlFields.exitCode)
-	{
-	case VMEXIT_REASON_CPUID:
-	{
-		if (pVirtCpuInfo->otherInfo.pCpuIdInterceptPlugin != NULL &&
-			pVirtCpuInfo->otherInfo.pCpuIdInterceptPlugin->HandleCpuid(pVirtCpuInfo, pGuestRegisters,
-				pGuestVmcbPhyAddr, pHostVmcbPhyAddr))
-			return;
-
-		if (((int)pVirtCpuInfo->guestVmcb.statusFields.rax) == GUEST_CALL_VMM_CPUID_FUNCTION)
-		{
-			switch (pGuestRegisters->rcx)
-			{
-			case 0:
-			{
-				//设置退出虚拟化之后的指令寄存器和栈寄存器
-				pGuestRegisters->extraInfo1 = pVirtCpuInfo->guestVmcb.controlFields.nRip;
-				pGuestRegisters->extraInfo2 = pVirtCpuInfo->guestVmcb.statusFields.rsp;
-
-				//设置RFlags
-				pGuestRegisters->rflags = pVirtCpuInfo->guestVmcb.statusFields.rflags;
-
-				//在退出VMM时打开GIF，否则退出后系统会接收不了中断假死，在进入Host模式的时候GIF是关闭状态
-				__svm_stgi();
-				__svm_vmsave((SIZE_TYPE)pGuestVmcbPhyAddr);
-
-				//退出虚拟化并继续执行guest
-				UINT64 eferVal = __readmsr(IA32_MSR_EFER);
-				__writemsr(IA32_MSR_EFER, eferVal & ~(1ULL << EFER_SVME_OFFSET));
-				__writeeflags((UINT32)pVirtCpuInfo->guestVmcb.statusFields.rflags);
-
-				break;
-			}
-			}
-		}
-		else
-		{
-			int cpuidResult[4] = {};
-
-			//KdPrint(("CPUID Parameter: function = %x, subleaf = %x\n", (int)pVirtCpuInfo->guestVmcb.statusFields.rax, (int)pGuestRegisters->rcx));
-
-			__cpuidex(cpuidResult, (int)pVirtCpuInfo->guestVmcb.statusFields.rax, (int)pGuestRegisters->rcx);
-
-			if (((int)pVirtCpuInfo->guestVmcb.statusFields.rax) == CPUID_FN_SVM_FEATURE)
-				cpuidResult[2] &= ~(1UL << CPUID_FN_80000001_ECX_SVM_OFFSET);
-
-			*reinterpret_cast<UINT32*>(&pVirtCpuInfo->guestVmcb.statusFields.rax) = cpuidResult[0];
-			*reinterpret_cast<UINT32*>(&pGuestRegisters->rbx) = cpuidResult[1];
-			*reinterpret_cast<UINT32*>(&pGuestRegisters->rcx) = cpuidResult[2];
-			*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = cpuidResult[3];
-
-			//KdPrint(("CPUID Result: eax = %x, ebx = %x, ecx = %x, edx = %x\n", (int)pVirtCpuInfo->guestVmcb.statusFields.rax,
-			//(int)pGuestRegisters->rbx,
-			//(int)pGuestRegisters->rcx,
-			//(int)pGuestRegisters->rdx));
-		}
-		break;
-	}
-	case VMEXIT_REASON_MSR:
-	{
-		ULARGE_INTEGER value = {};
-		UINT32 msrNum = (UINT32)pGuestRegisters->rcx;
-		bool isWriteAccess = pVirtCpuInfo->guestVmcb.controlFields.exitInfo1;
-
-		KdPrint(("%s address = %x", isWriteAccess ? "wrmsr" : "rdmsr", msrNum));
-
-		if (isWriteAccess)
-		{
-			value.LowPart = (UINT32)pVirtCpuInfo->guestVmcb.statusFields.rax;
-			value.HighPart = (UINT32)pGuestRegisters->rdx;
-
-			if (pVirtCpuInfo->otherInfo.pMsrInterceptPlugin != NULL &&
-				pVirtCpuInfo->otherInfo.pMsrInterceptPlugin->HandleMsrInterceptWrite(pVirtCpuInfo, pGuestRegisters,
-					pGuestVmcbPhyAddr, pHostVmcbPhyAddr,
-					msrNum))
-				return;
-
-			//不允许客户机设置 EFER MSR 的 SVME 位 和 VM_CR MSR 的 SVMDIS 位
-			if (msrNum == IA32_MSR_EFER && !(value.LowPart & (1UL << EFER_SVME_OFFSET)) ||
-				msrNum == IA32_MSR_VM_CR && !(value.LowPart & (1ULL << VM_CR_SVMDIS_OFFSET)))
-				KeBugCheck(MANUALLY_INITIATED_CRASH);
-
-			__writemsr(msrNum, value.QuadPart);
-		}
-		else
-		{
-			if (pVirtCpuInfo->otherInfo.pMsrInterceptPlugin != NULL &&
-				pVirtCpuInfo->otherInfo.pMsrInterceptPlugin->HandleMsrImterceptRead(pVirtCpuInfo, pGuestRegisters,
-					pGuestVmcbPhyAddr, pHostVmcbPhyAddr,
-					msrNum))
-				return;
-
-			value.QuadPart = __readmsr(msrNum);
-
-			if (msrNum == IA32_MSR_VM_CR)
-				value.QuadPart |= (1ULL << VM_CR_SVMDIS_OFFSET);
-			if (msrNum == IA32_MSR_EFER)
-				value.QuadPart &= ~(1UL << EFER_SVME_OFFSET);
-
-			*reinterpret_cast<UINT32*>(&pVirtCpuInfo->guestVmcb.statusFields.rax) = value.LowPart;
-			*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = value.HighPart;
-		}
-
-		break;
-	}
-	case VMEXIT_REASON_VMRUN:
-	{
-		KeBugCheck(MANUALLY_INITIATED_CRASH);
-		break;
-	}
-	default:
-		break;
-	}
-
-	//guest到下一条指令执行
-	pVirtCpuInfo->guestVmcb.statusFields.rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
-
-	return;
+	return pVirtCpuInfo->otherInfo.pSvmManager->VmExitHandler(pVirtCpuInfo, pGuestRegisters, pGuestVmcbPhyAddr, pHostVmcbPhyAddr);
 }
 
 #pragma code_seg("PAGE")
@@ -437,8 +313,7 @@ NTSTATUS SVMManager::Init()
 				break;
 			}
 			RtlZeroMemory(pVirtCpuInfo[idx], sizeof(VirtCpuInfo));
-			pVirtCpuInfo[idx]->otherInfo.pMsrInterceptPlugin = pMsrInterceptPlugin;
-			pVirtCpuInfo[idx]->otherInfo.pCpuIdInterceptPlugin = pCpuIdInterceptPlugin;
+			pVirtCpuInfo[idx]->otherInfo.pSvmManager = this;
 			pVirtCpuInfo[idx]->otherInfo.cpuIdx = idx;
 		}
 
@@ -554,6 +429,7 @@ NTSTATUS SVMManager::EnterVirtualization()
 
 			if (pNptPageTable != NULL)
 			{
+				KdPrint(("SVMManager::EnterVirtualization(): Enable NPT\n"));
 				pVirtCpuInfo[idx]->guestVmcb.controlFields.extendFeatures1.fields.enableNestedPage = true;
 				pVirtCpuInfo[idx]->guestVmcb.controlFields.nCr3 = (UINT64)pNptPageTable;
 			}
@@ -672,4 +548,143 @@ void SVMManager::LeaveVirtualization()
 	int result[4] = {};
 	//调用CPUID指令通知VMM退出
 	__cpuidex(result, GUEST_CALL_VMM_CPUID_FUNCTION, 0);
+}
+
+#pragma code_seg()
+void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
+{
+	UNREFERENCED_PARAMETER(pHostVmcbPhyAddr);
+	UNREFERENCED_PARAMETER(pGuestVmcbPhyAddr);
+
+	//先清空寄存器，代表这次执行货不退出虚拟机
+	pGuestRegisters->extraInfo1 = 0;
+	pGuestRegisters->extraInfo2 = 0;
+
+	switch ((VmExitReasons)pVMMVirtCpuInfo->guestVmcb.controlFields.exitCode)
+	{
+	case VMEXIT_REASON_CPUID:
+	{
+		if (pCpuIdInterceptPlugin != NULL &&
+			pCpuIdInterceptPlugin->HandleCpuid(pVMMVirtCpuInfo, pGuestRegisters,
+				pGuestVmcbPhyAddr, pHostVmcbPhyAddr))
+			return;
+
+		if (((int)pVMMVirtCpuInfo->guestVmcb.statusFields.rax) == GUEST_CALL_VMM_CPUID_FUNCTION)
+		{
+			switch (pGuestRegisters->rcx)
+			{
+			case 0:
+			{
+				//设置退出虚拟化之后的指令寄存器和栈寄存器
+				pGuestRegisters->extraInfo1 = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
+				pGuestRegisters->extraInfo2 = pVMMVirtCpuInfo->guestVmcb.statusFields.rsp;
+
+				//设置RFlags
+				pGuestRegisters->rflags = pVMMVirtCpuInfo->guestVmcb.statusFields.rflags;
+
+				//在退出VMM时打开GIF，否则退出后系统会接收不了中断假死，在进入Host模式的时候GIF是关闭状态
+				__svm_stgi();
+				__svm_vmsave((SIZE_TYPE)pGuestVmcbPhyAddr);
+
+				//退出虚拟化并继续执行guest
+				UINT64 eferVal = __readmsr(IA32_MSR_EFER);
+				__writemsr(IA32_MSR_EFER, eferVal & ~(1ULL << EFER_SVME_OFFSET));
+				__writeeflags((UINT32)pVMMVirtCpuInfo->guestVmcb.statusFields.rflags);
+
+				break;
+			}
+			}
+		}
+		else
+		{
+			int cpuidResult[4] = {};
+
+			//KdPrint(("CPUID Parameter: function = %x, subleaf = %x\n", (int)pVirtCpuInfo->guestVmcb.statusFields.rax, (int)pGuestRegisters->rcx));
+
+			__cpuidex(cpuidResult, (int)pVMMVirtCpuInfo->guestVmcb.statusFields.rax, (int)pGuestRegisters->rcx);
+
+			if (((int)pVMMVirtCpuInfo->guestVmcb.statusFields.rax) == CPUID_FN_SVM_FEATURE)
+				cpuidResult[2] &= ~(1UL << CPUID_FN_80000001_ECX_SVM_OFFSET);
+
+			*reinterpret_cast<UINT32*>(&pVMMVirtCpuInfo->guestVmcb.statusFields.rax) = cpuidResult[0];
+			*reinterpret_cast<UINT32*>(&pGuestRegisters->rbx) = cpuidResult[1];
+			*reinterpret_cast<UINT32*>(&pGuestRegisters->rcx) = cpuidResult[2];
+			*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = cpuidResult[3];
+
+			//KdPrint(("CPUID Result: eax = %x, ebx = %x, ecx = %x, edx = %x\n", (int)pVirtCpuInfo->guestVmcb.statusFields.rax,
+			//(int)pGuestRegisters->rbx,
+			//(int)pGuestRegisters->rcx,
+			//(int)pGuestRegisters->rdx));
+		}
+		break;
+	}
+	case VMEXIT_REASON_MSR:
+	{
+		ULARGE_INTEGER value = {};
+		UINT32 msrNum = (UINT32)pGuestRegisters->rcx;
+		bool isWriteAccess = pVMMVirtCpuInfo->guestVmcb.controlFields.exitInfo1;
+
+		KdPrint(("%s address = %x", isWriteAccess ? "wrmsr" : "rdmsr", msrNum));
+
+		if (isWriteAccess)
+		{
+			value.LowPart = (UINT32)pVMMVirtCpuInfo->guestVmcb.statusFields.rax;
+			value.HighPart = (UINT32)pGuestRegisters->rdx;
+
+			if (pMsrInterceptPlugin != NULL &&
+				pMsrInterceptPlugin->HandleMsrInterceptWrite(pVMMVirtCpuInfo, pGuestRegisters,
+					pGuestVmcbPhyAddr, pHostVmcbPhyAddr,
+					msrNum))
+				return;
+
+			//不允许客户机设置 EFER MSR 的 SVME 位 和 VM_CR MSR 的 SVMDIS 位
+			if (msrNum == IA32_MSR_EFER && !(value.LowPart & (1UL << EFER_SVME_OFFSET)) ||
+				msrNum == IA32_MSR_VM_CR && !(value.LowPart & (1ULL << VM_CR_SVMDIS_OFFSET)))
+				KeBugCheck(MANUALLY_INITIATED_CRASH);
+
+			__writemsr(msrNum, value.QuadPart);
+		}
+		else
+		{
+			if (pMsrInterceptPlugin != NULL &&
+				pMsrInterceptPlugin->HandleMsrImterceptRead(pVMMVirtCpuInfo, pGuestRegisters,
+					pGuestVmcbPhyAddr, pHostVmcbPhyAddr,
+					msrNum))
+				return;
+
+			value.QuadPart = __readmsr(msrNum);
+
+			if (msrNum == IA32_MSR_VM_CR)
+				value.QuadPart |= (1ULL << VM_CR_SVMDIS_OFFSET);
+			if (msrNum == IA32_MSR_EFER)
+				value.QuadPart &= ~(1UL << EFER_SVME_OFFSET);
+
+			*reinterpret_cast<UINT32*>(&pVMMVirtCpuInfo->guestVmcb.statusFields.rax) = value.LowPart;
+			*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = value.HighPart;
+		}
+
+		break;
+	}
+	case VMEXIT_REASON_VMRUN:
+	{
+		KeBugCheck(MANUALLY_INITIATED_CRASH);
+		break;
+	}
+	case VMEXIT_REASON_NPF:
+	{
+		if (pNpfInterceptPlugin != NULL &&
+			pNpfInterceptPlugin->HandleNpf(pVMMVirtCpuInfo, pGuestRegisters, pGuestVmcbPhyAddr, pHostVmcbPhyAddr))
+			return;
+	}
+	default:
+	{
+		KeBugCheck(MANUALLY_INITIATED_CRASH);
+		break;
+	}
+	}
+
+	//guest到下一条指令执行
+	pVMMVirtCpuInfo->guestVmcb.statusFields.rip = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
+
+	return;
 }

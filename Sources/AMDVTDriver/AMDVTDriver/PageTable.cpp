@@ -4,10 +4,9 @@
 const ULONG PT_TAG = MAKE_TAG('p', 't', 'm', ' ');
 
 //获取页表基地址（虚拟地址）
-#pragma code_seg("PAGE")
+#pragma code_seg()
 void GetSysPXEVirtAddr(PTR_TYPE* pPxeOut)
 {
-	PAGED_CODE();
 	//读取Cr3物理地址并使用Windows内核函数转换为虚拟地址
 	//注意：MmGetVirtualForPhysical被微软标记为保留，除了名字外啥也没提
 	PTR_TYPE pxePhyAddr = __readcr3();
@@ -44,9 +43,9 @@ void GetSysPXEVirtAddr(PTR_TYPE* pPxeOut)
 		*pPxeOut = NULL;
 		return;
 	}
-	
+
 	*pPxeOut = testAddr;
-	
+
 	/*
 
 	老版代码，使用了微软的保留API
@@ -74,36 +73,183 @@ void GetSysPXEVirtAddr(PTR_TYPE* pPxeOut)
 	return;
 }
 
-#pragma code_seg("PAGE")
+//页表条目填充
+#pragma code_seg()
 template<typename EntryType>
 void SetPageTableEntry(EntryType* pEntry, PTR_TYPE pfn)
 {
 	pEntry->fields.present = true;
 	pEntry->fields.writeable = true;
 	pEntry->fields.userAccess = true;
-	pEntry->fields.size = false;
+	//pEntry->fields.size = false;
 	pEntry->fields.pagePpn = pfn;
 }
 
-#pragma code_seg("PAGE")
-PTR_TYPE GetPfnFromPhyAddr(PTR_TYPE phyAddr)
+//level 0 （最低级别页表）的数据填充
+#pragma code_seg()
+NTSTATUS BuildNptPageTableeLevel1Impl(PageTableLevel123* pTable, PTR_TYPE startPhyAddr, PTR_TYPE endPhyAddr, KernelVector<PageTableRecord>& records)
 {
-	return (PTR_TYPE)(phyAddr >> 12);
+	auto getPfnFromPhyAddr = [](PTR_TYPE phyAddr) -> PTR_TYPE { return (PTR_TYPE)((phyAddr >> 12) & 0xfffffff); };
+
+	UNREFERENCED_PARAMETER(records);
+	constexpr PTR_TYPE rightShift = 12;
+	constexpr PTR_TYPE unit = static_cast<PTR_TYPE>(1) << rightShift;
+
+	NTSTATUS status = STATUS_SUCCESS;
+
+	do
+	{
+		if (endPhyAddr <= startPhyAddr)
+		{
+			status = STATUS_INVALID_PARAMETER;
+			break;
+		}
+
+		PTR_TYPE startBase = (startPhyAddr - (startPhyAddr % unit));
+		PTR_TYPE startIdx = ((startPhyAddr >> rightShift) & 0x1ff);
+		PTR_TYPE idxCnt = (endPhyAddr - startBase) / unit;
+		if (((endPhyAddr - startBase) % unit))
+			++idxCnt;
+		PTR_TYPE endIdx = startIdx + idxCnt;
+
+		if (endIdx > 0x200)
+		{
+			status = STATUS_INVALID_PARAMETER;
+			break;
+		}
+
+		for (PTR_TYPE idx = startIdx; idx < endIdx; ++idx)
+		{
+			if (!pTable->entries[idx].fields.present)
+				SetPageTableEntry(&pTable->entries[idx], getPfnFromPhyAddr(startBase + ((idx - startIdx) * unit)));
+		}
+
+		if (!NT_SUCCESS(status))
+			break;
+
+	} while (false);
+
+	return status;
 }
 
-#pragma code_seg("PAGE")
-NTSTATUS BuildNptPageTable(PTR_TYPE pPhysicalMemory, PTR_TYPE pNptPageTable, 
-						   PTR_TYPE* pLevel4PageTable, KernelVector<PVOID>& nptPageTableVirtAddrs,
-						   UINT32 level = 5)
+//在记录项中通过物理地址查找虚拟地址
+#pragma code_seg()
+PTR_TYPE FindVaFromPa(const KernelVector<PageTableRecord>& records, PTR_TYPE pa)
+{
+	for (PTR_TYPE i = records.Length(); i; --i)
+	{
+		if (records[i - 1].pPhyAddr == pa)
+			return records[i - 1].pVirtAddr;
+	}
+	return (PTR_TYPE)-1;
+}
+
+//Level 1 2 3 页表的创建，使用模板
+#pragma code_seg()
+template<typename TableType, typename SubTableType, PTR_TYPE rightShift, typename NextStep, NextStep nextStep>
+NTSTATUS BuildNptPageTableLevel234Impl(TableType* pTable, PTR_TYPE startPhyAddr, PTR_TYPE endPhyAddr, KernelVector<PageTableRecord>& records)
+{
+	auto getPfnFromPhyAddr = [](PTR_TYPE phyAddr) -> PTR_TYPE { return (PTR_TYPE)((phyAddr >> 12) & 0xfffffff); };
+	auto getPhyAddrFromPfn = [](PTR_TYPE pfn) -> PTR_TYPE { return (PTR_TYPE)((pfn & 0xfffffff) << 12); };
+
+	NTSTATUS status = STATUS_SUCCESS;
+
+	do
+	{
+		if (endPhyAddr <= startPhyAddr)
+		{
+			status = STATUS_INVALID_PARAMETER;
+			break;
+		}
+
+		constexpr PTR_TYPE unit = (static_cast<PTR_TYPE>(1) << rightShift);
+		PTR_TYPE startBase = (startPhyAddr - (startPhyAddr % unit));
+		PTR_TYPE startIdx = ((startPhyAddr >> rightShift) & 0x1ff);
+		PTR_TYPE idxCnt = (endPhyAddr - startBase) / unit;
+		if (((endPhyAddr - startBase) % unit))
+			++idxCnt;
+		PTR_TYPE endIdx = startIdx + idxCnt;
+
+		if (endIdx > 0x200)
+		{
+			status = STATUS_INVALID_PARAMETER;
+			break;
+		}
+
+		for (PTR_TYPE idx = startIdx; idx < endIdx; ++idx)
+		{
+			PTR_TYPE va = (PTR_TYPE)-1;
+			if (!pTable->entries[idx].fields.present)
+			{
+				SubTableType* pSubTable = (SubTableType*)MmAllocateContiguousMemory(sizeof(SubTableType), highestPhyAddr);
+				if (pSubTable == NULL)
+				{
+					status = STATUS_INSUFFICIENT_RESOURCES;
+					break;
+				}
+
+				va = (PTR_TYPE)pSubTable;
+				PTR_TYPE pa = (PTR_TYPE)MmGetPhysicalAddress((PVOID)pSubTable).QuadPart;
+
+				records.PushBack(PageTableRecord((PTR_TYPE)pSubTable, pa));
+
+				SetPageTableEntry(&pTable->entries[idx], getPfnFromPhyAddr(pa));
+
+				RtlZeroMemory(pSubTable, sizeof(SubTableType));
+			}
+			else
+			{
+				//新建页表时记录了虚拟地址和物理地址
+				//在记录项里面通过物理地址查找虚拟地址
+				//避免了微软保留API的使用
+				va = FindVaFromPa(records, getPhyAddrFromPfn(pTable->entries[idx].fields.pagePpn));
+				//PHYSICAL_ADDRESS addr = {};
+				//addr.QuadPart = pTable->entries[idx].fields.pagePpn << 12;
+				//va = (PTR_TYPE)MmGetVirtualForPhysical(addr);
+			}
+
+			if (va != -1)
+			{
+				PTR_TYPE newStartPhyAddr = startBase + ((idx - startIdx) * unit);
+				PTR_TYPE newEndPhyAddr = newStartPhyAddr + unit;
+
+				if (startPhyAddr > newStartPhyAddr)
+					newStartPhyAddr = startPhyAddr;
+
+				if (endPhyAddr < newEndPhyAddr)
+					newEndPhyAddr = endPhyAddr;
+
+				status = nextStep((SubTableType*)va, newStartPhyAddr, newEndPhyAddr, records);
+				if (!NT_SUCCESS(status))
+					break;
+			}
+		}
+
+		if (!NT_SUCCESS(status))
+			break;
+
+	} while (false);
+
+	return status;
+}
+
+using NPT_Level123_Processor = NTSTATUS(*)(PageTableLevel123*, PTR_TYPE, PTR_TYPE, KernelVector<PageTableRecord>&);
+using NPT_Level4_Processor = NTSTATUS(*)(PageTableLevel4*, PTR_TYPE, PTR_TYPE, KernelVector<PageTableRecord>&);
+
+//嵌套模板函数生成页表
+constexpr NPT_Level123_Processor level1Processor = BuildNptPageTableeLevel1Impl;
+constexpr NPT_Level123_Processor level2Processor = BuildNptPageTableLevel234Impl<PageTableLevel123, PageTableLevel123, 21, NPT_Level123_Processor, level1Processor>;
+constexpr NPT_Level123_Processor level3Processor = BuildNptPageTableLevel234Impl<PageTableLevel123, PageTableLevel123, 30, NPT_Level123_Processor, level2Processor>;
+constexpr NPT_Level4_Processor	 level4Processor = BuildNptPageTableLevel234Impl<PageTableLevel4, PageTableLevel123, 39, NPT_Level123_Processor, level3Processor>;
+
+#pragma code_seg()
+NTSTATUS BuildNptPageTable(PTR_TYPE* pLevel4PageTable, KernelVector<PageTableRecord>& nptPageTableRecords)
 {
 	NTSTATUS status = STATUS_SUCCESS;
 
-	switch (level)
-	{
-	case 5:
+	do
 	{
 		PPHYSICAL_MEMORY_RANGE pPhysicalMemoryRanges = MmGetPhysicalMemoryRanges();
-
 		if (pPhysicalMemoryRanges == NULL)
 		{
 			status = STATUS_INSUFFICIENT_RESOURCES;
@@ -111,7 +257,6 @@ NTSTATUS BuildNptPageTable(PTR_TYPE pPhysicalMemory, PTR_TYPE pNptPageTable,
 		}
 
 		PageTableLevel4* pNptLevel4PageTable = (PageTableLevel4*)MmAllocateContiguousMemory(sizeof(PageTableLevel4), highestPhyAddr);
-
 		if (pNptLevel4PageTable == NULL)
 		{
 			status = STATUS_INSUFFICIENT_RESOURCES;
@@ -119,7 +264,6 @@ NTSTATUS BuildNptPageTable(PTR_TYPE pPhysicalMemory, PTR_TYPE pNptPageTable,
 		}
 
 		RtlZeroMemory(pNptLevel4PageTable, sizeof(*pNptLevel4PageTable));
-		nptPageTableVirtAddrs.PushBack((PVOID)pNptLevel4PageTable);
 
 		for (SIZE_TYPE memoryRangeIdx = 0; pPhysicalMemoryRanges[memoryRangeIdx].BaseAddress.QuadPart != 0 ||
 			pPhysicalMemoryRanges[memoryRangeIdx].NumberOfBytes.QuadPart != 0; ++memoryRangeIdx)
@@ -127,90 +271,70 @@ NTSTATUS BuildNptPageTable(PTR_TYPE pPhysicalMemory, PTR_TYPE pNptPageTable,
 			PTR_TYPE memoryRangeBeg = pPhysicalMemoryRanges[memoryRangeIdx].BaseAddress.QuadPart;
 			PTR_TYPE memoryRangeEnd = memoryRangeBeg + pPhysicalMemoryRanges[memoryRangeIdx].NumberOfBytes.QuadPart;
 
-			while (memoryRangeBeg < memoryRangeEnd)
-			{
-				status = BuildNptPageTable(memoryRangeBeg, (PTR_TYPE)pNptLevel4PageTable, NULL, nptPageTableVirtAddrs, level - 1);
-				if (!NT_SUCCESS(status))
-					break;
-				memoryRangeBeg += PAGE_SIZE;
-			}
+			//从递归模板顶端调用函数生成页表
+			status = level4Processor(pNptLevel4PageTable, memoryRangeBeg, memoryRangeEnd, nptPageTableRecords);
 
 			if (!NT_SUCCESS(status))
 				break;
 		}
 
-		ApicBase apicBase = {};
-		apicBase.data = __readmsr(IA32_MSR_APIC_BASE);
-		status = BuildNptPageTable((PTR_TYPE)apicBase.data * PAGE_SIZE, (PTR_TYPE)pNptLevel4PageTable, NULL, nptPageTableVirtAddrs, level - 1);
 		if (!NT_SUCCESS(status))
 			break;
 
-		if (NT_SUCCESS(status))
-			*pLevel4PageTable = (PTR_TYPE)pNptLevel4PageTable;
+		ApicBase apicBase = {};
+		apicBase.data = __readmsr(IA32_MSR_APIC_BASE);
+		PTR_TYPE startPhyAddr = apicBase.fields.apicBase * PAGE_SIZE;
+		//瞎写的，没有参考CPU手册，写大些也没问题
+		PTR_TYPE endPhyAddr = startPhyAddr + PAGE_SIZE * 16;
 
-		break;
-	}
-	case 4:
-	{
-		PageTableLevel4* pTable = (PageTableLevel4*)pNptPageTable;
-		PageTableLevel23* pSubTable = NULL;
-		PageTableLevel4Entry* pEntry = (PageTableLevel4Entry*)&pTable->entries[pPhysicalMemory >> 39];
-		if (!pEntry->fields.present)
-		{
-			pSubTable = (PageTableLevel23*)MmAllocateContiguousMemory(sizeof(PageTableLevel23), highestPhyAddr);
-			if (pSubTable == NULL)
-			{
-				status = STATUS_INSUFFICIENT_RESOURCES;
-				break;
-			}
-			nptPageTableVirtAddrs.PushBack((PVOID)pSubTable);
-			RtlIsZeroMemory(pSubTable, sizeof(PageTableLevel23));
-			SetPageTableEntry(pEntry, GetPfnFromPhyAddr(MmGetPhysicalAddress(pSubTable).QuadPart));
-		}
-		if (NT_SUCCESS(status))
-			status = BuildNptPageTable(pPhysicalMemory, (PTR_TYPE)pSubTable, pLevel4PageTable, nptPageTableVirtAddrs, level - 1);
-		break;
-	}
-	case 3:
-	case 2:
-	{
-		INT32 rightShiftCnt = level == 3 ? 30 : 21;
-		PageTableLevel23* pTable = (PageTableLevel23*)pNptPageTable;
-		PageTableLevel23* pSubTable = NULL;
-		PageTableLevel123Entry* pEntry = (PageTableLevel123Entry*)&pTable->entries[pPhysicalMemory >> rightShiftCnt];
-		if (!pEntry->fields.present)
-		{
-			pSubTable = (PageTableLevel23*)MmAllocateContiguousMemory(sizeof(PageTableLevel23), highestPhyAddr);
-			if (pSubTable == NULL)
-			{
-				status = STATUS_INSUFFICIENT_RESOURCES;
-				break;
-			}
-			nptPageTableVirtAddrs.PushBack((PVOID)pSubTable);
-			RtlIsZeroMemory(pSubTable, sizeof(PageTableLevel23));
-			SetPageTableEntry(pEntry, GetPfnFromPhyAddr(MmGetPhysicalAddress(pSubTable).QuadPart));
-		}
-		if (NT_SUCCESS(status))
-			status = BuildNptPageTable(pPhysicalMemory, (PTR_TYPE)pSubTable, pLevel4PageTable, nptPageTableVirtAddrs, level - 1);
-		break;
-	}
-	case 1:
-	{
-		PageTableLevel23* pTable = (PageTableLevel23*)pNptPageTable;
-		PageTableLevel123Entry* pEntry = (PageTableLevel123Entry*)&pTable->entries[pPhysicalMemory >> 12];
-		if (!pEntry->fields.present)
-			SetPageTableEntry(pEntry, GetPfnFromPhyAddr(pPhysicalMemory));
-		break;
-	}
-	}
+		status = level4Processor(pNptLevel4PageTable, startPhyAddr, endPhyAddr, nptPageTableRecords);
+		if (!NT_SUCCESS(status))
+			break;
+
+		*pLevel4PageTable = (PTR_TYPE)pNptLevel4PageTable;
+
+	} while (false);
+
 	return status;
 }
 
-#pragma code_seg("PAGE")
+#pragma code_seg()
+bool PageTableManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
+{
+	UNREFERENCED_PARAMETER(pGuestRegisters);
+	UNREFERENCED_PARAMETER(pGuestVmcbPhyAddr);
+	UNREFERENCED_PARAMETER(pHostVmcbPhyAddr);
+
+	bool result = false;
+
+	NpfExitInfo1 exitInfo = {};
+	PTR_TYPE pa = pVirtCpuInfo->guestVmcb.controlFields.exitInfo2;
+	exitInfo.data = pVirtCpuInfo->guestVmcb.controlFields.exitInfo1;
+
+	if (!exitInfo.Fields.present)
+	{
+		PTR_TYPE paStart = pa - pa % PAGE_SIZE;
+		PTR_TYPE paEnd = paStart + PAGE_SIZE;
+		KIRQL oldIrql = {};
+
+		KeAcquireSpinLock(&operationLock, &oldIrql);
+
+		level4Processor((PageTableLevel4*)pNptPageTable, paStart, paEnd, nptPageTableRecords);
+
+		KeReleaseSpinLock(&operationLock, oldIrql);
+
+		result = true;
+	}
+	return result;
+}
+
+#pragma code_seg()
 NTSTATUS PageTableManager::Init()
 {
-	PAGED_CODE();
 	NTSTATUS status = STATUS_SUCCESS;
+	KIRQL oldIrql = {};
+
+	KeAcquireSpinLock(&operationLock, &oldIrql);
 
 	do
 	{
@@ -226,72 +350,66 @@ NTSTATUS PageTableManager::Init()
 
 		if (pNptPageTable == INVALID_NPT_PAGE_TABLE)
 		{
-			KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
+			nptPageTableRecords.Clear();
 
-			do
-			{
-				nptPageTableVirtAddrs.Clear();
-				//if (!NT_SUCCESS(BuildNptPageTable(highestPhyAddr.QuadPart, highestPhyAddr.QuadPart, 
-				//								  &pNptPageTable, nptPageTableVirtAddrs)))
-				//	break;
-			} while (false);
+			status = BuildNptPageTable(&pNptPageTable, nptPageTableRecords);
 
 			if (!NT_SUCCESS(status))
-				DeinitImpl();
-
-			KeReleaseMutex(&operationLock, FALSE);
+			{
+				KdPrint(("PageTableManager::Init(): BuildNptPageTable failed!"));
+				break;
+			}
 		}
 
 	} while (false);
 
+	if (!NT_SUCCESS(status))
+		DeinitImpl();
+
+	KeReleaseSpinLock(&operationLock, oldIrql);
+
 	return status;
 }
 
-#pragma code_seg("PAGE")
+#pragma code_seg()
 void PageTableManager::Deinit()
 {
-	PAGED_CODE();
+	KIRQL oldIrql = {};
 
-	if (pNptPageTable != INVALID_NPT_PAGE_TABLE)
-	{
-		KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
+	KeAcquireSpinLock(&operationLock, &oldIrql);
 
-		DeinitImpl();
+	DeinitImpl();
 
-		KeReleaseMutex(&operationLock, FALSE);
-	}
+	KeReleaseSpinLock(&operationLock, oldIrql);
 }
 
-#pragma code_seg("PAGE")
+#pragma code_seg()
 void PageTableManager::DeinitImpl()
 {
-	PAGED_CODE();
-
-	KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
-
 	if (pNptPageTable != INVALID_NPT_PAGE_TABLE)
 	{
-		for (SIZE_T idx = 0; idx < nptPageTableVirtAddrs.Length(); ++idx)
-			MmFreeContiguousMemory(nptPageTableVirtAddrs[idx]);
+		for (SIZE_TYPE idx = 0; idx < nptPageTableRecords.Length(); ++idx)
+			MmFreeContiguousMemory((PVOID)nptPageTableRecords[idx].pVirtAddr);
+
+		nptPageTableRecords.Clear();
+
+		MmFreeContiguousMemory((PVOID)pNptPageTable);
+
 		pNptPageTable = INVALID_NPT_PAGE_TABLE;
 	}
-
-	nptPageTableVirtAddrs.Clear();
-
-	KeReleaseMutex(&operationLock, FALSE);
 }
 
-#pragma code_seg("PAGE")
-PTR_TYPE PageTableManager::GetNtpPageTable()
+#pragma code_seg()
+PTR_TYPE PageTableManager::GetNtpPageTableVirtAddr()
 {
-	PAGED_CODE();
 	PTR_TYPE pRetValue = INVALID_NPT_PAGE_TABLE;
+	KIRQL oldIrql = {};
 
-	KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
+	KeAcquireSpinLock(&operationLock, &oldIrql);
 
 	pRetValue = pNptPageTable;
 
-	KeReleaseMutex(&operationLock, FALSE);
+	KeReleaseSpinLock(&operationLock, oldIrql);
 
 	return pRetValue;
 }
