@@ -112,13 +112,98 @@ struct PageTableRecord
 	~PageTableRecord() {}
 };
 
+template<SIZE_TYPE bucketCnt>
+class PageTableRecordBacket
+{
+	KernelVector<PageTableRecord> data[bucketCnt];
+
+	static SIZE_TYPE GetBucketIdx(PTR_TYPE pa)
+	{
+		return (pa >> 12) % bucketCnt;
+	}
+
+public:
+	#pragma code_seg()
+	SIZE_TYPE Length() const
+	{
+		SIZE_TYPE result = 0;
+		for (auto& bucket : data)
+			result += bucket.Length();
+		return result;
+	}
+	#pragma code_seg()
+	void PushBack(const PageTableRecord& record)
+	{
+		data[GetBucketIdx(record.pPhyAddr)].PushBack(record);
+	}
+	#pragma code_seg()
+	PTR_TYPE FindVaFromPa(PTR_TYPE pa) const
+	{
+		const KernelVector<PageTableRecord>& bucket = data[GetBucketIdx(pa)];
+		for (SIZE_TYPE idx = 0; idx < bucket.Length(); ++idx)
+		{
+			if (bucket[idx].pPhyAddr == pa)
+				return bucket[idx].pVirtAddr;
+		}
+		return (PTR_TYPE)-1;
+	}
+	#pragma code_seg()
+	void Clear()
+	{
+		for (auto& bucket : data)
+			bucket.Clear();
+	}
+	#pragma code_seg()
+	const PageTableRecord& operator[](SIZE_TYPE idx) const
+	{
+		KernelVector<PageTableRecord>* pBucket = NULL;
+		SIZE_TYPE cnt = 0;
+		for (auto& bucket : data)
+		{
+			if (cnt > idx)
+				break;
+			if (idx - cnt < bucket.Length())
+			{
+				pBucket = &bucket;
+				break;
+			}
+			cnt += bucket.Length();
+		}
+		if (pBucket == NULL)
+			KeBugCheck(MEMORY_MANAGEMENT);
+		return (*pBucket)[idx - cnt];
+	}
+	#pragma code_seg()
+	PageTableRecord& operator[](SIZE_TYPE idx)
+	{
+		KernelVector<PageTableRecord>* pBucket = NULL;
+		SIZE_TYPE cnt = 0;
+		for (auto& bucket : data)
+		{
+			if (cnt > idx)
+				break;
+			if (idx - cnt < bucket.Length())
+			{
+				pBucket = &bucket;
+				break;
+			}
+			cnt += bucket.Length();
+		}
+		if (pBucket == NULL)
+			KeBugCheck(MEMORY_MANAGEMENT);
+		return (*pBucket)[idx - cnt];
+	}
+};
+
+using PageTableRecords = PageTableRecordBacket<0x40>;
+
 //“≥±Ìπ‹¿Ì∆˜
 class PageTableManager : public IManager, public INpfInterceptPlugin
 {
 	PTR_TYPE pSystemPxe;
 	PTR_TYPE pNptPageTable;
 	KSPIN_LOCK operationLock;
-	KernelVector<PageTableRecord> nptPageTableRecords;
+	PageTableRecords nptPageTableRecords;
 
 	virtual bool HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;

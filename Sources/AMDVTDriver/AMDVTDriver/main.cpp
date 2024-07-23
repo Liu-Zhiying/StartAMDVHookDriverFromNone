@@ -8,7 +8,7 @@
 
 extern "C" void TestLStarHookCallback()
 {
-	KdPrint(("Hook OK!\n"));
+	//KdPrint(("Hook OK!\n"));
 }
 
 class GlobalManager : public IManager
@@ -58,28 +58,6 @@ public:
 			status = ptManager.Init();
 			if (!NT_SUCCESS(status))
 				break;
-
-			//Ò³±í¼ì²é
-			/*
-			PHYSICAL_ADDRESS temp = {};
-			PTR_TYPE ptVirtAddr = ptManager.GetNtpPageTableVirtAddr();
-			PageTableLevel4* pPML4 = (PageTableLevel4*)ptVirtAddr;
-			if (!pPML4->entries[0].fields.present)
-				KeBugCheck(MANUALLY_INITIATED_CRASH);
-			temp.QuadPart = pPML4->entries[0].fields.pagePpn << 12;
-			PageTableLevel123* pTableLevel3 = (PageTableLevel123*)MmGetVirtualForPhysical(temp);
-			if (!pTableLevel3->entries[0].fields.present)
-				KeBugCheck(MANUALLY_INITIATED_CRASH);
-			temp.QuadPart = pTableLevel3->entries[0].fields.pagePpn << 12;
-			PageTableLevel123* pTableLevel2 = (PageTableLevel123*)MmGetVirtualForPhysical(temp);
-			if (!pTableLevel2->entries[3].fields.present)
-				KeBugCheck(MANUALLY_INITIATED_CRASH);
-			temp.QuadPart = pTableLevel2->entries[3].fields.pagePpn << 12;
-			PageTableLevel123* pTableLevel1 = (PageTableLevel123*)MmGetVirtualForPhysical(temp);
-			if (!pTableLevel1->entries[3].fields.present)
-				KeBugCheck(MANUALLY_INITIATED_CRASH);
-			KdPrint(("PhyAddr = %p", pTableLevel1->entries[3].fields.pagePpn << 12));
-			*/
 
 			/*
 			PPHYSICAL_MEMORY_RANGE pPhysicalMemoryRanges = MmGetPhysicalMemoryRanges();
@@ -150,8 +128,6 @@ public:
 			status = svmManager.Init();
 			if (!NT_SUCCESS(status))
 				break;
-
-			//KeBugCheck(MANUALLY_INITIATED_CRASH);
 
 			EnableMsrHook();
 

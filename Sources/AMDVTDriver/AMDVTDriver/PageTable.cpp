@@ -1,6 +1,10 @@
 #include "PageTable.h"
 #include <intrin.h>
 
+#define GET_PFN_FROM_PHYADDR(phyAddr) (((phyAddr) >> 12) & 0xfffffff)
+#define GET_PHYADDR_FROM_PFN(pfn) (((pfn) & 0xfffffff) << 12)
+#define MUL_UNIT(value,rightShift) ((value) << (rightShift))
+
 const ULONG PT_TAG = MAKE_TAG('p', 't', 'm', ' ');
 
 //获取页表基地址（虚拟地址）
@@ -87,13 +91,12 @@ void SetPageTableEntry(EntryType* pEntry, PTR_TYPE pfn)
 
 //level 0 （最低级别页表）的数据填充
 #pragma code_seg()
-NTSTATUS BuildNptPageTableeLevel1Impl(PageTableLevel123* pTable, PTR_TYPE startPhyAddr, PTR_TYPE endPhyAddr, KernelVector<PageTableRecord>& records)
+NTSTATUS BuildNptPageTableeLevel1Impl(PageTableLevel123* pTable, PTR_TYPE startPhyAddr, PTR_TYPE endPhyAddr, PageTableRecords& records)
 {
-	auto getPfnFromPhyAddr = [](PTR_TYPE phyAddr) -> PTR_TYPE { return (PTR_TYPE)((phyAddr >> 12) & 0xfffffff); };
-
 	UNREFERENCED_PARAMETER(records);
 	constexpr PTR_TYPE rightShift = 12;
-	constexpr PTR_TYPE unit = static_cast<PTR_TYPE>(1) << rightShift;
+	constexpr PTR_TYPE unitMask1 = (static_cast<PTR_TYPE>(-1) << rightShift);
+	constexpr PTR_TYPE unitMask2 = ~unitMask1;
 
 	NTSTATUS status = STATUS_SUCCESS;
 
@@ -105,10 +108,10 @@ NTSTATUS BuildNptPageTableeLevel1Impl(PageTableLevel123* pTable, PTR_TYPE startP
 			break;
 		}
 
-		PTR_TYPE startBase = (startPhyAddr - (startPhyAddr % unit));
+		PTR_TYPE startBase = startPhyAddr & unitMask1;
 		PTR_TYPE startIdx = ((startPhyAddr >> rightShift) & 0x1ff);
-		PTR_TYPE idxCnt = (endPhyAddr - startBase) / unit;
-		if (((endPhyAddr - startBase) % unit))
+		PTR_TYPE idxCnt = ((endPhyAddr - startBase) & unitMask1) >> rightShift;
+		if ((endPhyAddr - startBase) & unitMask2)
 			++idxCnt;
 		PTR_TYPE endIdx = startIdx + idxCnt;
 
@@ -121,37 +124,18 @@ NTSTATUS BuildNptPageTableeLevel1Impl(PageTableLevel123* pTable, PTR_TYPE startP
 		for (PTR_TYPE idx = startIdx; idx < endIdx; ++idx)
 		{
 			if (!pTable->entries[idx].fields.present)
-				SetPageTableEntry(&pTable->entries[idx], getPfnFromPhyAddr(startBase + ((idx - startIdx) * unit)));
+				SetPageTableEntry(&pTable->entries[idx], GET_PFN_FROM_PHYADDR(startBase + MUL_UNIT(idx - startIdx, rightShift)));
 		}
-
-		if (!NT_SUCCESS(status))
-			break;
-
 	} while (false);
 
 	return status;
 }
 
-//在记录项中通过物理地址查找虚拟地址
-#pragma code_seg()
-PTR_TYPE FindVaFromPa(const KernelVector<PageTableRecord>& records, PTR_TYPE pa)
-{
-	for (PTR_TYPE i = records.Length(); i; --i)
-	{
-		if (records[i - 1].pPhyAddr == pa)
-			return records[i - 1].pVirtAddr;
-	}
-	return (PTR_TYPE)-1;
-}
-
 //Level 1 2 3 页表的创建，使用模板
 #pragma code_seg()
 template<typename TableType, typename SubTableType, PTR_TYPE rightShift, typename NextStep, NextStep nextStep>
-NTSTATUS BuildNptPageTableLevel234Impl(TableType* pTable, PTR_TYPE startPhyAddr, PTR_TYPE endPhyAddr, KernelVector<PageTableRecord>& records)
+NTSTATUS BuildNptPageTableLevel234Impl(TableType* pTable, PTR_TYPE startPhyAddr, PTR_TYPE endPhyAddr, PageTableRecords& records)
 {
-	auto getPfnFromPhyAddr = [](PTR_TYPE phyAddr) -> PTR_TYPE { return (PTR_TYPE)((phyAddr >> 12) & 0xfffffff); };
-	auto getPhyAddrFromPfn = [](PTR_TYPE pfn) -> PTR_TYPE { return (PTR_TYPE)((pfn & 0xfffffff) << 12); };
-
 	NTSTATUS status = STATUS_SUCCESS;
 
 	do
@@ -162,11 +146,12 @@ NTSTATUS BuildNptPageTableLevel234Impl(TableType* pTable, PTR_TYPE startPhyAddr,
 			break;
 		}
 
-		constexpr PTR_TYPE unit = (static_cast<PTR_TYPE>(1) << rightShift);
-		PTR_TYPE startBase = (startPhyAddr - (startPhyAddr % unit));
+		constexpr PTR_TYPE unitMask1 = (static_cast<PTR_TYPE>(-1) << rightShift);
+		constexpr PTR_TYPE unitMask2 = ~unitMask1;
+		PTR_TYPE startBase = startPhyAddr & unitMask1;
 		PTR_TYPE startIdx = ((startPhyAddr >> rightShift) & 0x1ff);
-		PTR_TYPE idxCnt = (endPhyAddr - startBase) / unit;
-		if (((endPhyAddr - startBase) % unit))
+		PTR_TYPE idxCnt = ((endPhyAddr - startBase) & unitMask1) >> rightShift;
+		if ((endPhyAddr - startBase) & unitMask2)
 			++idxCnt;
 		PTR_TYPE endIdx = startIdx + idxCnt;
 
@@ -179,9 +164,10 @@ NTSTATUS BuildNptPageTableLevel234Impl(TableType* pTable, PTR_TYPE startPhyAddr,
 		for (PTR_TYPE idx = startIdx; idx < endIdx; ++idx)
 		{
 			PTR_TYPE va = (PTR_TYPE)-1;
+			//PTR_TYPE va = (PTR_TYPE)NULL;
 			if (!pTable->entries[idx].fields.present)
 			{
-				SubTableType* pSubTable = (SubTableType*)MmAllocateContiguousMemory(sizeof(SubTableType), highestPhyAddr);
+				SubTableType* pSubTable = (SubTableType*)MmAllocateContiguousMemory(sizeof *pSubTable, highestPhyAddr);
 				if (pSubTable == NULL)
 				{
 					status = STATUS_INSUFFICIENT_RESOURCES;
@@ -193,16 +179,16 @@ NTSTATUS BuildNptPageTableLevel234Impl(TableType* pTable, PTR_TYPE startPhyAddr,
 
 				records.PushBack(PageTableRecord((PTR_TYPE)pSubTable, pa));
 
-				SetPageTableEntry(&pTable->entries[idx], getPfnFromPhyAddr(pa));
+				SetPageTableEntry(&pTable->entries[idx], GET_PFN_FROM_PHYADDR(pa));
 
-				RtlZeroMemory(pSubTable, sizeof(SubTableType));
+				RtlZeroMemory(pSubTable, sizeof *pSubTable);
 			}
 			else
 			{
 				//新建页表时记录了虚拟地址和物理地址
 				//在记录项里面通过物理地址查找虚拟地址
 				//避免了微软保留API的使用
-				va = FindVaFromPa(records, getPhyAddrFromPfn(pTable->entries[idx].fields.pagePpn));
+				va = records.FindVaFromPa(GET_PHYADDR_FROM_PFN(pTable->entries[idx].fields.pagePpn));
 				//PHYSICAL_ADDRESS addr = {};
 				//addr.QuadPart = pTable->entries[idx].fields.pagePpn << 12;
 				//va = (PTR_TYPE)MmGetVirtualForPhysical(addr);
@@ -210,8 +196,8 @@ NTSTATUS BuildNptPageTableLevel234Impl(TableType* pTable, PTR_TYPE startPhyAddr,
 
 			if (va != -1)
 			{
-				PTR_TYPE newStartPhyAddr = startBase + ((idx - startIdx) * unit);
-				PTR_TYPE newEndPhyAddr = newStartPhyAddr + unit;
+				PTR_TYPE newStartPhyAddr = startBase + MUL_UNIT(idx - startIdx, rightShift);
+				PTR_TYPE newEndPhyAddr = newStartPhyAddr + MUL_UNIT(static_cast<PTR_TYPE>(1), rightShift);
 
 				if (startPhyAddr > newStartPhyAddr)
 					newStartPhyAddr = startPhyAddr;
@@ -233,8 +219,8 @@ NTSTATUS BuildNptPageTableLevel234Impl(TableType* pTable, PTR_TYPE startPhyAddr,
 	return status;
 }
 
-using NPT_Level123_Processor = NTSTATUS(*)(PageTableLevel123*, PTR_TYPE, PTR_TYPE, KernelVector<PageTableRecord>&);
-using NPT_Level4_Processor = NTSTATUS(*)(PageTableLevel4*, PTR_TYPE, PTR_TYPE, KernelVector<PageTableRecord>&);
+using NPT_Level123_Processor = NTSTATUS(*)(PageTableLevel123*, PTR_TYPE, PTR_TYPE, PageTableRecords&);
+using NPT_Level4_Processor = NTSTATUS(*)(PageTableLevel4*, PTR_TYPE, PTR_TYPE, PageTableRecords&);
 
 //嵌套模板函数生成页表
 constexpr NPT_Level123_Processor level1Processor = BuildNptPageTableeLevel1Impl;
@@ -243,7 +229,7 @@ constexpr NPT_Level123_Processor level3Processor = BuildNptPageTableLevel234Impl
 constexpr NPT_Level4_Processor	 level4Processor = BuildNptPageTableLevel234Impl<PageTableLevel4, PageTableLevel123, 39, NPT_Level123_Processor, level3Processor>;
 
 #pragma code_seg()
-NTSTATUS BuildNptPageTable(PTR_TYPE* pLevel4PageTable, KernelVector<PageTableRecord>& nptPageTableRecords)
+NTSTATUS BuildNptPageTable(PTR_TYPE* pLevel4PageTable, PageTableRecords& nptPageTableRecords)
 {
 	NTSTATUS status = STATUS_SUCCESS;
 
@@ -263,6 +249,8 @@ NTSTATUS BuildNptPageTable(PTR_TYPE* pLevel4PageTable, KernelVector<PageTableRec
 			break;
 		}
 
+		*pLevel4PageTable = (PTR_TYPE)pNptLevel4PageTable;
+
 		RtlZeroMemory(pNptLevel4PageTable, sizeof(*pNptLevel4PageTable));
 
 		for (SIZE_TYPE memoryRangeIdx = 0; pPhysicalMemoryRanges[memoryRangeIdx].BaseAddress.QuadPart != 0 ||
@@ -273,7 +261,6 @@ NTSTATUS BuildNptPageTable(PTR_TYPE* pLevel4PageTable, KernelVector<PageTableRec
 
 			//从递归模板顶端调用函数生成页表
 			status = level4Processor(pNptLevel4PageTable, memoryRangeBeg, memoryRangeEnd, nptPageTableRecords);
-
 			if (!NT_SUCCESS(status))
 				break;
 		}
@@ -290,8 +277,6 @@ NTSTATUS BuildNptPageTable(PTR_TYPE* pLevel4PageTable, KernelVector<PageTableRec
 		status = level4Processor(pNptLevel4PageTable, startPhyAddr, endPhyAddr, nptPageTableRecords);
 		if (!NT_SUCCESS(status))
 			break;
-
-		*pLevel4PageTable = (PTR_TYPE)pNptLevel4PageTable;
 
 	} while (false);
 
@@ -319,7 +304,8 @@ bool PageTableManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 
 		KeAcquireSpinLock(&operationLock, &oldIrql);
 
-		level4Processor((PageTableLevel4*)pNptPageTable, paStart, paEnd, nptPageTableRecords);
+		if (!NT_SUCCESS(level4Processor((PageTableLevel4*)pNptPageTable, paStart, paEnd, nptPageTableRecords)))
+			KeBugCheck(MANUALLY_INITIATED_CRASH);
 
 		KeReleaseSpinLock(&operationLock, oldIrql);
 
@@ -352,13 +338,27 @@ NTSTATUS PageTableManager::Init()
 		{
 			nptPageTableRecords.Clear();
 
+			UINT64 ts = {}, te = {};
+
+			KeQuerySystemTime(&ts);
+
 			status = BuildNptPageTable(&pNptPageTable, nptPageTableRecords);
+
+			KeQuerySystemTime(&te);
+
+			KdPrint(("Elapsed time: %lld ns\n", (te - ts) * 100));
 
 			if (!NT_SUCCESS(status))
 			{
 				KdPrint(("PageTableManager::Init(): BuildNptPageTable failed!"));
 				break;
 			}
+
+
+			//level4Processor((PageTableLevel4*)pNptPageTable, 0xFFFFFFFFE000, 0xFFFFFFFFF000, nptPageTableRecords);
+
+			
+
 		}
 
 	} while (false);

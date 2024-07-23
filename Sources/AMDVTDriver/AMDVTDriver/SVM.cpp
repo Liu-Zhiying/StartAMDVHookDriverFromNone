@@ -556,7 +556,7 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 	UNREFERENCED_PARAMETER(pHostVmcbPhyAddr);
 	UNREFERENCED_PARAMETER(pGuestVmcbPhyAddr);
 
-	//先清空寄存器，代表这次执行货不退出虚拟机
+	//先清空寄存器，代表这次执行后不退出虚拟机
 	pGuestRegisters->extraInfo1 = 0;
 	pGuestRegisters->extraInfo2 = 0;
 
