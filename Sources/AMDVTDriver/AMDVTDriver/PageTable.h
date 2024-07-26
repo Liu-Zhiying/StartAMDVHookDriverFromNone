@@ -4,7 +4,8 @@
 #include "Basic.h"
 #include "SVM.h"
 
-const PTR_TYPE INVALID_NPT_PAGE_TABLE = (PTR_TYPE)-1;
+const PTR_TYPE INVALID_PAGE_TABLE_ADDR = (PTR_TYPE)-1;
+const ULONG PT_TAG = MAKE_TAG('p', 't', 'm', ' ');
 
 //见https://www.iaik.tugraz.at/teaching/materials/os/tutorials/paging-on-intel-x86-64/
 typedef union
@@ -87,16 +88,18 @@ typedef union
 		UINT64 guestPhysicalAddress : 1;    // [32]
 		//GuestPageTables
 		UINT64 guestPageTables : 1;         // [33]
-	} Fields;
+	} fields;
 } NpfExitInfo1;
 
 struct PageTableLevel4
 {
+	typedef PageTableLevel4Entry EntryType;
 	PageTableLevel4Entry entries[0x200];
 };
 
 struct PageTableLevel123
 {
+	typedef PageTableLevel123Entry EntryType;
 	PageTableLevel123Entry entries[0x200];
 };
 
@@ -145,7 +148,7 @@ public:
 			if (bucket[idx].pPhyAddr == pa)
 				return bucket[idx].pVirtAddr;
 		}
-		return (PTR_TYPE)-1;
+		return (PTR_TYPE)INVALID_PAGE_TABLE_ADDR;
 	}
 	#pragma code_seg()
 	void Clear()
@@ -195,29 +198,79 @@ public:
 	}
 };
 
-using PageTableRecords = PageTableRecordBacket<0x40>;
+using PageTableRecords = PageTableRecordBacket<0x20>;
+
+#define GET_PFN_FROM_PHYADDR(phyAddr) (((phyAddr) >> 12) & 0xfffffff)
+#define GET_PHYADDR_FROM_PFN(pfn) (((pfn) & 0xfffffff) << 12)
+#define MUL_UNIT(value,rightShift) ((value) << (rightShift))
+
+//页表条目填充
+#pragma code_seg()
+template<typename EntryType>
+void SetPageTableEntry(EntryType* pEntry, PTR_TYPE pfn)
+{
+	EntryType entry = {};
+	entry.fields.present = true;
+	entry.fields.writeable = true;
+	entry.fields.userAccess = true;
+	entry.fields.pagePpn = pfn;
+	*pEntry = entry;
+}
+
+//分配新的子页表并和当前页表项关联
+#pragma code_seg()
+template<typename EntryType, typename TableType>
+NTSTATUS AllocNewPageTable(EntryType* fatherEntry, PageTableRecords& records, PTR_TYPE& va)
+{
+	NTSTATUS status = STATUS_SUCCESS;
+
+	do
+	{
+		TableType* pSubTable = (TableType*)AllocNonPagedMem(sizeof * pSubTable, PT_TAG);
+		if (pSubTable == NULL)
+		{
+			status = STATUS_INSUFFICIENT_RESOURCES;
+			break;
+		}
+
+		va = (PTR_TYPE)pSubTable;
+		PTR_TYPE pa = (PTR_TYPE)MmGetPhysicalAddress((PVOID)pSubTable).QuadPart;
+
+		records.PushBack(PageTableRecord((PTR_TYPE)pSubTable, pa));
+
+		SetPageTableEntry(fatherEntry, GET_PFN_FROM_PHYADDR(pa));
+
+		RtlZeroMemory(pSubTable, sizeof * pSubTable);
+
+	} while (false);
+
+	return status;
+}
 
 //页表管理器
 class PageTableManager : public IManager, public INpfInterceptPlugin
 {
 	PTR_TYPE pSystemPxe;
 	PTR_TYPE pNptPageTable;
+	PageTableRecords level123Records;
+	PageTableRecords level4Records;
 	KSPIN_LOCK operationLock;
-	PageTableRecords nptPageTableRecords;
 
 	virtual bool HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
 
+	void DeinitImpl();
+
+	NTSTATUS BuildNptPageTable();
+
 public:
-	#pragma code_seg("PAGE")
-	PageTableManager() : pSystemPxe(NULL), pNptPageTable(INVALID_NPT_PAGE_TABLE) { PAGED_CODE(); KeInitializeSpinLock(&operationLock); }
+	#pragma code_seg()
+	PageTableManager() : pSystemPxe(NULL), pNptPageTable(INVALID_PAGE_TABLE_ADDR) { KeInitializeSpinLock(&operationLock); }
 	virtual NTSTATUS Init() override;
 	virtual void Deinit() override;
-	void DeinitImpl();
-	#pragma code_seg("PAGE")
 	PTR_TYPE GetNtpPageTableVirtAddr();
-	#pragma code_seg("PAGE")
-	virtual ~PageTableManager() { PAGED_CODE(); PageTableManager::Deinit(); }
+	#pragma code_seg()
+	virtual ~PageTableManager() { PageTableManager::Deinit(); }
 };
 
 #endif

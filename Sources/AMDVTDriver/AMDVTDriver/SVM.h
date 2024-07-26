@@ -107,19 +107,19 @@ class MsrPremissionsMapManager : IManager
 	PVOID pMsrPremissionsMapPhyAddr;
 	IMsrInterceptPlugin* pMsrInterceptPlugin;
 public:
-	#pragma code_seg("PAGE")
+	#pragma code_seg()
 	MsrPremissionsMapManager()
 		: pMsrPremissionsMapVirtAddr(NULL), pMsrPremissionsMapPhyAddr(NULL), pMsrInterceptPlugin(NULL)
-	{ PAGED_CODE(); }
+	{}
 	void SetPlugin(IMsrInterceptPlugin* _pMsrInterceptPlugin) { PAGED_CODE(); pMsrInterceptPlugin = _pMsrInterceptPlugin; }
 	virtual NTSTATUS Init() override;
-	#pragma code_seg("PAGE")
-	PTR_TYPE GetPhyAddress() const { PAGED_CODE(); return (PTR_TYPE)pMsrPremissionsMapPhyAddr; }
-	#pragma code_seg("PAGE")
-	bool IsInited() const { PAGED_CODE(); return pMsrPremissionsMapVirtAddr != NULL; }
+	#pragma code_seg()
+	PTR_TYPE GetPhyAddress() const { return (PTR_TYPE)pMsrPremissionsMapPhyAddr; }
+	#pragma code_seg()
+	bool IsInited() const { return pMsrPremissionsMapVirtAddr != NULL; }
 	virtual void Deinit() override;
-	#pragma code_seg("PAGE")
-	virtual ~MsrPremissionsMapManager() { PAGED_CODE(); MsrPremissionsMapManager::Deinit(); }
+	#pragma code_seg()
+	virtual ~MsrPremissionsMapManager() { MsrPremissionsMapManager::Deinit(); }
 };
 
 enum SVMStatus

@@ -34,8 +34,21 @@ public:
 	}
 
 	#pragma code_seg("PAGE")
+	void SetNpt()
+	{
+		PAGED_CODE();
+
+		//传递NPT页表
+		KdPrint(("GlobalManager::Init(): NPT Virtual Address = %p, NPT Physical Address = %p\n", (PVOID)ptManager.GetNtpPageTableVirtAddr(), (PVOID)MmGetPhysicalAddress((PVOID)ptManager.GetNtpPageTableVirtAddr()).QuadPart));
+		svmManager.SetNptPageTablePhyAddr((PVOID)MmGetPhysicalAddress((PVOID)ptManager.GetNtpPageTableVirtAddr()).QuadPart);
+		svmManager.SetNpfInterceptPlugin(&ptManager);
+	}
+
+	#pragma code_seg("PAGE")
 	void EnableMsrHook()
 	{
+		PAGED_CODE();
+
 		//hook lstar
 		EnableLStrHook<1>(&msrHookManager, TestLStarHookCallback);
 	}
@@ -45,11 +58,11 @@ public:
 	{
 		PAGED_CODE();
 
-		SetMsrHookParameters();
-
 		NTSTATUS status = STATUS_SUCCESS;
 		do
 		{
+
+			SetMsrHookParameters();
 
 			status = msrHookManager.Init();
 			if (!NT_SUCCESS(status))
@@ -59,71 +72,7 @@ public:
 			if (!NT_SUCCESS(status))
 				break;
 
-			/*
-			PPHYSICAL_MEMORY_RANGE pPhysicalMemoryRanges = MmGetPhysicalMemoryRanges();
-			if (pPhysicalMemoryRanges == NULL)
-			{
-				status = STATUS_INSUFFICIENT_RESOURCES;
-				break;
-			}
-
-			for (SIZE_TYPE memoryRangeIdx = 0; pPhysicalMemoryRanges[memoryRangeIdx].BaseAddress.QuadPart != 0 ||
-				pPhysicalMemoryRanges[memoryRangeIdx].NumberOfBytes.QuadPart != 0; ++memoryRangeIdx)
-			{
-				PTR_TYPE memoryRangeBeg = pPhysicalMemoryRanges[memoryRangeIdx].BaseAddress.QuadPart;
-				PTR_TYPE memoryRangeEnd = memoryRangeBeg + pPhysicalMemoryRanges[memoryRangeIdx].NumberOfBytes.QuadPart;
-
-				while (memoryRangeBeg < memoryRangeEnd)
-				{
-					PHYSICAL_ADDRESS temp = {};
-					PTR_TYPE ptVirtAddr = ptManager.GetNtpPageTableVirtAddr();
-					PageTableLevel4* pPML4 = (PageTableLevel4*)ptVirtAddr;
-
-					if (!pPML4->entries[(memoryRangeBeg >> 39) & 0x1ff].fields.present)
-					{
-						KdPrint(("PageTable Level4 test failed, PhyAddr = %p", memoryRangeBeg));
-						break;
-					}
-					temp.QuadPart = pPML4->entries[(memoryRangeBeg >> 39) & 0x1ff].fields.pagePpn << 12;
-					PageTableLevel123* pTableLevel3 = (PageTableLevel123*)MmGetVirtualForPhysical(temp);
-
-					if (!pTableLevel3->entries[(memoryRangeBeg >> 30) & 0x1ff].fields.present)
-					{
-						KdPrint(("PageTable Level3 test failed, PhyAddr = %p", memoryRangeBeg));
-						break;
-					}
-					temp.QuadPart = pTableLevel3->entries[(memoryRangeBeg >> 30) & 0x1ff].fields.pagePpn << 12;
-					PageTableLevel123* pTableLevel2 = (PageTableLevel123*)MmGetVirtualForPhysical(temp);
-
-					if (!pTableLevel2->entries[(memoryRangeBeg >> 21) & 0x1ff].fields.present)
-					{
-						KdPrint(("PageTable Level2 test failed, PhyAddr = %p", memoryRangeBeg));
-						break;
-					}
-					temp.QuadPart = pTableLevel2->entries[(memoryRangeBeg >> 21) & 0x1ff].fields.pagePpn << 12;
-					PageTableLevel123* pTableLevel1 = (PageTableLevel123*)MmGetVirtualForPhysical(temp);
-
-					if (!pTableLevel1->entries[(memoryRangeBeg >> 12) & 0x1ff].fields.present)
-					{
-						KdPrint(("PageTable Level1 test failed, PhyAddr = %p", memoryRangeBeg));
-						break;
-					}
-
-					if ((pTableLevel1->entries[(memoryRangeBeg >> 12) & 0x1ff].fields.pagePpn << 12) != memoryRangeBeg)
-					{
-						KdPrint(("PhyAddr test failed!, PhyAddr = %p, Wrong value = %p", memoryRangeBeg, (pTableLevel1->entries[(memoryRangeBeg >> 12) & 0x1ff].fields.pagePpn << 12)));
-						break;
-					}
-
-					memoryRangeBeg += PAGE_SIZE;
-				}
-			}
-			*/
-
-			//传递NPT页表
-			KdPrint(("GlobalManager::Init(): NPT Virtual Address = %p, NPT Physical Address = %p\n", (PVOID)ptManager.GetNtpPageTableVirtAddr(), (PVOID)MmGetPhysicalAddress((PVOID)ptManager.GetNtpPageTableVirtAddr()).QuadPart));
-			svmManager.SetNptPageTablePhyAddr((PVOID)MmGetPhysicalAddress((PVOID)ptManager.GetNtpPageTableVirtAddr()).QuadPart);
-			svmManager.SetNpfInterceptPlugin(&ptManager);
+			SetNpt();
 
 			status = svmManager.Init();
 			if (!NT_SUCCESS(status))
@@ -142,6 +91,7 @@ public:
 	virtual void Deinit() override
 	{
 		PAGED_CODE();
+
 		msrHookManager.Deinit();
 		svmManager.Deinit();
 		ptManager.Deinit();
@@ -150,6 +100,7 @@ public:
 	virtual ~GlobalManager()
 	{
 		PAGED_CODE();
+
 		GlobalManager::Deinit();
 	}
 };

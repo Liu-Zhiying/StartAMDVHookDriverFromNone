@@ -73,6 +73,15 @@ PVOID AllocNonPagedMem(SIZE_TYPE byteCnt, ULONG tag);
 void FreeNonPagedMem(PVOID pMem, ULONG tag);
 PVOID AllocPagedMem(SIZE_TYPE byteCnt, ULONG tag);
 void FreePagedMem(PVOID pMem, ULONG tag);
+PVOID AllocContiguousMem(SIZE_TYPE byteCnt, ULONG tag);
+void FreeContigousMem(PVOID pMem, ULONG tag);
+
+enum MemType
+{
+	NonPaged,
+	Paged,
+	ContigousMem,
+};
 
 const PHYSICAL_ADDRESS highestPhyAddr = { (ULONG)-1,-1 };
 
@@ -96,7 +105,7 @@ const UINT32 CPUID_FN_80000001_ECX_SVM_OFFSET = 2;
 const UINT32 VM_CR_SVMDIS_OFFSET = 4;
 const UINT32 CPUID_FN_SVM_FEATURE = 0x80000001;
 
-template<typename ElementType, bool isNonPagedMem = true>
+template<typename ElementType, MemType memType = NonPaged>
 class KernelVector
 {
 	ElementType* pData;
@@ -112,8 +121,8 @@ public:
 	KernelVector();
 	~KernelVector();
 
-	KernelVector(KernelVector<ElementType, isNonPagedMem>&& container);
-	KernelVector<ElementType, isNonPagedMem>& operator=(KernelVector<ElementType, isNonPagedMem>&& container);
+	KernelVector(KernelVector<ElementType, memType>&& container);
+	KernelVector<ElementType, memType>& operator=(KernelVector<ElementType, memType>&& container);
 
 	void PushBack(ElementType e);
 	void EmplaceBack(ElementType&& e);
@@ -129,24 +138,37 @@ public:
 };
 
 #pragma code_seg()
-template<typename ElementType, bool isNonPagedMem>
-inline KernelVector<ElementType, isNonPagedMem>::KernelVector() : pData(NULL), length(0), capacity(0)
+template<typename ElementType, MemType memType>
+inline KernelVector<ElementType, memType>::KernelVector() : pData(NULL), length(0), capacity(0)
 {
-	if (isNonPagedMem)
+	switch (memType)
+	{
+	case NonPaged:
 	{
 		pMemAlloc = AllocNonPagedMem;
 		pMemFree = FreeNonPagedMem;
+		break;
 	}
-	else
+	case Paged:
 	{
 		pMemAlloc = AllocPagedMem;
 		pMemFree = FreePagedMem;
 	}
+	case ContigousMem:
+	{
+		pMemAlloc = AllocContiguousMem;
+		pMemFree = FreeContigousMem;
+	}
+	default:
+	{
+		KeBugCheck(DRIVER_INVALID_CRUNTIME_PARAMETER);
+	}
+	}
 }
 
 #pragma code_seg()
-template<typename ElementType, bool isNonPagedMem>
-inline KernelVector<ElementType, isNonPagedMem>::~KernelVector()
+template<typename ElementType, MemType memType>
+inline KernelVector<ElementType, memType>::~KernelVector()
 {
 	if (pData != NULL)
 	{
@@ -160,15 +182,15 @@ inline KernelVector<ElementType, isNonPagedMem>::~KernelVector()
 }
 
 #pragma code_seg()
-template<typename ElementType, bool isNonPagedMem>
-inline KernelVector<ElementType, isNonPagedMem>::KernelVector(KernelVector<ElementType, isNonPagedMem>&& container)
+template<typename ElementType, MemType memType>
+inline KernelVector<ElementType, memType>::KernelVector(KernelVector<ElementType, memType>&& container)
 {
 	*this = static_cast<KernelVector<ElementType>&&>(container);
 }
 
 #pragma code_seg()
-template<typename ElementType, bool isNonPagedMem>
-inline KernelVector<ElementType, isNonPagedMem>& KernelVector<ElementType, isNonPagedMem>::operator=(KernelVector<ElementType, isNonPagedMem>&& container)
+template<typename ElementType, MemType memType>
+inline KernelVector<ElementType, memType>& KernelVector<ElementType, memType>::operator=(KernelVector<ElementType, memType>&& container)
 {
 	if (&container == this)
 		return *this;
@@ -188,34 +210,34 @@ inline KernelVector<ElementType, isNonPagedMem>& KernelVector<ElementType, isNon
 }
 
 #pragma code_seg()
-template<typename ElementType, bool isNonPagedMem>
-inline void KernelVector<ElementType, isNonPagedMem>::PushBack(ElementType e)
+template<typename ElementType, MemType memType>
+inline void KernelVector<ElementType, memType>::PushBack(ElementType e)
 {
 	if (length == capacity)
-		SetCapacity(length + 50);
+		SetCapacity(!length ? 50 : length * 2);
 	pData[length++] = e;
 }
 
 #pragma code_seg()
-template<typename ElementType, bool isNonPagedMem>
-inline void KernelVector<ElementType, isNonPagedMem>::EmplaceBack(ElementType&& e)
+template<typename ElementType, MemType memType>
+inline void KernelVector<ElementType, memType>::EmplaceBack(ElementType&& e)
 {
 	if (length == capacity)
-		SetCapacity(length + 50);
+		SetCapacity(!length ? 50 : length * 2);
 	pData[length++] = static_cast<ElementType&&>(e);
 }
 
 #pragma code_seg()
-template<typename ElementType, bool isNonPagedMem>
-inline ElementType KernelVector<ElementType, isNonPagedMem>::PopBack()
+template<typename ElementType, MemType memType>
+inline ElementType KernelVector<ElementType, memType>::PopBack()
 {
 	ElementType result = static_cast<ElementType&&>(pData[--length]);
 	return result;
 }
 
 #pragma code_seg()
-template<typename ElementType, bool isNonPagedMem>
-inline const ElementType& KernelVector<ElementType, isNonPagedMem>::operator[](SIZE_TYPE idx) const
+template<typename ElementType, MemType memType>
+inline const ElementType& KernelVector<ElementType, memType>::operator[](SIZE_TYPE idx) const
 {
 	if (idx < Length())
 		return pData[idx];
@@ -224,8 +246,8 @@ inline const ElementType& KernelVector<ElementType, isNonPagedMem>::operator[](S
 }
 
 #pragma code_seg()
-template<typename ElementType, bool isNonPagedMem>
-inline ElementType& KernelVector<ElementType, isNonPagedMem>::operator[](SIZE_TYPE idx)
+template<typename ElementType, MemType memType>
+inline ElementType& KernelVector<ElementType, memType>::operator[](SIZE_TYPE idx)
 {
 	if (idx < Length())
 		return pData[idx];
@@ -234,8 +256,8 @@ inline ElementType& KernelVector<ElementType, isNonPagedMem>::operator[](SIZE_TY
 }
 
 #pragma code_seg()
-template<typename ElementType, bool isNonPagedMem>
-inline void KernelVector<ElementType, isNonPagedMem>::Insert(ElementType e, SIZE_TYPE idx)
+template<typename ElementType, MemType memType>
+inline void KernelVector<ElementType, memType>::Insert(ElementType e, SIZE_TYPE idx)
 {
 	if (idx >= Length())
 		KeBugCheck(MEMORY_MANAGEMENT);
@@ -252,8 +274,8 @@ inline void KernelVector<ElementType, isNonPagedMem>::Insert(ElementType e, SIZE
 }
 
 #pragma code_seg()
-template<typename ElementType, bool isNonPagedMem>
-inline void KernelVector<ElementType, isNonPagedMem>::Remove(SIZE_TYPE idx)
+template<typename ElementType, MemType memType>
+inline void KernelVector<ElementType, memType>::Remove(SIZE_TYPE idx)
 {
 	if (idx >= Length())
 		KeBugCheck(MEMORY_MANAGEMENT);
@@ -265,22 +287,22 @@ inline void KernelVector<ElementType, isNonPagedMem>::Remove(SIZE_TYPE idx)
 }
 
 #pragma code_seg()
-template<typename ElementType, bool isNonPagedMem>
-inline SIZE_TYPE KernelVector<ElementType, isNonPagedMem>::Length() const
+template<typename ElementType, MemType memType>
+inline SIZE_TYPE KernelVector<ElementType, memType>::Length() const
 {
 	return length;
 }
 
 #pragma code_seg()
-template<typename ElementType, bool isNonPagedMem>
-inline SIZE_TYPE KernelVector<ElementType, isNonPagedMem>::Capacity() const
+template<typename ElementType, MemType memType>
+inline SIZE_TYPE KernelVector<ElementType, memType>::Capacity() const
 {
 	return capacity;
 }
 
 #pragma code_seg()
-template<typename ElementType, bool isNonPagedMem>
-inline void KernelVector<ElementType, isNonPagedMem>::SetCapacity(SIZE_TYPE newCapacity)
+template<typename ElementType, MemType memType>
+inline void KernelVector<ElementType, memType>::SetCapacity(SIZE_TYPE newCapacity)
 {
 	SIZE_TYPE copyLength = newCapacity > capacity ? capacity : newCapacity;
 
@@ -307,8 +329,8 @@ inline void KernelVector<ElementType, isNonPagedMem>::SetCapacity(SIZE_TYPE newC
 }
 
 #pragma code_seg()
-template<typename ElementType, bool isNonPagedMem>
-inline void KernelVector<ElementType, isNonPagedMem>::Clear()
+template<typename ElementType, MemType memType>
+inline void KernelVector<ElementType, memType>::Clear()
 {
 	for (SIZE_TYPE idx = 0; idx < length; ++idx)
 		CallDestroyer(pData + idx);

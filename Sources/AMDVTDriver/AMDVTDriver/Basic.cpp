@@ -45,3 +45,17 @@ void FreePagedMem(PVOID pMem, ULONG tag)
 {
 	ExFreePoolWithTag(pMem, tag);
 }
+
+#pragma code_seg()
+PVOID AllocContiguousMem(SIZE_TYPE byteCnt, ULONG tag)
+{
+	UNREFERENCED_PARAMETER(tag);
+	return MmAllocateContiguousMemory(byteCnt, highestPhyAddr);
+}
+
+#pragma code_seg()
+void FreeContigousMem(PVOID pMem, ULONG tag)
+{
+	UNREFERENCED_PARAMETER(tag);
+	return MmFreeContiguousMemory(pMem);
+}
