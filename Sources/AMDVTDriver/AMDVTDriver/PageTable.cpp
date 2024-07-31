@@ -1,12 +1,17 @@
 #include "PageTable.h"
 #include <intrin.h>
 
+constexpr ULONG PT_TAG = MAKE_TAG('p', 't', 'm', ' ');
 
+#define GET_PFN_FROM_PHYADDR(phyAddr) (((phyAddr) >> 12) & 0xfffffff)
+#define GET_PHYADDR_FROM_PFN(pfn) (((pfn) & 0xfffffff) << 12)
+#define MUL_UNIT(value, rightShift) ((value) << (rightShift))
 
 //获取页表基地址（虚拟地址）
-#pragma code_seg()
+#pragma code_seg("PAGE")
 void GetSysPXEVirtAddr(PTR_TYPE* pPxeOut)
 {
+	PAGED_CODE();
 	//读取Cr3物理地址并使用Windows内核函数转换为虚拟地址
 	//注意：MmGetVirtualForPhysical被微软标记为保留，除了名字外啥也没提
 	PTR_TYPE pxePhyAddr = __readcr3();
@@ -73,6 +78,49 @@ void GetSysPXEVirtAddr(PTR_TYPE* pPxeOut)
 	return;
 }
 
+//页表条目填充
+#pragma code_seg()
+template<typename EntryType>
+void SetPageTableEntry(EntryType* pEntry, PTR_TYPE pfn)
+{
+	EntryType entry = {};
+	entry.fields.present = true;
+	entry.fields.writeable = true;
+	entry.fields.userAccess = true;
+	entry.fields.pagePpn = pfn;
+	*pEntry = entry;
+}
+
+//分配新的子页表并和当前页表项关联
+#pragma code_seg()
+template<typename EntryType, typename TableType>
+NTSTATUS AllocNewPageTable(EntryType* fatherEntry, PageTableRecords& records, PTR_TYPE& va)
+{
+	NTSTATUS status = STATUS_SUCCESS;
+
+	do
+	{
+		TableType* pSubTable = (TableType*)AllocNonPagedMem(sizeof * pSubTable, PT_TAG);
+		if (pSubTable == NULL)
+		{
+			status = STATUS_INSUFFICIENT_RESOURCES;
+			break;
+		}
+
+		va = (PTR_TYPE)pSubTable;
+		PTR_TYPE pa = (PTR_TYPE)MmGetPhysicalAddress((PVOID)pSubTable).QuadPart;
+
+		records.PushBack(PageTableRecord((PTR_TYPE)pSubTable, pa));
+
+		SetPageTableEntry(fatherEntry, GET_PFN_FROM_PHYADDR(pa));
+
+		RtlZeroMemory(pSubTable, sizeof * pSubTable);
+
+	} while (false);
+
+	return status;
+}
+
 #pragma warning(disable : 4127)
 //*************************************页表构建函数开始*************************************
 
@@ -109,7 +157,7 @@ NTSTATUS ProcessNptPageTableFrontLevelImpl(TableType* pTable, PTR_TYPE startPhyA
 
 		for (PTR_TYPE idx = startIdx; idx < endIdx; ++idx)
 		{
-			PTR_TYPE va = (PTR_TYPE)INVALID_PAGE_TABLE_ADDR;
+			PTR_TYPE va = (PTR_TYPE)INVALID_ADDR;
 
 			if (!pTable->entries[idx].fields.present)
 			{
@@ -259,31 +307,41 @@ bool PageTableManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 	{
 		PTR_TYPE paStart = pa - pa % PAGE_SIZE;
 		PTR_TYPE paEnd = paStart + PAGE_SIZE;
-		KIRQL oldIrql = {};
 
-		KeAcquireSpinLock(&operationLock, &oldIrql);
-
-		constexpr NPT_Level4_Processor smallPageProcessor = GetNptSmallPageProcessor();
-
-		if (!NT_SUCCESS(smallPageProcessor((PageTableLevel4*)pNptPageTable, paStart, paEnd, level123Records, level4Records)))
+		if (!NT_SUCCESS(corePageTables[pVirtCpuInfo->otherInfo.cpuIdx].FixPageFault(paStart, paEnd)))
 			KeBugCheck(MANUALLY_INITIATED_CRASH);
 
-		KeReleaseSpinLock(&operationLock, oldIrql);
-
 		result = true;
-	}
-	else
-	{
-		KeBugCheck(MANUALLY_INITIATED_CRASH);
 	}
 
 	return result;
 }
 
-#pragma code_seg()
-void PageTableManager::DeinitImpl()
+#pragma code_seg("PAGE")
+PVOID PageTableManager::GetNCr3ForCore(UINT32 cpuIdx)
 {
-	if (pNptPageTable != INVALID_PAGE_TABLE_ADDR)
+	PAGED_CODE();
+	const CoreNptPageTableManager* pageTables = GetCoreNptPageTables();
+	SIZE_TYPE cnt = GetCoreNptPageTablesCnt();
+	if (cpuIdx >= cnt)
+		return (PVOID)INVALID_ADDR;
+	else
+		return (PVOID)MmGetPhysicalAddress((PVOID)pageTables[cpuIdx].GetNptPageTable()).QuadPart;
+}
+
+#pragma code_seg()
+NTSTATUS CoreNptPageTableManager::FixPageFault(PTR_TYPE startAddr, PTR_TYPE endAddr)
+{
+	constexpr NPT_Level4_Processor smallPageProcessor = GetNptSmallPageProcessor();
+
+	return smallPageProcessor((PageTableLevel4*)pNptPageTable, startAddr, endAddr, level123Records, level4Records);
+}
+
+#pragma code_seg("PAGE")
+void CoreNptPageTableManager::Deinit()
+{
+	PAGED_CODE();
+	if (pNptPageTable != INVALID_ADDR)
 	{
 		for (SIZE_TYPE idx = 0; idx < level123Records.Length(); ++idx)
 			FreeNonPagedMem((PVOID)level123Records[idx].pVirtAddr, PT_TAG);
@@ -297,12 +355,14 @@ void PageTableManager::DeinitImpl()
 
 		FreeNonPagedMem((PVOID)pNptPageTable, PT_TAG);
 
-		pNptPageTable = INVALID_PAGE_TABLE_ADDR;
+		pNptPageTable = INVALID_ADDR;
 	}
 }
 
-NTSTATUS PageTableManager::BuildNptPageTable()
+#pragma code_seg("PAGE")
+NTSTATUS CoreNptPageTableManager::BuildNptPageTable()
 {
+	PAGED_CODE();
 	NTSTATUS status = STATUS_SUCCESS;
 
 	do
@@ -331,12 +391,11 @@ NTSTATUS PageTableManager::BuildNptPageTable()
 	return status;
 }
 
+#pragma code_seg("PAGE")
 NTSTATUS PageTableManager::Init()
 {
+	PAGED_CODE();
 	NTSTATUS status = STATUS_SUCCESS;
-	KIRQL oldIrql = {};
-
-	KeAcquireSpinLock(&operationLock, &oldIrql);
 
 	do
 	{
@@ -350,17 +409,24 @@ NTSTATUS PageTableManager::Init()
 			break;
 		}
 
-		if (pNptPageTable == INVALID_PAGE_TABLE_ADDR)
+		if (corePageTables == NULL)
 		{
-			level123Records.Clear();
-			level4Records.Clear();
-
-			status = BuildNptPageTable();
-
-			if (!NT_SUCCESS(status))
+			UINT32 cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
+			corePageTables = (CoreNptPageTableManager*)AllocNonPagedMem(sizeof * corePageTables * cpuCnt, PT_TAG);
+			if (corePageTables == NULL)
 			{
-				KdPrint(("PageTableManager::Init(): BuildNptPageTable failed!"));
+				status = STATUS_INSUFFICIENT_RESOURCES;
 				break;
+			}
+			pageTableCnt = cpuCnt;
+
+
+			for (SIZE_TYPE idx = 0; idx < pageTableCnt; ++idx)
+			{
+				CallConstructor(&corePageTables[idx]);
+				status = corePageTables[idx].BuildNptPageTable();
+				if (!NT_SUCCESS(status))
+					break;
 			}
 		}
 
@@ -369,33 +435,22 @@ NTSTATUS PageTableManager::Init()
 	if (!NT_SUCCESS(status))
 		Deinit();
 
-	KeReleaseSpinLock(&operationLock, oldIrql);
-
 	return status;
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 void PageTableManager::Deinit()
 {
-	KIRQL oldIrql = {};
-	KeAcquireSpinLock(&operationLock, &oldIrql);
-
-	DeinitImpl();
-
-	KeReleaseSpinLock(&operationLock, oldIrql);
-}
-
-#pragma code_seg()
-PTR_TYPE PageTableManager::GetNtpPageTableVirtAddr()
-{
-	PTR_TYPE result = INVALID_PAGE_TABLE_ADDR;
-	KIRQL oldIrql = {};
-
-	KeAcquireSpinLock(&operationLock, &oldIrql);
-
-	result = pNptPageTable;
-
-	KeReleaseSpinLock(&operationLock, oldIrql);
-
-	return result;
+	PAGED_CODE();
+	if (corePageTables != NULL)
+	{
+		for (SIZE_TYPE idx = 0; idx < pageTableCnt; ++idx)
+		{
+			corePageTables[idx].Deinit();
+			CallDestroyer(&corePageTables[idx]);
+		}
+		FreeNonPagedMem(corePageTables, PT_TAG);
+		corePageTables = NULL;
+		pageTableCnt = 0;
+	}
 }

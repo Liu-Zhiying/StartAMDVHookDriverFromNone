@@ -39,8 +39,8 @@ public:
 		PAGED_CODE();
 
 		//´«µÝNPTÒ³±í
-		KdPrint(("GlobalManager::Init(): NPT Virtual Address = %p, NPT Physical Address = %p\n", (PVOID)ptManager.GetNtpPageTableVirtAddr(), (PVOID)MmGetPhysicalAddress((PVOID)ptManager.GetNtpPageTableVirtAddr()).QuadPart));
-		svmManager.SetNptPageTablePhyAddr((PVOID)MmGetPhysicalAddress((PVOID)ptManager.GetNtpPageTableVirtAddr()).QuadPart);
+		KdPrint(("GlobalManager::Init(): Enable NPT\n"));
+		svmManager.SetNCr3Provider(&ptManager);
 		svmManager.SetNpfInterceptPlugin(&ptManager);
 	}
 

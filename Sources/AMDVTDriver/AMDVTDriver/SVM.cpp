@@ -4,8 +4,8 @@
 
 //AMD SVM 没有专门的VMMCALL指令，只能使用自定义CPUID
 //AMD 手册上给虚拟化预留的CPUID ID 为 0x40000000~0x400000ff
-const UINT32 GUEST_CALL_VMM_CPUID_FUNCTION = 0x400000ff;
-const UINT32 SVM_TAG = MAKE_TAG('s', 'v', 'm', ' ');
+constexpr UINT32 GUEST_CALL_VMM_CPUID_FUNCTION = 0x400000ff;
+constexpr UINT32 SVM_TAG = MAKE_TAG('s', 'v', 'm', ' ');
 
 //GDT表项，参考https://wiki.osdev.org/Global_Descriptor_Table#System_Segment_Descriptor
 //照抄https://github.com/tandasat/SimpleSvm
@@ -85,9 +85,10 @@ extern "C" void _run_svm_vmrun(VirtCpuInfo* pInfo, PVOID pGuestVmcbPhyAddr, PVOI
 //这个函数完全照抄https://github.com/tandasat/SimpleSvm
 //原函数名字是SvGetSegmentAccessRight
 //获取段寄存器Attribute
-#pragma code_seg()
+#pragma code_seg("PAGE")
 UINT16 _GetSegmentAttribute(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 {
+	PAGED_CODE();
 	PSEGMENT_DESCRIPTOR descriptor = NULL;
 	SEGMENT_ATTRIBUTE attribute = {};
 
@@ -110,9 +111,10 @@ UINT16 _GetSegmentAttribute(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 }
 
 //获取段寄存器Base
-#pragma code_seg()
+#pragma code_seg("PAGE")
 UINT64 _GetSegmentBaseAddress(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 {
+	PAGED_CODE();
 	PSEGMENT_DESCRIPTOR descriptor;
 	UINT64 baseAddress = 0;
 
@@ -128,9 +130,10 @@ UINT64 _GetSegmentBaseAddress(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBas
 }
 
 //获取段寄存器Limit
-#pragma code_seg()
+#pragma code_seg("PAGE")
 UINT32 _GetSegmentLimit(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 {
+	PAGED_CODE();
 	PSEGMENT_DESCRIPTOR descriptor;
 	UINT32 limit = 0;
 
@@ -150,9 +153,10 @@ extern "C" void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGues
 	return pVirtCpuInfo->otherInfo.pSvmManager->VmExitHandler(pVirtCpuInfo, pGuestRegisters, pGuestVmcbPhyAddr, pHostVmcbPhyAddr);
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 void CPUString(char* outputString)
 {
+	PAGED_CODE();
 	UINT32 cpuid_result[4] = {};
 	__cpuidex((int*)cpuid_result, 0, 0);
 	memcpy(outputString, &cpuid_result[1], sizeof(UINT32));
@@ -162,21 +166,22 @@ void CPUString(char* outputString)
 }
 
 //分配MSR拦截标志位map
-#pragma code_seg()
+#pragma code_seg("PAGE")
 NTSTATUS MsrPremissionsMapManager::Init()
 {
+	PAGED_CODE();
 	if (IsInited())
 		return STATUS_SUCCESS;
 
-	const UINT32 BITS_PER_MSR = 2;
+	constexpr UINT32 BITS_PER_MSR = 2;
 	//FIRST_MSR_RANGE_BASE = 0x00000000;
 	//FIRST_MSRPM_OFFSET = 0x000 * CHAR_BIT;
-	const UINT32 SECOND_MSR_RANGE_BASE = 0xc0000000;
-	const UINT32 SECOND_MSRPM_OFFSET = 0x800 * CHAR_BIT;
-	const UINT32 THIRD_MSR_RANGE_BASE = 0xc0010000;
-	const UINT32 THIRD_MSRPM_OFFSET = 0x1000 * CHAR_BIT;
-	const ULONG EFER_OFFSET = SECOND_MSRPM_OFFSET + ((IA32_MSR_EFER - SECOND_MSR_RANGE_BASE) * BITS_PER_MSR);
-	const ULONG VM_CR_OFFSET = THIRD_MSRPM_OFFSET + ((IA32_MSR_VM_CR - THIRD_MSR_RANGE_BASE) * BITS_PER_MSR);
+	constexpr UINT32 SECOND_MSR_RANGE_BASE = 0xc0000000;
+	constexpr UINT32 SECOND_MSRPM_OFFSET = 0x800 * CHAR_BIT;
+	constexpr UINT32 THIRD_MSR_RANGE_BASE = 0xc0010000;
+	constexpr UINT32 THIRD_MSRPM_OFFSET = 0x1000 * CHAR_BIT;
+	constexpr ULONG EFER_OFFSET = SECOND_MSRPM_OFFSET + ((IA32_MSR_EFER - SECOND_MSR_RANGE_BASE) * BITS_PER_MSR);
+	constexpr ULONG VM_CR_OFFSET = THIRD_MSRPM_OFFSET + ((IA32_MSR_VM_CR - THIRD_MSR_RANGE_BASE) * BITS_PER_MSR);
 	RTL_BITMAP bitmapHeader = {};
 
 	//分配物理连续内存
@@ -204,9 +209,10 @@ NTSTATUS MsrPremissionsMapManager::Init()
 	return STATUS_SUCCESS;
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 void MsrPremissionsMapManager::Deinit()
 {
+	PAGED_CODE();
 	if (pMsrPremissionsMapVirtAddr != NULL)
 	{
 		FreeContigousMem(pMsrPremissionsMapVirtAddr, SVM_TAG);
@@ -215,9 +221,10 @@ void MsrPremissionsMapManager::Deinit()
 	}
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 SVMStatus SVMManager::CheckSVM()
 {
+	PAGED_CODE();
 	char szCpuString[13];
 	CPUString(szCpuString);
 	if (strcmp(szCpuString, "AuthenticAMD"))
@@ -250,9 +257,10 @@ SVMStatus SVMManager::CheckSVM()
 	return result;
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 NTSTATUS SVMManager::Init()
 {
+	PAGED_CODE();
 	NTSTATUS result = STATUS_SUCCESS;
 	UINT32 idx = 0;
 	do
@@ -330,15 +338,15 @@ NTSTATUS SVMManager::Init()
 	return result;
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 void SVMManager::Deinit()
 {
+	PAGED_CODE();
 	if (pVirtCpuInfo != NULL && cpuCnt)
 	{
 		UINT64 idx = 0;
 		PROCESSOR_NUMBER processorNum = {};
 		GROUP_AFFINITY affinity = {}, oldAffinity = {};
-		KIRQL oldIrql = {};
 
 		for (idx = 0; idx < cpuCnt; ++idx)
 		{
@@ -354,11 +362,7 @@ void SVMManager::Deinit()
 					affinity.Mask = 1ULL << processorNum.Number;
 					KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
 
-					KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
-
 					LeaveVirtualization();
-
-					KeLowerIrql(oldIrql);
 
 					KeRevertToUserGroupAffinityThread(&oldAffinity);
 				}
@@ -374,7 +378,7 @@ void SVMManager::Deinit()
 	msrPremissionMap.Deinit();
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 NTSTATUS SVMManager::EnterVirtualization()
 {
 	PAGED_CODE();
@@ -383,7 +387,6 @@ NTSTATUS SVMManager::EnterVirtualization()
 	GROUP_AFFINITY affinity = {}, oldAffinity = {};
 	UINT32 cpuIdx = 0;
 	GenericRegisters registerBackup = {};
-	KIRQL oldIrql = {};
 
 	for (cpuIdx = 0; cpuIdx < cpuCnt; ++cpuIdx)
 	{
@@ -395,10 +398,7 @@ NTSTATUS SVMManager::EnterVirtualization()
 		affinity.Group = processorNum.Group;
 		affinity.Mask = 1ULL << processorNum.Number;
 
-		if (!cpuIdx)
-			KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
-		else
-			KeSetSystemGroupAffinityThread(&affinity, NULL);
+		KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
 
 		_save_or_load_regs(&registerBackup);
 		//标记进入虚拟化之后，需要恢复的寄存器
@@ -406,8 +406,6 @@ NTSTATUS SVMManager::EnterVirtualization()
 
 		if (!pVirtCpuInfo[cpuIdx]->otherInfo.isInVirtualizaion)
 		{
-			KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
-
 			//标记已经进入过虚拟化
 			pVirtCpuInfo[cpuIdx]->otherInfo.isInVirtualizaion = TRUE;
 
@@ -431,11 +429,15 @@ NTSTATUS SVMManager::EnterVirtualization()
 			pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.msrpmBasePA = msrPremissionMap.GetPhyAddress();
 			pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.guestASID = 1;
 
-			if (pNptPageTable != NULL)
+			if (pNCr3Provider != NULL)
 			{
-				KdPrint(("SVMManager::EnterVirtualization(): Enable NPT\n"));
-				pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.extendFeatures1.fields.enableNestedPage = true;
-				pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.nCr3 = (UINT64)pNptPageTable;
+				PVOID nCr3Pa = pNCr3Provider->GetNCr3ForCore(cpuIdx);
+				if (nCr3Pa != (PVOID)INVALID_ADDR)
+				{
+					KdPrint(("SVMManager::EnterVirtualization(): Enable NPT\n"));
+					pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.extendFeatures1.fields.enableNestedPage = true;
+					pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.nCr3 = (UINT64)nCr3Pa;
+				}
 			}
 
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.gdtr.base = gdtrBase;
@@ -535,21 +537,17 @@ NTSTATUS SVMManager::EnterVirtualization()
 
 			KeBugCheck(MANUALLY_INITIATED_CRASH);
 		}
-		else
-		{
-			KeLowerIrql(oldIrql);
-		}
+
+		KeRevertToUserGroupAffinityThread(&oldAffinity);
 		
 	}
-
-	KeRevertToUserGroupAffinityThread(&oldAffinity);
-
 	return status;
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 void SVMManager::LeaveVirtualization()
 {
+	PAGED_CODE();
 	int result[4] = {};
 	//调用CPUID指令通知VMM退出
 	__cpuidex(result, GUEST_CALL_VMM_CPUID_FUNCTION, 0);

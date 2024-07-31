@@ -50,7 +50,7 @@ void FreePagedMem(PVOID pMem, ULONG tag)
 PVOID AllocContiguousMem(SIZE_TYPE byteCnt, ULONG tag)
 {
 	UNREFERENCED_PARAMETER(tag);
-	return MmAllocateContiguousMemory(byteCnt, highestPhyAddr);
+	return MmAllocateContiguousMemory(byteCnt, HIGHEST_PHY_ADDR);
 }
 
 #pragma code_seg()
