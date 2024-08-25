@@ -103,9 +103,19 @@ public:
 	virtual ~INpfInterceptPlugin() {}
 };
 
+class IBreakprointInterceptPlugin
+{
+public:
+	virtual bool HandleBreakpoint(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
+		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) = 0;
+	#pragma code_seg()
+	virtual ~IBreakprointInterceptPlugin() {}
+};
+
 class INCr3Provider
 {
 public:
+	//根据CPUID获取对应的NCR3物理地址
 	virtual PVOID GetNCr3ForCore(UINT32 cpuIdx) = 0;
 	#pragma code_seg()
 	virtual ~INCr3Provider() {}
@@ -146,6 +156,8 @@ enum SVMStatus
 	SVMS_ENABLED = 0x4,
 	//SVM就绪（未被其他虚拟化软件占用）
 	SVMS_READY = 0x8,
+	//NPT可用
+	SVMS_NPT_ENABLED = 0x10
 };
 
 class SVMManager : public IManager
@@ -156,6 +168,7 @@ class SVMManager : public IManager
 	IMsrInterceptPlugin* pMsrInterceptPlugin;
 	ICpuidInterceptPlugin* pCpuIdInterceptPlugin;
 	INpfInterceptPlugin* pNpfInterceptPlugin;
+	IBreakprointInterceptPlugin* pBreakpointInterceptPlugin;
 	INCr3Provider* pNCr3Provider;
 	NTSTATUS EnterVirtualization();
 	void LeaveVirtualization();
@@ -164,7 +177,7 @@ public:
 	//请勿调用该函数，这个函数由VMM自动调用
 	void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr);
 	#pragma code_seg("PAGE")
-	SVMManager() : pVirtCpuInfo(NULL), cpuCnt(0), pMsrInterceptPlugin(NULL), pCpuIdInterceptPlugin(NULL), pNpfInterceptPlugin(NULL), pNCr3Provider(NULL) { PAGED_CODE(); }
+	SVMManager() : pVirtCpuInfo(NULL), cpuCnt(0), pMsrInterceptPlugin(NULL), pCpuIdInterceptPlugin(NULL), pNpfInterceptPlugin(NULL), pNCr3Provider(NULL), pBreakpointInterceptPlugin(NULL) { PAGED_CODE(); }
 	#pragma code_seg("PAGE")
 	void SetMsrInterceptPlugin(IMsrInterceptPlugin* _pMsrInterceptPlugin) { PAGED_CODE(); pMsrInterceptPlugin = _pMsrInterceptPlugin; }
 	#pragma code_seg("PAGE")
@@ -173,6 +186,8 @@ public:
 	void SetNpfInterceptPlugin(INpfInterceptPlugin* _pNpfInterrceptPlugin) { PAGED_CODE(); pNpfInterceptPlugin = _pNpfInterrceptPlugin; }
 	#pragma code_seg("PAGE")
 	void SetNCr3Provider(INCr3Provider* _provider) { pNCr3Provider = _provider; }
+	#pragma code_seg("PAGE")
+	void SetBreakpointPlugin(IBreakprointInterceptPlugin* _pBreakpointInterceptPlugin) { PAGED_CODE(); pBreakpointInterceptPlugin = _pBreakpointInterceptPlugin; }
 	static SVMStatus CheckSVM();
 	virtual NTSTATUS Init() override;
 	virtual void Deinit() override;

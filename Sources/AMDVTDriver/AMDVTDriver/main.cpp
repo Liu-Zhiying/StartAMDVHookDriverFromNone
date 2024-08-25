@@ -6,9 +6,19 @@
 #include "Hook.h"
 #include "PageTable.h"
 
-extern "C" void TestLStarHookCallback()
+void TestLStarHookCallback()
 {
-	//KdPrint(("Hook OK!\n"));
+	static bool showMessage = false;
+	if (!showMessage)
+	{
+		KdPrint(("Msr Hook OK!\n"));
+		showMessage = true;
+	}
+}
+
+void NptHookTest()
+{
+	KdPrint(("Npt Hook OK!\n"));
 }
 
 class GlobalManager : public IManager
@@ -16,6 +26,8 @@ class GlobalManager : public IManager
 	PageTableManager ptManager;
 	SVMManager svmManager;
 	MsrHookManager<1> msrHookManager;
+	NptHookManager nptHookManager;
+	PVOID pHookMem = NULL;
 public:
 
 	#pragma code_seg("PAGE")
@@ -34,14 +46,86 @@ public:
 	}
 
 	#pragma code_seg("PAGE")
+	void SetNptHook()
+	{
+		PAGED_CODE();
+		nptHookManager.SetPageTableManager(&ptManager);
+		svmManager.SetNpfInterceptPlugin(&nptHookManager);
+		svmManager.SetBreakpointPlugin(&nptHookManager);
+	}
+
+	#pragma code_seg("PAGE")
 	void SetNpt()
 	{
 		PAGED_CODE();
-
 		//传递NPT页表
 		KdPrint(("GlobalManager::Init(): Enable NPT\n"));
 		svmManager.SetNCr3Provider(&ptManager);
-		svmManager.SetNpfInterceptPlugin(&ptManager);
+		//svmManager.SetNpfInterceptPlugin(&ptManager);
+	}
+
+	#pragma code_seg("PAGE")
+	void HookApi()
+	{
+		PAGED_CODE();
+		/*
+		//测试页表处理性能
+		KdPrint(("GlobalManager::Init(): Test LStar hook\n"));
+		PageTableLevel123Entry entry = {};
+
+		entry.fields.writeable = true;
+		entry.fields.userAccess = true;
+
+		LARGE_INTEGER frequency = {};
+
+		KeQueryPerformanceCounter(&frequency);
+
+		ULONGLONG timeBeg = KeQueryPerformanceCounter(NULL).QuadPart;
+
+		ptManager.GetCoreNptPageTables()[0].ChangeAllPageTablePermession(entry);
+
+		ULONGLONG timeEnd = KeQueryPerformanceCounter(NULL).QuadPart;
+
+		KdPrint(("time elapsed = %lld\n", (timeEnd - timeBeg) / (frequency.QuadPart / 1000)));
+		*/
+		/*
+		UINT8 hookCode[] = { 0x48,0xb8,0x88,0x77,0x66,0x55,0x44,0x33,0x22,0x11,0xff,0xf0,0x48,0x89,0x5c,0x24,0x08,0x48,0xb8,0x88,0x77,0x66,0x55,0x44,0x33,0x22,0x11,0xff,0xe0,0xc3 };
+		UNICODE_STRING apiName = {};
+		RtlInitUnicodeString(&apiName, L"ExAllocatePool2");
+		PVOID apiVirtAddr = MmGetSystemRoutineAddress(&apiName);
+
+		KdPrint(("GlobalManager::Init(): ExAllocatePool2 virtual address: %llx\n", apiVirtAddr));
+
+		if (apiVirtAddr == NULL)
+		{
+			KdPrint(("GlobalManager::Init(): ExAllocatePool2 address not found!\n"));
+			return;
+		}
+
+		PTR_TYPE apiPhyAddr = MmGetPhysicalAddress(apiVirtAddr).QuadPart;
+
+		KdPrint(("GlobalManager::Init(): ExAllocatePool2 physical address: %llx\n", apiPhyAddr));
+
+		pHookMem = ExAllocatePool2(POOL_FLAG_NON_PAGED_EXECUTE, sizeof(hookCode), 0x22);
+		if (pHookMem == NULL)
+		{
+			KdPrint(("GlobalManager::Init(): Allocate hook memory failed!\n"));
+			return;
+		}
+
+		RtlCopyMemory(hookCode, pHookMem, sizeof(hookCode));
+		PVOID* pTemp = (PVOID*)pHookMem + 0x2;
+		*pTemp = NptHookTest;
+
+		pTemp = (PVOID*)pHookMem + 0x14;
+		*pTemp = (PUINT8)apiVirtAddr + 0x5;
+
+		HookRecord record = {};
+		record.pOriginVirtAddr = apiVirtAddr;
+		record.pGotoVirtAddr = pHookMem;
+
+		nptHookManager.AddHook(record);
+		*/
 	}
 
 	#pragma code_seg("PAGE")
@@ -68,6 +152,12 @@ public:
 			if (!NT_SUCCESS(status))
 				break;
 
+			SetNptHook();
+
+			status = nptHookManager.Init();
+			if (!NT_SUCCESS(status))
+				break;
+
 			status = ptManager.Init();
 			if (!NT_SUCCESS(status))
 				break;
@@ -79,6 +169,8 @@ public:
 				break;
 
 			EnableMsrHook();
+
+			HookApi();
 
 		} while (false);
 
@@ -102,6 +194,9 @@ public:
 		PAGED_CODE();
 
 		GlobalManager::Deinit();
+
+		if (pHookMem != NULL)
+			ExFreePoolWithTag(pHookMem, 0x22);
 	}
 };
 

@@ -167,7 +167,7 @@ union EventInj
 		UINT64 type : 3;
 		UINT64 ev : 1;
 		UINT64 resvd1 : 19;
-		UINT64 v : 1;
+		UINT64 vaild : 1;
 		UINT64 errorcode : 32;
 	} fields;
 };

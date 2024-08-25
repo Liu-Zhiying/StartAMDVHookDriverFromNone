@@ -104,16 +104,16 @@ constexpr UINT32 IA32_MSR_APIC_BASE = 0x0000001b;
 constexpr UINT32 EFER_SVME_OFFSET = 12;
 constexpr UINT32 CPUID_FN_80000001_ECX_SVM_OFFSET = 2;
 constexpr UINT32 VM_CR_SVMDIS_OFFSET = 4;
+constexpr UINT32 NPT_ENABLE_OFFSET = 0;
 constexpr UINT32 CPUID_FN_SVM_FEATURE = 0x80000001;
+constexpr UINT32 CPUID_FN_NPT_FEATURE = 0x8000000a;
 
-template<typename ElementType, MemType memType = NonPaged>
+template<typename ElementType, UINT32 allocTag, MemType memType = NonPaged>
 class KernelVector
 {
 	ElementType* pData;
 	SIZE_TYPE length;
 	SIZE_TYPE capacity;
-
-	const ULONG VECTOR_TAG = MAKE_TAG('v', 'e', 'c', ' ');
 
 	PVOID(*pMemAlloc)(SIZE_TYPE byteCnt, ULONG tag);
 	void (*pMemFree)(PVOID pMem, ULONG tag);
@@ -122,8 +122,8 @@ public:
 	KernelVector();
 	~KernelVector();
 
-	KernelVector(KernelVector<ElementType, memType>&& container);
-	KernelVector<ElementType, memType>& operator=(KernelVector<ElementType, memType>&& container);
+	KernelVector(KernelVector&& container);
+	KernelVector& operator=(KernelVector&& container);
 
 	void PushBack(ElementType e);
 	void EmplaceBack(ElementType&& e);
@@ -139,8 +139,8 @@ public:
 };
 
 #pragma code_seg()
-template<typename ElementType, MemType memType>
-inline KernelVector<ElementType, memType>::KernelVector() : pData(NULL), length(0), capacity(0)
+template<typename ElementType, UINT32 allocTag, MemType memType>
+inline KernelVector<ElementType, allocTag, memType>::KernelVector() : pData(NULL), length(0), capacity(0)
 {
 	switch (memType)
 	{
@@ -168,30 +168,30 @@ inline KernelVector<ElementType, memType>::KernelVector() : pData(NULL), length(
 }
 
 #pragma code_seg()
-template<typename ElementType, MemType memType>
-inline KernelVector<ElementType, memType>::~KernelVector()
+template<typename ElementType, UINT32 allocTag, MemType memType>
+inline KernelVector<ElementType, allocTag, memType>::~KernelVector()
 {
 	if (pData != NULL)
 	{
 		for (SIZE_TYPE idx = 0; idx < length; ++idx)
 			CallDestroyer(pData + idx);
 
-		pMemFree(pData, VECTOR_TAG);
+		pMemFree(pData, allocTag);
 
 		pData = NULL;
 	}
 }
 
 #pragma code_seg()
-template<typename ElementType, MemType memType>
-inline KernelVector<ElementType, memType>::KernelVector(KernelVector<ElementType, memType>&& container)
+template<typename ElementType, UINT32 allocTag, MemType memType>
+inline KernelVector<ElementType, allocTag, memType>::KernelVector(KernelVector<ElementType, allocTag, memType>&& container)
 {
 	*this = static_cast<KernelVector<ElementType>&&>(container);
 }
 
 #pragma code_seg()
-template<typename ElementType, MemType memType>
-inline KernelVector<ElementType, memType>& KernelVector<ElementType, memType>::operator=(KernelVector<ElementType, memType>&& container)
+template<typename ElementType, UINT32 allocTag, MemType memType>
+inline KernelVector<ElementType, allocTag, memType>& KernelVector<ElementType, allocTag, memType>::operator=(KernelVector<ElementType, allocTag, memType>&& container)
 {
 	if (&container == this)
 		return *this;
@@ -201,8 +201,6 @@ inline KernelVector<ElementType, memType>& KernelVector<ElementType, memType>::o
 	pData = container.pData;
 	length = container.length;
 	capacity = container.capacity;
-	pMemAlloc = container.pMemAlloc;
-	pMemFree = container.pMemFree;
 	container.pData = NULL;
 	container.length = 0;
 	container.capacity = 0;
@@ -211,8 +209,8 @@ inline KernelVector<ElementType, memType>& KernelVector<ElementType, memType>::o
 }
 
 #pragma code_seg()
-template<typename ElementType, MemType memType>
-inline void KernelVector<ElementType, memType>::PushBack(ElementType e)
+template<typename ElementType, UINT32 allocTag, MemType memType>
+inline void KernelVector<ElementType, allocTag, memType>::PushBack(ElementType e)
 {
 	if (length == capacity)
 		SetCapacity(!length ? 50 : length * 2);
@@ -220,25 +218,26 @@ inline void KernelVector<ElementType, memType>::PushBack(ElementType e)
 }
 
 #pragma code_seg()
-template<typename ElementType, MemType memType>
-inline void KernelVector<ElementType, memType>::EmplaceBack(ElementType&& e)
+template<typename ElementType, UINT32 allocTag, MemType memType>
+inline void KernelVector<ElementType, allocTag, memType>::EmplaceBack(ElementType&& e)
 {
 	if (length == capacity)
 		SetCapacity(!length ? 50 : length * 2);
+	CallConstructor(&pData[length]);
 	pData[length++] = static_cast<ElementType&&>(e);
 }
 
 #pragma code_seg()
-template<typename ElementType, MemType memType>
-inline ElementType KernelVector<ElementType, memType>::PopBack()
+template<typename ElementType, UINT32 allocTag, MemType memType>
+inline ElementType KernelVector<ElementType, allocTag, memType>::PopBack()
 {
 	ElementType result = static_cast<ElementType&&>(pData[--length]);
 	return result;
 }
 
 #pragma code_seg()
-template<typename ElementType, MemType memType>
-inline const ElementType& KernelVector<ElementType, memType>::operator[](SIZE_TYPE idx) const
+template<typename ElementType, UINT32 allocTag, MemType memType>
+inline const ElementType& KernelVector<ElementType, allocTag, memType>::operator[](SIZE_TYPE idx) const
 {
 	if (idx < Length())
 		return pData[idx];
@@ -247,8 +246,8 @@ inline const ElementType& KernelVector<ElementType, memType>::operator[](SIZE_TY
 }
 
 #pragma code_seg()
-template<typename ElementType, MemType memType>
-inline ElementType& KernelVector<ElementType, memType>::operator[](SIZE_TYPE idx)
+template<typename ElementType, UINT32 allocTag, MemType memType>
+inline ElementType& KernelVector<ElementType, allocTag, memType>::operator[](SIZE_TYPE idx)
 {
 	if (idx < Length())
 		return pData[idx];
@@ -257,8 +256,8 @@ inline ElementType& KernelVector<ElementType, memType>::operator[](SIZE_TYPE idx
 }
 
 #pragma code_seg()
-template<typename ElementType, MemType memType>
-inline void KernelVector<ElementType, memType>::Insert(ElementType e, SIZE_TYPE idx)
+template<typename ElementType, UINT32 allocTag, MemType memType>
+inline void KernelVector<ElementType, allocTag, memType>::Insert(ElementType e, SIZE_TYPE idx)
 {
 	if (idx >= Length())
 		KeBugCheck(MEMORY_MANAGEMENT);
@@ -275,8 +274,8 @@ inline void KernelVector<ElementType, memType>::Insert(ElementType e, SIZE_TYPE 
 }
 
 #pragma code_seg()
-template<typename ElementType, MemType memType>
-inline void KernelVector<ElementType, memType>::Remove(SIZE_TYPE idx)
+template<typename ElementType, UINT32 allocTag, MemType memType>
+inline void KernelVector<ElementType, allocTag, memType>::Remove(SIZE_TYPE idx)
 {
 	if (idx >= Length())
 		KeBugCheck(MEMORY_MANAGEMENT);
@@ -288,26 +287,26 @@ inline void KernelVector<ElementType, memType>::Remove(SIZE_TYPE idx)
 }
 
 #pragma code_seg()
-template<typename ElementType, MemType memType>
-inline SIZE_TYPE KernelVector<ElementType, memType>::Length() const
+template<typename ElementType, UINT32 allocTag, MemType memType>
+inline SIZE_TYPE KernelVector<ElementType, allocTag, memType>::Length() const
 {
 	return length;
 }
 
 #pragma code_seg()
-template<typename ElementType, MemType memType>
-inline SIZE_TYPE KernelVector<ElementType, memType>::Capacity() const
+template<typename ElementType, UINT32 allocTag, MemType memType>
+inline SIZE_TYPE KernelVector<ElementType, allocTag, memType>::Capacity() const
 {
 	return capacity;
 }
 
 #pragma code_seg()
-template<typename ElementType, MemType memType>
-inline void KernelVector<ElementType, memType>::SetCapacity(SIZE_TYPE newCapacity)
+template<typename ElementType, UINT32 allocTag, MemType memType>
+inline void KernelVector<ElementType, allocTag, memType>::SetCapacity(SIZE_TYPE newCapacity)
 {
 	SIZE_TYPE copyLength = newCapacity > capacity ? capacity : newCapacity;
 
-	ElementType* pNewData = (ElementType*)pMemAlloc(newCapacity * sizeof(ElementType), VECTOR_TAG);
+	ElementType* pNewData = (ElementType*)pMemAlloc(newCapacity * sizeof(ElementType), allocTag);
 
 	if (pNewData == NULL)
 		KeBugCheck(MEMORY_MANAGEMENT);
@@ -322,7 +321,7 @@ inline void KernelVector<ElementType, memType>::SetCapacity(SIZE_TYPE newCapacit
 	}
 
 	if (pData != NULL)
-		pMemFree(pData, VECTOR_TAG);
+		pMemFree(pData, allocTag);
 
 	pData = pNewData;
 	capacity = newCapacity;
@@ -330,8 +329,8 @@ inline void KernelVector<ElementType, memType>::SetCapacity(SIZE_TYPE newCapacit
 }
 
 #pragma code_seg()
-template<typename ElementType, MemType memType>
-inline void KernelVector<ElementType, memType>::Clear()
+template<typename ElementType, UINT32 allocTag, MemType memType>
+inline void KernelVector<ElementType, allocTag, memType>::Clear()
 {
 	for (SIZE_TYPE idx = 0; idx < length; ++idx)
 		CallDestroyer(pData + idx);

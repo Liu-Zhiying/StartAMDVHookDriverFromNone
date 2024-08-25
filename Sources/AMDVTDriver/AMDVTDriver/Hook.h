@@ -3,17 +3,20 @@
 
 #include "Basic.h"
 #include "SVM.h"
+#include "PageTable.h"
 #include <intrin.h>
 
 //配置MSR HOOK参数的CPUID的Function
 constexpr UINT32 CONFIGURE_MSR_HOOK_CPUID_FUNCTION = 0x400000fe;
 constexpr UINT32 READ_MSR_CPUID_SUBFUNCTION = 0x00000000;
 constexpr UINT32 WRITE_MSR_CPUID_SUBFUNCTION = 0x00000001;
+//配置NPT HOOK参数的CPUID的Function
+constexpr UINT32 CONFIG_NPT_HOOK_CPUID_FUNCTION = 0x400000fd;
 
 constexpr UINT32 HOOK_TAG = MAKE_TAG('h', 'o', 'o', 'k');
 
 //辅助函数，用于跳转到VMM处理MSR HOOK参数的修改
-extern "C" void SetRegsThenCpuid(UINT32 eax, UINT32 ebx, UINT32 ecx, PTR_TYPE rdx);
+extern "C" void SetRegsThenCpuid(PTR_TYPE rax, PTR_TYPE rbx, PTR_TYPE rcx, PTR_TYPE rdx);
 
 struct MsrHookParameter
 {
@@ -40,7 +43,7 @@ struct MsrOperationParameter
 template<SIZE_TYPE msrHookCount>
 class MsrHookManager : public IManager, public IMsrInterceptPlugin, public ICpuidInterceptPlugin
 {
-	KSPIN_LOCK operationLock;
+	KMUTEX operationLock;
 	MsrHookParameter parameters[msrHookCount];
 	bool inited;
 	ULONG cpuCnt;
@@ -78,7 +81,7 @@ MsrHookManager<msrHookCount>::MsrHookManager() : inited(false), cpuCnt(0)
 	for (MsrHookParameter& param : parameters)
 		param.msrNum = INVALID_MSRNUM;
 
-	KeInitializeSpinLock(&operationLock);
+	KeInitializeMutex(&operationLock, 0);
 }
 
 #pragma code_seg("PAGE")
@@ -90,15 +93,14 @@ void MsrHookManager<msrHookCount>::SetHookMsrs(UINT32(&msrNums)[msrHookCount])
 		parameters[idx].msrNum = msrNums[idx];
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 template<SIZE_TYPE msrHookCount>
 NTSTATUS MsrHookManager<msrHookCount>::Init()
 {
 	NTSTATUS status = STATUS_SUCCESS;
-	KIRQL oldIrql = {};
 	if (!inited)
 	{
-		KeAcquireSpinLock(&operationLock, &oldIrql);
+		KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
 
 		cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
 
@@ -116,12 +118,12 @@ NTSTATUS MsrHookManager<msrHookCount>::Init()
 		if (NT_SUCCESS(status))
 			inited = true;
 
-		KeReleaseSpinLock(&operationLock, oldIrql);
+		KeReleaseMutex(&operationLock, FALSE);
 	}
 	return status;
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 template <SIZE_TYPE msrHookCount>
 void MsrHookManager<msrHookCount>::Deinit()
 {
@@ -130,9 +132,8 @@ void MsrHookManager<msrHookCount>::Deinit()
 		PROCESSOR_NUMBER processorNum = {};
 		GROUP_AFFINITY affinity = {}, oldAffinity = {};
 		MsrOperationParameter optParam = {};
-		KIRQL oldIrql = {};
 
-		KeAcquireSpinLock(&operationLock, &oldIrql);
+		KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
 
 		for (SIZE_TYPE idx1 = 0; idx1 < msrHookCount; ++idx1)
 		{
@@ -168,7 +169,7 @@ void MsrHookManager<msrHookCount>::Deinit()
 			}
 		}
 
-		KeReleaseSpinLock(&operationLock, oldIrql);
+		KeReleaseMutex(&operationLock, FALSE);
 
 		cpuCnt = 0;
 
@@ -217,8 +218,7 @@ inline bool MsrHookManager<msrHookCount>::HandleMsrImterceptRead(VirtCpuInfo* pV
 	UNREFERENCED_PARAMETER(pHostVmcbPhyAddr);
 
 	bool handled = false;
-	KIRQL oldIrql = {};
-	KeAcquireSpinLock(&operationLock, &oldIrql);
+	KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
 
 	for (SIZE_TYPE idx = 0; idx < msrHookCount; ++idx)
 	{
@@ -235,7 +235,7 @@ inline bool MsrHookManager<msrHookCount>::HandleMsrImterceptRead(VirtCpuInfo* pV
 		}
 	}
 
-	KeReleaseSpinLock(&operationLock, oldIrql);
+	KeReleaseMutex(&operationLock, FALSE);
 	return handled;
 }
 
@@ -251,8 +251,7 @@ inline bool MsrHookManager<msrHookCount>::HandleMsrInterceptWrite(VirtCpuInfo* p
 	UNREFERENCED_PARAMETER(pHostVmcbPhyAddr);
 
 	bool handled = false;
-	KIRQL oldIrql = {};
-	KeAcquireSpinLock(&operationLock, &oldIrql);
+	KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
 
 	for (SIZE_TYPE idx = 0; idx < msrHookCount; ++idx)
 	{
@@ -269,7 +268,7 @@ inline bool MsrHookManager<msrHookCount>::HandleMsrInterceptWrite(VirtCpuInfo* p
 		}
 	}
 
-	KeReleaseSpinLock(&operationLock, oldIrql);
+	KeReleaseMutex(&operationLock, FALSE);
 	return handled;
 }
 
@@ -423,13 +422,12 @@ inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo,
 	return false;
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 template<SIZE_TYPE msrHookCount>
 inline void MsrHookManager<msrHookCount>::EnableMsrHook(UINT32 msrNum, PTR_TYPE realValue)
 {
-	KIRQL oldIrql = {};
 
-	KeAcquireSpinLock(&operationLock, &oldIrql);
+	KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
 
 	PROCESSOR_NUMBER processorNum = {};
 	GROUP_AFFINITY affinity = {}, oldAffinity = {};
@@ -464,16 +462,16 @@ inline void MsrHookManager<msrHookCount>::EnableMsrHook(UINT32 msrNum, PTR_TYPE 
 		}
 	}
 
-	KeReleaseSpinLock(&operationLock, oldIrql);
+	KeReleaseMutex(&operationLock, FALSE);
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 template<SIZE_TYPE msrHookCount>
 inline void MsrHookManager<msrHookCount>::DisableMsrHook(UINT32 msrNum, bool writeFakeValueToMsr)
 {
 	KIRQL oldIrql = {};
 
-	KeAcquireSpinLock(&operationLock, &oldIrql);
+	KeWaitForSingleObject(&operationLock, Executive, KernelMode, FALSE, NULL);
 
 	PROCESSOR_NUMBER processorNum = {};
 	GROUP_AFFINITY affinity = {}, oldAffinity = {};
@@ -506,14 +504,15 @@ inline void MsrHookManager<msrHookCount>::DisableMsrHook(UINT32 msrNum, bool wri
 		}
 	}
 
-	KeReleaseSpinLock(&operationLock, oldIrql);
+	KeReleaseMutex(&operationLock, FALSE);
 }
 
 //启用IA32_MSR_LSTAR HOOK 使用之前需要调用MsrHookManager::SetHookMsrs注册IA32_MSR_LSTAR
+#pragma code_seg("PAGE")
 template<SIZE_TYPE msrCnt>
 void EnableLStrHook(MsrHookManager<msrCnt>* pMsrHookManager, pLStarHookCallback pCallback)
 {
-	extern void SetLStrHookEntryParameters(PTR_TYPE oldEntry, PTR_TYPE pCallback);	
+	extern void SetLStrHookEntryParameters(PTR_TYPE oldEntry, PTR_TYPE pCallback);
 	extern PTR_TYPE GetLStarHookEntry();
 
 	MsrOperationParameter optParam = {};
@@ -526,10 +525,94 @@ void EnableLStrHook(MsrHookManager<msrCnt>* pMsrHookManager, pLStarHookCallback 
 	pMsrHookManager->EnableMsrHook(IA32_MSR_LSTAR, (PTR_TYPE)GetLStarHookEntry());
 }
 
+#pragma code_seg("PAGE")
 template<SIZE_TYPE msrCnt>
 void DisableLStrHook(MsrHookManager<msrCnt>* pMsrHookManager)
 {
 	pMsrHookManager->DisableMsrHook(IA32_MSR_LSTAR);
 }
+
+//页表Level3改小页的记录项，如果计数为0，则可以恢复大页
+struct SmallPageLevel3RefCnt
+{
+	//包含level 1 2 3偏移的的物理地址
+	PTR_TYPE level3PhyAddr;
+	SIZE_TYPE refCnt;
+	#pragma code_seg()
+	SmallPageLevel3RefCnt() : level3PhyAddr(INVALID_ADDR), refCnt(0) {}
+	SmallPageLevel3RefCnt(PTR_TYPE _level3PhyAddr, SIZE_TYPE _refCnt) : level3PhyAddr(_level3PhyAddr), refCnt(_refCnt) {}
+};
+
+//交换页的记录
+struct SwapPageRefCnt
+{
+	//原始页面的虚拟地址
+	PVOID pOriginVirtAddr;
+	//替换页面的虚拟地址
+	PVOID pSwapVirtAddr;
+	SIZE_TYPE refCnt;
+	#pragma code_seg()
+	SwapPageRefCnt() : pOriginVirtAddr(NULL), pSwapVirtAddr(NULL), refCnt(0) {}
+	SwapPageRefCnt(PVOID _pOriginVirtAddr, PVOID _pSwapVirtAddr, SIZE_TYPE _refCnt) : pOriginVirtAddr(_pOriginVirtAddr), pSwapVirtAddr(_pSwapVirtAddr), refCnt(_refCnt) {}
+};
+
+//hook条目记录
+struct HookRecord
+{
+	//hook原始虚拟地址
+	PVOID pOriginVirtAddr;
+	//hook的跳转地址
+	PVOID pGotoVirtAddr;
+	#pragma code_seg()
+	HookRecord() : pOriginVirtAddr(NULL), pGotoVirtAddr(NULL) {}
+};
+
+//每个核心的NPT HOOK状态
+struct CoreNptHookStatus
+{
+	enum PremissionStatus
+	{
+		HookPageNotExecuted,
+		HookPageExecuted
+	};
+	PremissionStatus premissionStatus;
+	PTR_TYPE pLastActiveHookPageVirtAddr;
+
+public:
+	#pragma code_seg()
+	CoreNptHookStatus() : premissionStatus(HookPageNotExecuted), pLastActiveHookPageVirtAddr(NULL) {}
+};
+
+class NptHookManager : public IManager, public IBreakprointInterceptPlugin, public INpfInterceptPlugin
+{
+	KernelVector<SmallPageLevel3RefCnt, HOOK_TAG> level3Refs;
+	KernelVector<SwapPageRefCnt, HOOK_TAG> swapPageRefs;
+	KernelVector<HookRecord, HOOK_TAG> hookRecords;
+	KernelVector<CoreNptHookStatus, HOOK_TAG> coreNptHookStatus;
+	KSPIN_LOCK operationLock;
+	PageTableManager* pPageTableManager;
+
+	SIZE_TYPE FindHookRecordByOriginVirtAddr(PVOID pOriginAddr);
+	SIZE_TYPE FindSmallPageLevel3RefCntByPhyAddr(PTR_TYPE phyAddr);
+	SIZE_TYPE FindSwapPageRefCntByPhyAddr(PTR_TYPE phyAddr);
+	SIZE_TYPE FindSwapPageRefCntByOriginVirtAddr(PVOID pOriginAddr);
+
+public:
+
+	#pragma code_seg("PAGE")
+	void SetPageTableManager(PageTableManager* _pPageTableManager) { pPageTableManager = _pPageTableManager; }
+	virtual bool HandleBreakpoint(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
+		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
+	virtual bool HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
+		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
+	#pragma code_seg()
+	NptHookManager() : pPageTableManager(NULL) { KeInitializeSpinLock(&operationLock); }
+	NTSTATUS AddHook(const HookRecord& record);
+	NTSTATUS RemoveHook(PVOID pHookOriginVirtAddr);
+	virtual NTSTATUS Init() override;
+	virtual void Deinit() override;
+	#pragma code_seg("PAGE")
+	~NptHookManager() {}
+};
 
 #endif

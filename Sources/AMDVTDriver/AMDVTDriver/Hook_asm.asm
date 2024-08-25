@@ -16,9 +16,9 @@ SetRegsThenCpuid Proc
 	push r8
 	push r9
 
-	mov eax, ecx
-	mov ebx, edx
-	mov ecx, r8d
+	mov rax, rcx
+	mov rbx, rdx
+	mov rcx, r8
 	mov rdx, r9
 	cpuid
 	;还原寄存器
@@ -34,7 +34,9 @@ SetRegsThenCpuid Endp
 
 LStarHookEntry Proc
 	swapgs
+	;允许r0访问r3数据
 	stac
+	;交换RSP
 	mov   qword ptr gs:[10h],rsp
 	mov   rsp,qword ptr gs:[1A8h]
 	push rax
@@ -72,7 +74,9 @@ LStarHookEntry Proc
 	pop rcx
 	pop rbx
 	pop rax
+	;还原rsp
 	mov rsp,qword ptr gs:[10h]
+	;禁止r3访问r0数据
 	clac
 	swapgs
 

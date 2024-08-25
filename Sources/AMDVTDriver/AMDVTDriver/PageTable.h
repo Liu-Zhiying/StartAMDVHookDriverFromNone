@@ -4,6 +4,8 @@
 #include "Basic.h"
 #include "SVM.h"
 
+constexpr ULONG PT_TAG = MAKE_TAG('p', 't', 'm', ' ');
+
 //见https://www.iaik.tugraz.at/teaching/materials/os/tutorials/paging-on-intel-x86-64/
 typedef union
 {
@@ -115,7 +117,7 @@ struct PageTableRecord
 template<SIZE_TYPE bucketCnt>
 class PageTableRecordBacket
 {
-	KernelVector<PageTableRecord> data[bucketCnt];
+	KernelVector<PageTableRecord, PT_TAG> data[bucketCnt];
 
 	static SIZE_TYPE GetBucketIdx(PTR_TYPE pa)
 	{
@@ -134,7 +136,7 @@ public:
 	PageTableRecordBacket& operator=(PageTableRecordBacket&& other)
 	{
 		for (SIZE_TYPE i = 0; i < bucketCnt; i++)
-			data[i] = static_cast<KernelVector<PageTableRecord>&&>(other.data[i]);
+			data[i] = static_cast<KernelVector<PageTableRecord, PT_TAG>&&>(other.data[i]);
 		return *this;
 	}
 
@@ -154,7 +156,7 @@ public:
 	#pragma code_seg()
 	PTR_TYPE FindVaFromPa(PTR_TYPE pa) const
 	{
-		const KernelVector<PageTableRecord>& bucket = data[GetBucketIdx(pa)];
+		const KernelVector<PageTableRecord, PT_TAG>& bucket = data[GetBucketIdx(pa)];
 		for (SIZE_TYPE idx = 0; idx < bucket.Length(); ++idx)
 		{
 			if (bucket[idx].pPhyAddr == pa)
@@ -191,7 +193,7 @@ public:
 	#pragma code_seg()
 	PageTableRecord& operator[](SIZE_TYPE idx)
 	{
-		KernelVector<PageTableRecord>* pBucket = NULL;
+		KernelVector<PageTableRecord, PT_TAG>* pBucket = NULL;
 		SIZE_TYPE cnt = 0;
 		for (auto& bucket : data)
 		{
@@ -208,6 +210,21 @@ public:
 			KeBugCheck(MEMORY_MANAGEMENT);
 		return (*pBucket)[idx - cnt];
 	}
+	#pragma code_seg()
+	bool RemoveByPa(PTR_TYPE pa)
+	{
+		SIZE_TYPE idx = GetBucketIdx(pa);
+		KernelVector<PageTableRecord, PT_TAG>& bucket = data[idx];
+		for (SIZE_TYPE i = 0; i < bucket.Length(); ++i)
+		{
+			if (bucket[i].pPhyAddr == pa)
+			{
+				bucket.Remove(i);
+				return true;
+			}
+		}
+		return false;
+	}
 };
 
 using PageTableRecords = PageTableRecordBacket<0x20>;
@@ -216,8 +233,12 @@ using PageTableRecords = PageTableRecordBacket<0x20>;
 class CoreNptPageTableManager
 {
 	PTR_TYPE pNptPageTable;
-	PageTableRecords level123Records;
-	PageTableRecords level4Records;
+	PageTableRecords level34Records;
+	PageTableRecords level2Records;
+	PageTableRecords level1Records;
+
+	//level代表页表的级数
+	PVOID FindPageTableForPhyAddr(PTR_TYPE pa, UINT32 level) const;
 
 public:
 	#pragma code_seg()
@@ -229,8 +250,9 @@ public:
 	CoreNptPageTableManager& operator=(CoreNptPageTableManager&& other)
 	{
 		pNptPageTable = other.pNptPageTable;
-		level123Records = static_cast<PageTableRecords&&>(other.level123Records);
-		level4Records = static_cast<PageTableRecords&&>(other.level4Records);
+		level34Records = static_cast<PageTableRecords&&>(other.level34Records);
+		level2Records = static_cast<PageTableRecords&&>(other.level2Records);
+		level1Records = static_cast<PageTableRecords&&>(other.level1Records);
 		other.pNptPageTable = INVALID_ADDR;
 		return *this;
 	}
@@ -239,6 +261,18 @@ public:
 	#pragma code_seg()
 	~CoreNptPageTableManager() { Deinit(); }
 	NTSTATUS FixPageFault(PTR_TYPE startAddr, PTR_TYPE endAddr);
+	//isUsing 为 false 代表还原大页
+	NTSTATUS UsingSmallPageForPhyAddr(PTR_TYPE phyAddr, bool isUsing);
+	//小页映射函数
+	NTSTATUS MapSmallPageForPhyAddr(PTR_TYPE begPhyAddr, PTR_TYPE endPhyAddr);
+	//交换小页的最终物理地址
+	NTSTATUS SwapSmallPageForPhyAddr(PTR_TYPE phyAddr1, PTR_TYPE phyAddr2);
+	//获取指定物理地址对应的NPT页表的最终地址
+	NTSTATUS GetNptFinalAddrForPhyAddr(PTR_TYPE phyAddr, PTR_TYPE& pNptFinalAddr, PTR_TYPE& level);
+	//修改所有页表的权限
+	void ChangeAllPageTablePermession(PageTableLevel123Entry entry);
+	//修改特定页表的值
+	NTSTATUS ChangePageTablePermession(PTR_TYPE pa, PageTableLevel123Entry entry, UINT32 level);
 	void Deinit();
 	NTSTATUS BuildNptPageTable();
 	#pragma code_seg()
@@ -261,7 +295,7 @@ public:
 	virtual NTSTATUS Init() override;
 	virtual void Deinit() override;
 	#pragma code_seg()
-	const CoreNptPageTableManager* GetCoreNptPageTables() const { return corePageTables; }
+	CoreNptPageTableManager* GetCoreNptPageTables() { return corePageTables; }
 	SIZE_TYPE GetCoreNptPageTablesCnt() const { return pageTableCnt; }
 	#pragma code_seg()
 	virtual ~PageTableManager() { PageTableManager::Deinit(); }
