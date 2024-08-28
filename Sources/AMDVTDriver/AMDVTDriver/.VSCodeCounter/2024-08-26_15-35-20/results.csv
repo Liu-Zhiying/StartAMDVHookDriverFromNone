@@ -1,0 +1,13 @@
+"filename", "language", "C++", "XML", "comment", "blank", "total"
+"d:\Data\CppCode\StartAMDVHookDriverFromNone\Sources\AMDVTDriver\AMDVTDriver\AMDVTDriver.vcxproj", "XML", 0, 92, 0, 0, 92
+"d:\Data\CppCode\StartAMDVHookDriverFromNone\Sources\AMDVTDriver\AMDVTDriver\Basic.cpp", "C++", 51, 0, 2, 9, 62
+"d:\Data\CppCode\StartAMDVHookDriverFromNone\Sources\AMDVTDriver\AMDVTDriver\Basic.h", "C++", 278, 0, 11, 53, 342
+"d:\Data\CppCode\StartAMDVHookDriverFromNone\Sources\AMDVTDriver\AMDVTDriver\Hook.cpp", "C++", 356, 0, 37, 85, 478
+"d:\Data\CppCode\StartAMDVHookDriverFromNone\Sources\AMDVTDriver\AMDVTDriver\Hook.h", "C++", 481, 0, 53, 85, 619
+"d:\Data\CppCode\StartAMDVHookDriverFromNone\Sources\AMDVTDriver\AMDVTDriver\PageTable.cpp", "C++", 515, 0, 51, 132, 698
+"d:\Data\CppCode\StartAMDVHookDriverFromNone\Sources\AMDVTDriver\AMDVTDriver\PageTable.h", "C++", 260, 0, 66, 22, 348
+"d:\Data\CppCode\StartAMDVHookDriverFromNone\Sources\AMDVTDriver\AMDVTDriver\SVM.cpp", "C++", 521, 0, 80, 123, 724
+"d:\Data\CppCode\StartAMDVHookDriverFromNone\Sources\AMDVTDriver\AMDVTDriver\SVM.h", "C++", 167, 0, 17, 16, 200
+"d:\Data\CppCode\StartAMDVHookDriverFromNone\Sources\AMDVTDriver\AMDVTDriver\Vmcb.h", "C++", 500, 0, 17, 21, 538
+"d:\Data\CppCode\StartAMDVHookDriverFromNone\Sources\AMDVTDriver\AMDVTDriver\main.cpp", "C++", 192, 0, 69, 40, 301
+"Total", "-", 3321, 92, 403, 586, 4402

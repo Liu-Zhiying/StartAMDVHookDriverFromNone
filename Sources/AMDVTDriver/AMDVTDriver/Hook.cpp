@@ -118,12 +118,12 @@ bool NptHookManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGue
 
 	if (exitInfo.fields.present)
 	{
-		KIRQL oldIrql = {};
-
-		KeAcquireSpinLock(&operationLock, &oldIrql);
-
 		if (exitInfo.fields.execute)
 		{
+			KIRQL oldIrql = {};
+
+			KeAcquireSpinLock(&operationLock, &oldIrql);
+
 			//»ñÈ¡CPU IDX
 			UINT32 cpuIdx = pVirtCpuInfo->otherInfo.cpuIdx;
 
@@ -194,9 +194,9 @@ bool NptHookManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGue
 			}
 
 			result = true;
-		}
 
-		KeReleaseSpinLock(&operationLock, oldIrql);
+			KeReleaseSpinLock(&operationLock, oldIrql);
+		}
 	}
 	else
 	{

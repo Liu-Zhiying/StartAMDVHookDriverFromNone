@@ -315,7 +315,7 @@ bool PageTableManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 		PTR_TYPE paStart = pa - pa % PAGE_SIZE;
 		PTR_TYPE paEnd = paStart + PAGE_SIZE;
 
-		if (!NT_SUCCESS(corePageTables[pVirtCpuInfo->otherInfo.cpuIdx].FixPageFault(paStart, paEnd)))
+		if (!NT_SUCCESS(corePageTables[pVirtCpuInfo->otherInfo.cpuIdx].FixPageFault(paStart, paEnd, true)))
 			KeBugCheck(MANUALLY_INITIATED_CRASH);
 
 		result = true;
@@ -397,11 +397,15 @@ PVOID CoreNptPageTableManager::FindPageTableForPhyAddr(PTR_TYPE pa, UINT32 level
 }
 
 #pragma code_seg()
-NTSTATUS CoreNptPageTableManager::FixPageFault(PTR_TYPE startAddr, PTR_TYPE endAddr)
+NTSTATUS CoreNptPageTableManager::FixPageFault(PTR_TYPE startAddr, PTR_TYPE endAddr, bool usingLargePage)
 {
 	constexpr NPT_Level4_Processor smallPageProcessor = GetNptSmallPageProcessor();
+	constexpr NPT_Level4_Processor largePageProcessor = GetNptLargePageProcessor();
 
-	return smallPageProcessor((PageTableLevel4*)pNptPageTable, startAddr, endAddr, level34Records, level2Records, level1Records);
+	if (usingLargePage)
+		return largePageProcessor((PageTableLevel4*)pNptPageTable, startAddr, endAddr, level34Records, level2Records, level1Records);
+	else
+		return smallPageProcessor((PageTableLevel4*)pNptPageTable, startAddr, endAddr, level34Records, level2Records, level1Records);
 }
 
 #pragma code_seg()
@@ -459,7 +463,7 @@ NTSTATUS CoreNptPageTableManager::UsingSmallPageForPhyAddr(PTR_TYPE phyAddr, boo
 #pragma code_seg()
 NTSTATUS CoreNptPageTableManager::MapSmallPageForPhyAddr(PTR_TYPE begPhyAddr, PTR_TYPE endPhyAddr)
 {
-	return FixPageFault(begPhyAddr, endPhyAddr);
+	return FixPageFault(begPhyAddr, endPhyAddr, false);
 }
 
 #pragma code_seg()
@@ -618,7 +622,7 @@ NTSTATUS CoreNptPageTableManager::BuildNptPageTable()
 
 		RtlZeroMemory(pNptLevel4PageTable, sizeof(*pNptLevel4PageTable));
 
-		NPT_Large_Level4_Processor largePageProcessor = GetNptLargePageProcessor();
+		constexpr NPT_Large_Level4_Processor largePageProcessor = GetNptLargePageProcessor();
 
 		//构建页表
 		//初始化时全部使用2MB大页，节约内存同时可以覆盖全部物理地址

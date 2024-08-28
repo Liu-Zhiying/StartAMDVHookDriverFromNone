@@ -6,6 +6,8 @@
 
 constexpr ULONG PT_TAG = MAKE_TAG('p', 't', 'm', ' ');
 
+/*
+//废弃使用的结构
 //见https://www.iaik.tugraz.at/teaching/materials/os/tutorials/paging-on-intel-x86-64/
 typedef union
 {
@@ -45,6 +47,47 @@ typedef union
 		UINT64 ignored2 : 3;
 		UINT64 pagePpn : 28;
 		UINT64 reserved1 : 12; // must be 0
+		UINT64 ignored1 : 11;
+		UINT64 executionDisabled : 1;
+	} fields;
+} PageTableLevel123Entry;
+*/
+
+//新的结构，和弃用结构的区别是pagePpn是40位，原因见amd手册。amd手册中reserved1部分也是pagePpn内容，权限位也做了部分修改
+typedef union
+{
+	UINT64 data;
+	struct
+	{
+		UINT64 present : 1;
+		UINT64 writeable : 1;
+		UINT64 userAccess : 1;
+		UINT64 writeThrough : 1;
+		UINT64 cacheDisabled : 1;
+		UINT64 accessed : 1;
+		UINT64 ignored2 : 6;
+		UINT64 pagePpn : 40;
+		UINT64 ignored1 : 11;
+		UINT64 executionDisabled : 1;
+	} fields;
+} PageTableLevel4Entry;
+
+typedef union
+{
+	UINT64 data;
+	struct
+	{
+		UINT64 present : 1;
+		UINT64 writeable : 1;
+		UINT64 userAccess : 1;
+		UINT64 writeThrough : 1;
+		UINT64 cacheDisabled : 1;
+		UINT64 accessed : 1;
+		UINT64 dirty : 1;
+		UINT64 size : 1;
+		UINT64 global : 1;
+		UINT64 ignored2 : 3;
+		UINT64 pagePpn : 40;
 		UINT64 ignored1 : 11;
 		UINT64 executionDisabled : 1;
 	} fields;
@@ -260,7 +303,7 @@ public:
 	CoreNptPageTableManager() : pNptPageTable(INVALID_ADDR) {}
 	#pragma code_seg()
 	~CoreNptPageTableManager() { Deinit(); }
-	NTSTATUS FixPageFault(PTR_TYPE startAddr, PTR_TYPE endAddr);
+	NTSTATUS FixPageFault(PTR_TYPE startAddr, PTR_TYPE endAddr, bool usingLargePage);
 	//isUsing 为 false 代表还原大页
 	NTSTATUS UsingSmallPageForPhyAddr(PTR_TYPE phyAddr, bool isUsing);
 	//小页映射函数
