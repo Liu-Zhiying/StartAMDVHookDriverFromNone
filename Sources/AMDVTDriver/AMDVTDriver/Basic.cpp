@@ -20,7 +20,7 @@ PVOID AllocNonPagedMem(SIZE_TYPE byteCnt, ULONG tag)
 #ifdef _BUILD_WIN_2004
 	return ExAllocatePool2(POOL_FLAG_NON_PAGED, byteCnt, tag);
 #else
-	return ExAllocatePoolWithTag(POOL_TYPE::NonPagedPool, byteCnt, ptTag);
+	return ExAllocatePoolWithTag(POOL_TYPE::NonPagedPool, byteCnt, tag);
 #endif
 }
 
@@ -58,4 +58,31 @@ void FreeContigousMem(PVOID pMem, ULONG tag)
 {
 	UNREFERENCED_PARAMETER(tag);
 	return MmFreeContiguousMemory(pMem);
+}
+
+#pragma code_seg()
+PVOID AllocExecutableNonPagedMem(SIZE_TYPE byteCnt, ULONG tag)
+{
+#ifdef _BUILD_WIN_2004
+	return ExAllocatePool2(POOL_FLAG_NON_PAGED_EXECUTE, byteCnt, tag);
+#else
+	return ExAllocatePoolWithTag(POOL_TYPE::NonPagedPoolExecute, byteCnt, ptTag);
+#endif
+}
+
+#pragma code_seg()
+void FreeExecutableNonPagedMem(PVOID pMem, ULONG tag)
+{
+	ExFreePoolWithTag(pMem, tag);
+}
+
+#pragma code_seg()
+void WaitForSignleObjectInfinte(PVOID Object, KWAIT_REASON WaitReason, KPROCESSOR_MODE WaitMode, BOOLEAN Alertable)
+{
+	LARGE_INTEGER timeout = { 0 };
+	NTSTATUS status = STATUS_SUCCESS;
+	do
+	{
+		status = KeWaitForSingleObject(Object, WaitReason, WaitMode, Alertable, &timeout);
+	} while (status != STATUS_SUCCESS);
 }

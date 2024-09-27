@@ -6,19 +6,39 @@
 #include "Hook.h"
 #include "PageTable.h"
 
+#pragma code_seg()
 void TestLStarHookCallback()
 {
 	static bool showMessage = false;
 	if (!showMessage)
 	{
-		KdPrint(("Msr Hook OK!\n"));
 		showMessage = true;
+		KdPrint(("Msr Hook OK!\n"));
 	}
 }
 
-void NptHookTest()
+PVOID pHookMem = NULL;
+
+#pragma code_seg()
+PVOID NTAPI ExAllocatePool2Handler(POOL_FLAGS Flags, SIZE_T NumberOfBytes, ULONG Tag)
 {
-	KdPrint(("Npt Hook OK!\n"));
+	typedef PVOID(*P_ExAllocatePool2)(POOL_FLAGS Flags, SIZE_T NumberOfBytes, ULONG Tag);
+
+	LARGE_INTEGER frequency = {};
+
+	KeQueryPerformanceCounter(&frequency);
+
+	ULONGLONG timeBeg = KeQueryPerformanceCounter(NULL).QuadPart;
+
+	PVOID result = ((P_ExAllocatePool2)pHookMem)(Flags, NumberOfBytes, Tag);
+
+	ULONGLONG timeEnd = KeQueryPerformanceCounter(NULL).QuadPart;
+
+	ULONGLONG timeElapsed = (timeEnd - timeBeg) / (frequency.QuadPart / 1000);
+
+	KdPrint(("time elapsed = %lld\n", timeElapsed));
+	
+	return result;
 }
 
 class GlobalManager : public IManager
@@ -27,7 +47,6 @@ class GlobalManager : public IManager
 	SVMManager svmManager;
 	MsrHookManager<1> msrHookManager;
 	NptHookManager nptHookManager;
-	PVOID pHookMem = NULL;
 public:
 
 	#pragma code_seg("PAGE")
@@ -50,6 +69,7 @@ public:
 	{
 		PAGED_CODE();
 		nptHookManager.SetPageTableManager(&ptManager);
+		svmManager.SetCpuIdInterceptPlugin(&nptHookManager);
 		svmManager.SetNpfInterceptPlugin(&nptHookManager);
 		svmManager.SetBreakpointPlugin(&nptHookManager);
 	}
@@ -68,13 +88,13 @@ public:
 	void HookApi()
 	{
 		PAGED_CODE();
-		/*
-		//测试页表处理性能
-		KdPrint(("GlobalManager::Init(): Test LStar hook\n"));
-		PageTableLevel123Entry entry = {};
 
-		entry.fields.writeable = true;
-		entry.fields.userAccess = true;
+		//测试页表处理性能
+		//KdPrint(("GlobalManager::Init(): Test LStar hook\n"));
+		//PageTableLevel123Entry entry = {};
+
+		//entry.fields.writeable = true;
+		//entry.fields.userAccess = true;
 
 		LARGE_INTEGER frequency = {};
 
@@ -82,14 +102,17 @@ public:
 
 		ULONGLONG timeBeg = KeQueryPerformanceCounter(NULL).QuadPart;
 
-		ptManager.GetCoreNptPageTables()[0].ChangeAllPageTablePermession(entry);
+		//ptManager.GetCoreNptPageTables()[0].ChangeAllPageTablePermession(entry);
+
+		PVOID pMem = AllocPagedMem(200, 0x20202020);
 
 		ULONGLONG timeEnd = KeQueryPerformanceCounter(NULL).QuadPart;
 
-		KdPrint(("time elapsed = %lld\n", (timeEnd - timeBeg) / (frequency.QuadPart / 1000)));
-		*/
-		/*
-		UINT8 hookCode[] = { 0x48,0xb8,0x88,0x77,0x66,0x55,0x44,0x33,0x22,0x11,0xff,0xf0,0x48,0x89,0x5c,0x24,0x08,0x48,0xb8,0x88,0x77,0x66,0x55,0x44,0x33,0x22,0x11,0xff,0xe0,0xc3 };
+		KdPrint(("ExAllocatePool2 non hook time elapsed = %lld\n", (timeEnd - timeBeg) / (frequency.QuadPart / 1000)));
+
+		if (pMem != NULL)
+			ExFreePoolWithTag(pMem, 0x20202020);
+		
 		UNICODE_STRING apiName = {};
 		RtlInitUnicodeString(&apiName, L"ExAllocatePool2");
 		PVOID apiVirtAddr = MmGetSystemRoutineAddress(&apiName);
@@ -106,6 +129,10 @@ public:
 
 		KdPrint(("GlobalManager::Init(): ExAllocatePool2 physical address: %llx\n", apiPhyAddr));
 
+		UINT8 hookCode[] = { 0x48, 0x89, 0x5c, 0x24, 0x08, 0xff, 0x25, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+
+		*((PVOID*)(hookCode + 0xb)) = ((UINT8*)apiVirtAddr) + 0x5;
+		
 		pHookMem = ExAllocatePool2(POOL_FLAG_NON_PAGED_EXECUTE, sizeof(hookCode), 0x22);
 		if (pHookMem == NULL)
 		{
@@ -113,19 +140,13 @@ public:
 			return;
 		}
 
-		RtlCopyMemory(hookCode, pHookMem, sizeof(hookCode));
-		PVOID* pTemp = (PVOID*)pHookMem + 0x2;
-		*pTemp = NptHookTest;
-
-		pTemp = (PVOID*)pHookMem + 0x14;
-		*pTemp = (PUINT8)apiVirtAddr + 0x5;
+		RtlCopyMemory(pHookMem, hookCode, sizeof(hookCode));
 
 		HookRecord record = {};
 		record.pOriginVirtAddr = apiVirtAddr;
-		record.pGotoVirtAddr = pHookMem;
+		record.pGotoVirtAddr = ExAllocatePool2Handler;
 
 		nptHookManager.AddHook(record);
-		*/
 	}
 
 	#pragma code_seg("PAGE")
@@ -146,7 +167,7 @@ public:
 		do
 		{
 
-			SetMsrHookParameters();
+			//SetMsrHookParameters();
 
 			status = msrHookManager.Init();
 			if (!NT_SUCCESS(status))
@@ -168,7 +189,7 @@ public:
 			if (!NT_SUCCESS(status))
 				break;
 
-			EnableMsrHook();
+			//EnableMsrHook();
 
 			HookApi();
 
@@ -252,6 +273,7 @@ extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject,
 	UNICODE_STRING symLinkName;
 	RtlInitUnicodeString(&devName, L"\\Device\\AMDVTDriver");
 	RtlInitUnicodeString(&symLinkName, L"\\DosDevices\\AMDVTDriver");
+
 	do
 	{
 		KdPrint(("DriverEntry(): Starting AMD-V Driver\n"));

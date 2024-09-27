@@ -281,7 +281,7 @@ class CoreNptPageTableManager
 	PageTableRecords level1Records;
 
 	//level代表页表的级数
-	PVOID FindPageTableForPhyAddr(PTR_TYPE pa, UINT32 level) const;
+	PVOID FindPageTableForByAddr(PTR_TYPE pa, UINT32 level) const;
 
 public:
 	#pragma code_seg()
@@ -305,11 +305,11 @@ public:
 	~CoreNptPageTableManager() { Deinit(); }
 	NTSTATUS FixPageFault(PTR_TYPE startAddr, PTR_TYPE endAddr, bool usingLargePage);
 	//isUsing 为 false 代表还原大页
-	NTSTATUS UsingSmallPageForPhyAddr(PTR_TYPE phyAddr, bool isUsing);
+	NTSTATUS UsingSmallPage(PTR_TYPE phyAddr, bool isUsing);
 	//小页映射函数
-	NTSTATUS MapSmallPageForPhyAddr(PTR_TYPE begPhyAddr, PTR_TYPE endPhyAddr);
+	NTSTATUS MapSmallPageByPhyAddr(PTR_TYPE begPhyAddr, PTR_TYPE endPhyAddr);
 	//交换小页的最终物理地址
-	NTSTATUS SwapSmallPageForPhyAddr(PTR_TYPE phyAddr1, PTR_TYPE phyAddr2);
+	NTSTATUS SwapSmallPagePpn(PTR_TYPE phyAddr1, PTR_TYPE phyAddr2);
 	//获取指定物理地址对应的NPT页表的最终地址
 	NTSTATUS GetNptFinalAddrForPhyAddr(PTR_TYPE phyAddr, PTR_TYPE& pNptFinalAddr, PTR_TYPE& level);
 	//修改所有页表的权限

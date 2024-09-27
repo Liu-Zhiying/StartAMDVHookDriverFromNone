@@ -704,7 +704,14 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 	}
 	case VMEXIT_REASON_VMRUN:
 	{
-		KeBugCheck(MANUALLY_INITIATED_CRASH);
+		//注入断点异常由guest处理
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.data = 0;
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vector = 3;
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.type = 3;
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vaild = 1;
+		pVMMVirtCpuInfo->guestVmcb.statusFields.rip = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
+
+		//KeBugCheck(MANUALLY_INITIATED_CRASH);
 		break;
 	}
 	case VMEXIT_REASON_NPF:

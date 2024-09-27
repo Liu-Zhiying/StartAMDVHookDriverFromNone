@@ -78,6 +78,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Basic.h" />
+    <ClInclude Include="CasLockers.h" />
     <ClInclude Include="Hook.h" />
     <ClInclude Include="PageTable.h" />
     <ClInclude Include="SVM.h" />

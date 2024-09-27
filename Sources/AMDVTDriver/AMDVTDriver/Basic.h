@@ -75,6 +75,11 @@ PVOID AllocPagedMem(SIZE_TYPE byteCnt, ULONG tag);
 void FreePagedMem(PVOID pMem, ULONG tag);
 PVOID AllocContiguousMem(SIZE_TYPE byteCnt, ULONG tag);
 void FreeContigousMem(PVOID pMem, ULONG tag);
+PVOID AllocExecutableNonPagedMem(SIZE_TYPE byteCnt, ULONG tag);
+void FreeExecutableNonPagedMem(PVOID pMem, ULONG tag);
+
+//循环使用0超时等待对象知道成功，这样设计是为了可以在DISPATCH_LEVEL下可以等待
+void WaitForSignleObjectInfinte(PVOID Object, KWAIT_REASON WaitReason, KPROCESSOR_MODE WaitMode, BOOLEAN Alertable);
 
 enum MemType
 {

@@ -337,7 +337,7 @@ PVOID PageTableManager::GetNCr3ForCore(UINT32 cpuIdx)
 }
 
 #pragma code_seg()
-PVOID CoreNptPageTableManager::FindPageTableForPhyAddr(PTR_TYPE pa, UINT32 level) const
+PVOID CoreNptPageTableManager::FindPageTableForByAddr(PTR_TYPE pa, UINT32 level) const
 {
 	PVOID result = (PVOID)INVALID_ADDR;
 	PTR_TYPE tempPa = INVALID_ADDR;
@@ -409,7 +409,7 @@ NTSTATUS CoreNptPageTableManager::FixPageFault(PTR_TYPE startAddr, PTR_TYPE endA
 }
 
 #pragma code_seg()
-NTSTATUS CoreNptPageTableManager::UsingSmallPageForPhyAddr(PTR_TYPE phyAddr, bool isUsing)
+NTSTATUS CoreNptPageTableManager::UsingSmallPage(PTR_TYPE phyAddr, bool isUsing)
 {
 	NTSTATUS status = STATUS_SUCCESS;
 	PageTableLevel123* pTargetPageTable = (PageTableLevel123*)INVALID_ADDR;
@@ -423,7 +423,7 @@ NTSTATUS CoreNptPageTableManager::UsingSmallPageForPhyAddr(PTR_TYPE phyAddr, boo
 			break;
 		}
 
-		pTargetPageTable = (PageTableLevel123*)FindPageTableForPhyAddr(phyAddr, 2);
+		pTargetPageTable = (PageTableLevel123*)FindPageTableForByAddr(phyAddr, 2);
 
 		if (pTargetPageTable == (PageTableLevel123*)INVALID_ADDR)
 		{
@@ -433,12 +433,20 @@ NTSTATUS CoreNptPageTableManager::UsingSmallPageForPhyAddr(PTR_TYPE phyAddr, boo
 
 		if (isUsing)
 		{
+			if (pTargetPageTable->entries[pageTableIdx].fields.present &&
+				!pTargetPageTable->entries[pageTableIdx].fields.size)
+				return STATUS_SUCCESS;
+
 			//更改属性值到未映射状态
 			pTargetPageTable->entries[pageTableIdx].fields.present = false;
 			pTargetPageTable->entries[pageTableIdx].fields.size = false;
 		}
 		else
 		{
+			if (pTargetPageTable->entries[pageTableIdx].fields.present &&
+				pTargetPageTable->entries[pageTableIdx].fields.size)
+				return STATUS_SUCCESS;
+
 			PTR_TYPE finalPa = GET_PHYADDR_FROM_PFN(pTargetPageTable->entries[pageTableIdx].fields.pagePpn);
 			PTR_TYPE finalVa = level1Records.FindVaFromPa(finalPa);
 
@@ -461,26 +469,26 @@ NTSTATUS CoreNptPageTableManager::UsingSmallPageForPhyAddr(PTR_TYPE phyAddr, boo
 }
 
 #pragma code_seg()
-NTSTATUS CoreNptPageTableManager::MapSmallPageForPhyAddr(PTR_TYPE begPhyAddr, PTR_TYPE endPhyAddr)
+NTSTATUS CoreNptPageTableManager::MapSmallPageByPhyAddr(PTR_TYPE begPhyAddr, PTR_TYPE endPhyAddr)
 {
 	return FixPageFault(begPhyAddr, endPhyAddr, false);
 }
 
 #pragma code_seg()
-NTSTATUS CoreNptPageTableManager::SwapSmallPageForPhyAddr(PTR_TYPE phyAddr1, PTR_TYPE phyAddr2)
+NTSTATUS CoreNptPageTableManager::SwapSmallPagePpn(PTR_TYPE phyAddr1, PTR_TYPE phyAddr2)
 {
 	PTR_TYPE pageTableIdx1 = ((phyAddr1 >> 12) & 0x1ff);
 	PTR_TYPE pageTableIdx2 = ((phyAddr2 >> 12) & 0x1ff);
-	PageTableLevel123* pageTable1 = (PageTableLevel123*)FindPageTableForPhyAddr(phyAddr1, 1);
-	PageTableLevel123* pageTable2 = (PageTableLevel123*)FindPageTableForPhyAddr(phyAddr2, 1);
+	PageTableLevel123* pageTable1 = (PageTableLevel123*)FindPageTableForByAddr(phyAddr1, 1);
+	PageTableLevel123* pageTable2 = (PageTableLevel123*)FindPageTableForByAddr(phyAddr2, 1);
 	PageTableLevel123Entry swapEntry = {};
 
 	if (pageTable1 == (PageTableLevel123*)INVALID_ADDR || pageTable2 == (PageTableLevel123*)INVALID_ADDR)
 		return STATUS_INVALID_PARAMETER;
 
 	swapEntry = pageTable1->entries[pageTableIdx1];
-	pageTable1->entries[pageTableIdx1] = pageTable2->entries[pageTableIdx2];
-	pageTable2->entries[pageTableIdx2] = swapEntry;
+	pageTable1->entries[pageTableIdx1].fields.pagePpn = pageTable2->entries[pageTableIdx2].fields.pagePpn;
+	pageTable2->entries[pageTableIdx2].fields.pagePpn = swapEntry.fields.pagePpn;
 
 	return STATUS_SUCCESS;
 }
@@ -488,8 +496,8 @@ NTSTATUS CoreNptPageTableManager::SwapSmallPageForPhyAddr(PTR_TYPE phyAddr1, PTR
 #pragma code_seg()
 NTSTATUS CoreNptPageTableManager::GetNptFinalAddrForPhyAddr(PTR_TYPE phyAddr, PTR_TYPE& pNptFinalAddr, PTR_TYPE& level)
 {
-	PageTableLevel123* pageTable1 = (PageTableLevel123*)FindPageTableForPhyAddr(phyAddr, 2);
-	PageTableLevel123* pageTable2 = (PageTableLevel123*)FindPageTableForPhyAddr(phyAddr, 1);
+	PageTableLevel123* pageTable1 = (PageTableLevel123*)FindPageTableForByAddr(phyAddr, 2);
+	PageTableLevel123* pageTable2 = (PageTableLevel123*)FindPageTableForByAddr(phyAddr, 1);
 
 	if (pageTable1 == (PageTableLevel123*)INVALID_ADDR && pageTable2 == (PageTableLevel123*)INVALID_ADDR)
 		return STATUS_UNSUCCESSFUL;
@@ -557,7 +565,7 @@ void CoreNptPageTableManager::ChangeAllPageTablePermession(PageTableLevel123Entr
 NTSTATUS CoreNptPageTableManager::ChangePageTablePermession(PTR_TYPE pa, PageTableLevel123Entry entry, UINT32 level)
 {
 
-	PageTableLevel123* pageTable = (PageTableLevel123*)FindPageTableForPhyAddr(pa, level);
+	PageTableLevel123* pageTable = (PageTableLevel123*)FindPageTableForByAddr(pa, level);
 	PageTableLevel123Entry* pTargetEntry = NULL;
 
 	if (pageTable == (PageTableLevel123*)INVALID_ADDR)
