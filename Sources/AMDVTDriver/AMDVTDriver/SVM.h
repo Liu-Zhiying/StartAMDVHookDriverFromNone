@@ -112,6 +112,15 @@ public:
 	virtual ~IBreakprointInterceptPlugin() {}
 };
 
+class IInvalidOpcodeInterceptPlugin
+{
+public:
+	virtual bool HandleInvalidOpcode(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
+		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) = 0;
+	#pragma code_seg()
+	virtual ~IInvalidOpcodeInterceptPlugin() {}
+};
+
 class INCr3Provider
 {
 public:
@@ -170,6 +179,7 @@ class SVMManager : public IManager
 	INpfInterceptPlugin* pNpfInterceptPlugin;
 	IBreakprointInterceptPlugin* pBreakpointInterceptPlugin;
 	INCr3Provider* pNCr3Provider;
+	IInvalidOpcodeInterceptPlugin* pInvalidOpcodeInterceptPlugin;
 	NTSTATUS EnterVirtualization();
 	void LeaveVirtualization();
 	
@@ -177,7 +187,7 @@ public:
 	//请勿调用该函数，这个函数由VMM自动调用
 	void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr);
 	#pragma code_seg("PAGE")
-	SVMManager() : pVirtCpuInfo(NULL), cpuCnt(0), pMsrInterceptPlugin(NULL), pCpuIdInterceptPlugin(NULL), pNpfInterceptPlugin(NULL), pNCr3Provider(NULL), pBreakpointInterceptPlugin(NULL) { PAGED_CODE(); }
+	SVMManager() : pVirtCpuInfo(NULL), cpuCnt(0), pMsrInterceptPlugin(NULL), pCpuIdInterceptPlugin(NULL), pNpfInterceptPlugin(NULL), pNCr3Provider(NULL), pBreakpointInterceptPlugin(NULL), pInvalidOpcodeInterceptPlugin(NULL) { PAGED_CODE(); }
 	#pragma code_seg("PAGE")
 	void SetMsrInterceptPlugin(IMsrInterceptPlugin* _pMsrInterceptPlugin) { PAGED_CODE(); pMsrInterceptPlugin = _pMsrInterceptPlugin; }
 	#pragma code_seg("PAGE")
@@ -188,6 +198,8 @@ public:
 	void SetNCr3Provider(INCr3Provider* _provider) { pNCr3Provider = _provider; }
 	#pragma code_seg("PAGE")
 	void SetBreakpointPlugin(IBreakprointInterceptPlugin* _pBreakpointInterceptPlugin) { PAGED_CODE(); pBreakpointInterceptPlugin = _pBreakpointInterceptPlugin; }
+	#pragma code_seg("PAGE")
+	void SetINvalidOpcodePlugin(IInvalidOpcodeInterceptPlugin* _pInvalidOpcodeInterceptPlugin) { PAGED_CODE(); pInvalidOpcodeInterceptPlugin = _pInvalidOpcodeInterceptPlugin; }
 	static SVMStatus CheckSVM();
 	virtual NTSTATUS Init() override;
 	virtual void Deinit() override;

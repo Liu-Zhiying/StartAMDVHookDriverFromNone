@@ -516,9 +516,9 @@ NTSTATUS CoreNptPageTableManager::GetNptFinalAddrForPhyAddr(PTR_TYPE phyAddr, PT
 	return STATUS_SUCCESS;
 }
 
+#pragma code_seg()
 void ChangeAllPageTablePremessionSub(PageTableLevel123* pPageTable, UINT32 level, PageTableRecords& level34Records, PageTableRecords& level2Records, PageTableRecords& level1Records, PageTableLevel123Entry entry)
 {
-
 	for (SIZE_TYPE idx = 0; idx < GetArrayElementCnt(pPageTable->entries); ++idx)
 	{
 		if (level == 1 || pPageTable->entries[idx].fields.size)
@@ -564,7 +564,6 @@ void CoreNptPageTableManager::ChangeAllPageTablePermession(PageTableLevel123Entr
 #pragma code_seg()
 NTSTATUS CoreNptPageTableManager::ChangePageTablePermession(PTR_TYPE pa, PageTableLevel123Entry entry, UINT32 level)
 {
-
 	PageTableLevel123* pageTable = (PageTableLevel123*)FindPageTableForByAddr(pa, level);
 	PageTableLevel123Entry* pTargetEntry = NULL;
 

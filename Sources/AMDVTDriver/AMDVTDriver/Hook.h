@@ -24,8 +24,19 @@ constexpr UINT32 ADD_LEVEL3_REF_ITEM_CPUID_SUBFUNCTION = 0x00000007;
 constexpr UINT32 REMOVE_LEVEL3_REF_ITEM_CPUID_SUBFUNCTION = 0x00000008;
 constexpr UINT32 ADD_SWAPPAGE_REF_CNT_CPUID_SUBFUNCTION = 0x00000009;
 constexpr UINT32 REMOVE_SWAPPAGE_REF_CNT_CPUID_SUBFUNCTION = 0x0000000A;
+constexpr UINT32 ALLOC_NONPAGED_EXECUTEABLE_MEMORY_CPUID_SUBFUNCTION = 0x0000000B;
+constexpr UINT32 FREE_NONPAGED_EXECUTEABLE_MEMORY_CPUID_SUBFUNCTION = 0x0000000C;
+constexpr UINT32 OPERATE_REF_COUNT_CPUID_SUBFUNCTION = 0x0000000D;
+constexpr UINT32 COPY_SWAPPAGE_REF_CNT_CPUID_SUBFUNCTION = 0x0000000E;
+constexpr UINT32 COPY_LEVEL3_REF_ITEM_CPUID_SUBFUNCTION = 0x0000000F;
+constexpr UINT32 COPY_HOOKRECORD_CPUID_SUBFUNCTION = 0x00000010;
+constexpr UINT32 COPY_SHARED_DATA_CPUID_SUBFUNCTION = 0x00000011;
+constexpr UINT32 DESTROY_SHARED_DATA_COPY_CPUID_SUBFUNCTION = 0x00000012;
 
 constexpr UINT32 HOOK_TAG = MAKE_TAG('h', 'o', 'o', 'k');
+
+//int 3 opcode
+constexpr UINT32 NptHookCode = 0xCC;
 
 //辅助函数，用于跳转到VMM处理MSR HOOK参数的修改
 extern "C" void SetRegsThenCpuid(PTR_TYPE* rax, PTR_TYPE* rbx, PTR_TYPE* rcx, PTR_TYPE* rdx);
@@ -69,6 +80,25 @@ struct SwapSmallPagePpnInfo
 	PTR_TYPE physicalAddress1;
 	PTR_TYPE physicalAddress2;
 	ULONG cpuIdx;
+};
+
+enum RefCountOperationType
+{
+	IncrementCount,
+	DecrementCount
+};
+
+enum RefCountOperationObjectType
+{
+	SwapPageRefCntObject,
+	Level3RefObject,
+};
+
+struct OperateRefCountInfo
+{
+	SIZE_TYPE idx;
+	RefCountOperationType operationType;
+	RefCountOperationObjectType objectType;
 };
 
 const UINT32 INVALID_MSRNUM = (UINT32)-1;
@@ -134,6 +164,7 @@ void MsrHookManager<msrHookCount>::SetHookMsrs(UINT32(&msrNums)[msrHookCount])
 template<SIZE_TYPE msrHookCount>
 NTSTATUS MsrHookManager<msrHookCount>::Init()
 {
+	PAGED_CODE();
 	NTSTATUS status = STATUS_SUCCESS;
 	if (!inited)
 	{
@@ -160,6 +191,7 @@ NTSTATUS MsrHookManager<msrHookCount>::Init()
 template <SIZE_TYPE msrHookCount>
 void MsrHookManager<msrHookCount>::Deinit()
 {
+	PAGED_CODE();
 	if (inited)
 	{
 		PROCESSOR_NUMBER processorNum = {};
@@ -460,6 +492,7 @@ inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo,
 template<SIZE_TYPE msrHookCount>
 inline void MsrHookManager<msrHookCount>::EnableMsrHook(UINT32 msrNum, PTR_TYPE realValue)
 {
+	PAGED_CODE();
 	PROCESSOR_NUMBER processorNum = {};
 	GROUP_AFFINITY affinity = {}, oldAffinity = {};
 	MsrOperationParameter optParam = {};
@@ -513,6 +546,7 @@ inline void MsrHookManager<msrHookCount>::EnableMsrHook(UINT32 msrNum, PTR_TYPE 
 template<SIZE_TYPE msrHookCount>
 inline void MsrHookManager<msrHookCount>::DisableMsrHook(UINT32 msrNum, bool writeFakeValueToMsr)
 {
+	PAGED_CODE();
 	PROCESSOR_NUMBER processorNum = {};
 	GROUP_AFFINITY affinity = {}, oldAffinity = {};
 	MsrOperationParameter optParam = {};
@@ -554,6 +588,7 @@ inline void MsrHookManager<msrHookCount>::DisableMsrHook(UINT32 msrNum, bool wri
 template<SIZE_TYPE msrCnt>
 void EnableLStrHook(MsrHookManager<msrCnt>* pMsrHookManager, pLStarHookCallback pCallback)
 {
+	PAGED_CODE();
 	extern void SetLStrHookEntryParameters(PTR_TYPE oldEntry, PTR_TYPE pCallback);
 	extern PTR_TYPE GetLStarHookEntry();
 
@@ -574,6 +609,7 @@ void EnableLStrHook(MsrHookManager<msrCnt>* pMsrHookManager, pLStarHookCallback 
 template<SIZE_TYPE msrCnt>
 void DisableLStrHook(MsrHookManager<msrCnt>* pMsrHookManager)
 {
+	PAGED_CODE();
 	pMsrHookManager->DisableMsrHook(IA32_MSR_LSTAR);
 }
 
@@ -585,7 +621,6 @@ struct SmallPageLevel3RefCnt
 	SIZE_TYPE refCnt;
 	#pragma code_seg()
 	SmallPageLevel3RefCnt() : level3PhyAddr(INVALID_ADDR), refCnt(0) {}
-	SmallPageLevel3RefCnt(PTR_TYPE _level3PhyAddr, SIZE_TYPE _refCnt) : level3PhyAddr(_level3PhyAddr), refCnt(_refCnt) {}
 };
 
 //交换页的记录
@@ -598,7 +633,6 @@ struct SwapPageRefCnt
 	SIZE_TYPE refCnt;
 	#pragma code_seg()
 	SwapPageRefCnt() : pOriginVirtAddr(NULL), pSwapVirtAddr(NULL), refCnt(0) {}
-	SwapPageRefCnt(PVOID _pOriginVirtAddr, PVOID _pSwapVirtAddr, SIZE_TYPE _refCnt) : pOriginVirtAddr(_pOriginVirtAddr), pSwapVirtAddr(_pSwapVirtAddr), refCnt(_refCnt) {}
 };
 
 //hook条目记录
@@ -612,6 +646,32 @@ struct HookRecord
 	HookRecord() : pOriginVirtAddr(NULL), pGotoVirtAddr(NULL) {}
 };
 
+class NptHookSharedData
+{
+public:
+	KernelVector<SmallPageLevel3RefCnt, HOOK_TAG> level3Refs;
+	KernelVector<SwapPageRefCnt, HOOK_TAG> swapPageRefs;
+	KernelVector<HookRecord, HOOK_TAG> hookRecords;
+
+	SIZE_TYPE FindHookRecordByOriginVirtAddr(PVOID pOriginAddr) const;
+	SIZE_TYPE FindSmallPageLevel3RefCntByPhyAddr(PTR_TYPE phyAddr) const;
+	SIZE_TYPE FindSwapPageRefCntByPhyAddr(PTR_TYPE phyAddr) const;
+	SIZE_TYPE FindSwapPageRefCntByOriginVirtAddr(PVOID pOriginAddr) const;
+
+	NptHookSharedData() = default;
+	~NptHookSharedData() = default;
+
+	//默认拷贝和移动函数
+	#pragma code_seg("PAGE")
+	NptHookSharedData(const NptHookSharedData&) = default;
+	#pragma code_seg("PAGE")
+	NptHookSharedData& operator=(const NptHookSharedData&) = default;
+	#pragma code_seg("PAGE")
+	NptHookSharedData(NptHookSharedData&&) = default;
+	#pragma code_seg("PAGE")
+	NptHookSharedData& operator=(NptHookSharedData&&) = default;
+};
+
 //每个核心的NPT HOOK状态
 struct CoreNptHookStatus
 {
@@ -622,25 +682,18 @@ struct CoreNptHookStatus
 	};
 	PremissionStatus premissionStatus;
 	PTR_TYPE pLastActiveHookPageVirtAddr;
-
+	const NptHookSharedData* pSharedData;
 public:
 	#pragma code_seg()
-	CoreNptHookStatus() : premissionStatus(HookPageNotExecuted), pLastActiveHookPageVirtAddr(NULL) {}
+	CoreNptHookStatus() : premissionStatus(HookPageNotExecuted), pLastActiveHookPageVirtAddr(NULL), pSharedData(NULL) {}
 };
 
 class NptHookManager : public IManager, public IBreakprointInterceptPlugin, public INpfInterceptPlugin, public ICpuidInterceptPlugin
 {
-	KernelVector<SmallPageLevel3RefCnt, HOOK_TAG> level3Refs;
-	KernelVector<SwapPageRefCnt, HOOK_TAG> swapPageRefs;
-	KernelVector<HookRecord, HOOK_TAG> hookRecords;
+	NptHookSharedData sharedData;
+	NptHookSharedData* pSharedDataCopy;
 	KernelVector<CoreNptHookStatus, HOOK_TAG> coreNptHookStatus;
-	ReadWriteLock locker;
 	PageTableManager* pPageTableManager;
-
-	SIZE_TYPE FindHookRecordByOriginVirtAddr(PVOID pOriginAddr);
-	SIZE_TYPE FindSmallPageLevel3RefCntByPhyAddr(PTR_TYPE phyAddr);
-	SIZE_TYPE FindSwapPageRefCntByPhyAddr(PTR_TYPE phyAddr);
-	SIZE_TYPE FindSwapPageRefCntByOriginVirtAddr(PVOID pOriginAddr);
 
 	NTSTATUS ChangeLargePageToSmallPage(PTR_TYPE pOriginLevel3PhyAddr);
 	NTSTATUS ChangeSmallPageToLargePage(PTR_TYPE pOriginLevel3PhyAddr);
@@ -649,10 +702,11 @@ class NptHookManager : public IManager, public IBreakprointInterceptPlugin, publ
 
 	NTSTATUS CancelHookOperation(const SwapPageRefCnt& swapPageInfo);
 
-public:
+	void SyncSharedData();
 
+public:
 	#pragma code_seg("PAGE")
-	void SetPageTableManager(PageTableManager* _pPageTableManager) { pPageTableManager = _pPageTableManager; }
+	void SetPageTableManager(PageTableManager* _pPageTableManager) { PAGED_CODE(); pPageTableManager = _pPageTableManager; }
 	virtual bool HandleBreakpoint(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
 	virtual bool HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
@@ -660,13 +714,13 @@ public:
 	virtual bool HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
 	#pragma code_seg("PAGE")
-	NptHookManager() : pPageTableManager(NULL) {}
+	NptHookManager() : pPageTableManager(NULL), pSharedDataCopy(NULL) { PAGED_CODE(); }
 	NTSTATUS AddHook(const HookRecord& record);
 	NTSTATUS RemoveHook(PVOID pHookOriginVirtAddr);
 	virtual NTSTATUS Init() override;
 	virtual void Deinit() override;
 	#pragma code_seg("PAGE")
-	~NptHookManager() {}
+	~NptHookManager() { PAGED_CODE(); }
 };
 
 #endif

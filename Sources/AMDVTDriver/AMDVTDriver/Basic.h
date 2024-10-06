@@ -51,6 +51,14 @@ void CallDestroyer(T* pObj)
 	delete (0, pObj);
 }
 
+//placement new 拷贝构造
+#pragma code_seg()
+template<typename T>
+void CallCopyConstructor(T* pDest, const T& pSrc)
+{
+	new (pDest) T(pSrc);
+}
+
 //对于驱动各个组件的一个抽象
 class IManager
 {
@@ -90,6 +98,7 @@ enum MemType
 
 constexpr PHYSICAL_ADDRESS HIGHEST_PHY_ADDR = { (ULONG)-1,-1 };
 constexpr PTR_TYPE INVALID_ADDR = (PTR_TYPE)-1;
+constexpr SIZE_TYPE INVALID_INDEX = (SIZE_TYPE)-1;
 
 constexpr UINT32 IA32_MSR_EFER = 0xc0000080;
 constexpr UINT32 IA32_MSR_PAT = 0x00000277;
@@ -129,6 +138,9 @@ public:
 
 	KernelVector(KernelVector&& container);
 	KernelVector& operator=(KernelVector&& container);
+
+	KernelVector(const KernelVector& container);
+	KernelVector& operator=(const KernelVector& container);
 
 	void PushBack(ElementType e);
 	void EmplaceBack(ElementType&& e);
@@ -191,7 +203,7 @@ inline KernelVector<ElementType, allocTag, memType>::~KernelVector()
 template<typename ElementType, UINT32 allocTag, MemType memType>
 inline KernelVector<ElementType, allocTag, memType>::KernelVector(KernelVector<ElementType, allocTag, memType>&& container)
 {
-	*this = static_cast<KernelVector<ElementType>&&>(container);
+	*this = static_cast<KernelVector<ElementType, allocTag, memType>&&>(container);
 }
 
 #pragma code_seg()
@@ -209,6 +221,30 @@ inline KernelVector<ElementType, allocTag, memType>& KernelVector<ElementType, a
 	container.pData = NULL;
 	container.length = 0;
 	container.capacity = 0;
+
+	return *this;
+}
+
+template<typename ElementType, UINT32 allocTag, MemType memType>
+inline KernelVector<ElementType, allocTag, memType>::KernelVector(const KernelVector& container) : KernelVector()
+{
+	*this = container;
+}
+
+template<typename ElementType, UINT32 allocTag, MemType memType>
+inline KernelVector<ElementType, allocTag, memType>& KernelVector<ElementType, allocTag, memType>::operator=(const KernelVector& container)
+{
+	if (&container == this)
+		return *this;
+
+	Clear();
+
+	SetCapacity(container.Capacity());
+
+	for (SIZE_TYPE idx = 0; idx < container.Length(); ++idx)
+		CallCopyConstructor(pData + idx, container[idx]);
+
+	length = container.Length();
 
 	return *this;
 }
@@ -285,10 +321,10 @@ inline void KernelVector<ElementType, allocTag, memType>::Remove(SIZE_TYPE idx)
 	if (idx >= Length())
 		KeBugCheck(MEMORY_MANAGEMENT);
 
-	CallDestroyer(pData + idx);
-
 	for (SIZE_TYPE idx2 = idx; idx2 < Length() - 1; ++idx2)
 		pData[idx2] = static_cast<ElementType&&>(pData[idx2 + 1]);
+
+	--length;
 }
 
 #pragma code_seg()

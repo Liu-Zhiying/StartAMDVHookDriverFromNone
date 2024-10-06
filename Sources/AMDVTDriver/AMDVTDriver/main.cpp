@@ -24,19 +24,19 @@ PVOID NTAPI ExAllocatePool2Handler(POOL_FLAGS Flags, SIZE_T NumberOfBytes, ULONG
 {
 	typedef PVOID(*P_ExAllocatePool2)(POOL_FLAGS Flags, SIZE_T NumberOfBytes, ULONG Tag);
 
-	LARGE_INTEGER frequency = {};
+	//LARGE_INTEGER frequency = {};
 
-	KeQueryPerformanceCounter(&frequency);
+	//KeQueryPerformanceCounter(&frequency);
 
-	ULONGLONG timeBeg = KeQueryPerformanceCounter(NULL).QuadPart;
+	//ULONGLONG timeBeg = KeQueryPerformanceCounter(NULL).QuadPart;
 
 	PVOID result = ((P_ExAllocatePool2)pHookMem)(Flags, NumberOfBytes, Tag);
 
-	ULONGLONG timeEnd = KeQueryPerformanceCounter(NULL).QuadPart;
+	//ULONGLONG timeEnd = KeQueryPerformanceCounter(NULL).QuadPart;
 
-	ULONGLONG timeElapsed = (timeEnd - timeBeg) / (frequency.QuadPart / 1000);
+	//ULONGLONG timeElapsed = (timeEnd - timeBeg) / (frequency.QuadPart / 1000);
 
-	KdPrint(("time elapsed = %lld\n", timeElapsed));
+	//KdPrint(("time elapsed = %lld\n", timeElapsed));
 	
 	return result;
 }
@@ -129,7 +129,7 @@ public:
 
 		KdPrint(("GlobalManager::Init(): ExAllocatePool2 physical address: %llx\n", apiPhyAddr));
 
-		UINT8 hookCode[] = { 0x48, 0x89, 0x5c, 0x24, 0x08, 0xff, 0x25, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+		UINT8 hookCode[] = { 0x48, 0x89, 0x5c, 0x24, 0x10, 0xff, 0x25, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
 		*((PVOID*)(hookCode + 0xb)) = ((UINT8*)apiVirtAddr) + 0x5;
 		
@@ -147,6 +147,12 @@ public:
 		record.pGotoVirtAddr = ExAllocatePool2Handler;
 
 		nptHookManager.AddHook(record);
+
+		//ULONGLONG waitTimeStart = KeQueryPerformanceCounter(NULL).QuadPart;
+
+		//while (((KeQueryPerformanceCounter(NULL).QuadPart - waitTimeStart) / frequency.QuadPart) < 10) continue;
+		
+		//nptHookManager.RemoveHook(record.pOriginVirtAddr);
 	}
 
 	#pragma code_seg("PAGE")
@@ -205,6 +211,7 @@ public:
 	{
 		PAGED_CODE();
 
+		nptHookManager.Deinit();
 		msrHookManager.Deinit();
 		svmManager.Deinit();
 		ptManager.Deinit();

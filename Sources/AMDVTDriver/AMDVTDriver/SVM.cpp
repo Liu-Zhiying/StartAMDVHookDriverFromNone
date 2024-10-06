@@ -448,6 +448,10 @@ NTSTATUS SVMManager::EnterVirtualization()
 			if (pBreakpointInterceptPlugin != NULL)
 				pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.interceptExceptionX = (1UL << 3);
 
+			//如果UD拦截插件存在，打开UD拦截
+			if (pInvalidOpcodeInterceptPlugin != NULL)
+				pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.interceptExceptionX |= (1UL << 6);
+
 			pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.msrpmBasePA = msrPremissionMap.GetPhyAddress();
 			pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.guestASID = 1;
 
@@ -700,6 +704,20 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.type = 3;
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vaild = 1;
 		pVMMVirtCpuInfo->guestVmcb.statusFields.rip = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
+		break;
+	}
+	case VMEXIT_REASON_EXCEPTION_UD:
+	{
+		if (pInvalidOpcodeInterceptPlugin != NULL &&
+			pInvalidOpcodeInterceptPlugin->HandleInvalidOpcode(pVMMVirtCpuInfo, pGuestRegisters, pGuestVmcbPhyAddr, pHostVmcbPhyAddr))
+			return;
+
+		//注入UD异常由guest处理
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.data = 0;
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vector = 6;
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.type = 3;
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vaild = 1;
+		//pVMMVirtCpuInfo->guestVmcb.statusFields.rip = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
 		break;
 	}
 	case VMEXIT_REASON_VMRUN:
