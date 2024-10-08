@@ -37,10 +37,10 @@ void operator delete(void*, UINT64);
 
 //调用placement new
 #pragma code_seg()
-template<typename T>
-void CallConstructor(T* pObj)
+template<typename T, typename ...Args>
+void CallConstructor(T* pObj, Args&& ...args)
 {
-	new (pObj) T;
+	new (pObj) T(args...);
 }
 
 //调用placement delete
@@ -49,14 +49,6 @@ template<typename T>
 void CallDestroyer(T* pObj)
 {
 	delete (0, pObj);
-}
-
-//placement new 拷贝构造
-#pragma code_seg()
-template<typename T>
-void CallCopyConstructor(T* pDest, const T& pSrc)
-{
-	new (pDest) T(pSrc);
 }
 
 //对于驱动各个组件的一个抽象
@@ -242,7 +234,7 @@ inline KernelVector<ElementType, allocTag, memType>& KernelVector<ElementType, a
 	SetCapacity(container.Capacity());
 
 	for (SIZE_TYPE idx = 0; idx < container.Length(); ++idx)
-		CallCopyConstructor(pData + idx, container[idx]);
+		CallConstructor(pData + idx, container[idx]);
 
 	length = container.Length();
 

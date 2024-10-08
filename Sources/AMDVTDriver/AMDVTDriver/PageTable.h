@@ -272,6 +272,81 @@ public:
 
 using PageTableRecords = PageTableRecordBacket<0x20>;
 
+class CoreNptPageTableManager;
+
+//页表管理器
+class PageTableManager : public IManager, public INpfInterceptPlugin, public INCr3Provider
+{
+public:
+	//页表条目填充器，这个类的作用等同于一个lambda表达式
+	class EntrySetter
+	{
+	public:
+		PageTableManager* pPageTableManager;
+		#pragma code_seg("PAGE")
+		EntrySetter(PageTableManager* pPageTableManager) : pPageTableManager(pPageTableManager) { PAGED_CODE(); ASSERT(pPageTableManager != NULL); }
+
+		void operator()(PageTableLevel123Entry* pEntry, PTR_TYPE pfn, bool isLargePage) const {
+			{
+				PageTableLevel123Entry permission = pPageTableManager->defaultPermission;
+
+				permission.fields.present = true;
+				permission.fields.size = isLargePage;
+				permission.fields.pagePpn = pfn;
+
+				*pEntry = permission;
+			}
+		}
+
+		void operator()(PageTableLevel4Entry* pEntry, PTR_TYPE pfn, bool isLargePage) const {
+			{
+				UNREFERENCED_PARAMETER(isLargePage);
+
+				PageTableLevel4Entry permission = {};
+				permission.data = pPageTableManager->defaultPermission.data;
+				permission.fields.ignored2 = 0;
+
+				permission.fields.present = true;
+				permission.fields.pagePpn = pfn;
+
+				*pEntry = permission;
+			}
+		}
+	};
+private:
+	PTR_TYPE pSystemPxe;
+	CoreNptPageTableManager* corePageTables;
+	SIZE_TYPE pageTableCnt;
+	PageTableLevel123Entry defaultPermission;
+	EntrySetter entrySetter;
+public:
+	#pragma code_seg("PAGE")
+	PageTableManager() : pSystemPxe(NULL), corePageTables(NULL), pageTableCnt(0), entrySetter(this)
+	{
+		PAGED_CODE();
+
+		//设置默认权限
+		defaultPermission = {};
+		defaultPermission.fields.writeable = true;
+		defaultPermission.fields.userAccess = true;
+	}
+	#pragma code_seg("PAGE")
+	void SetDefaultPermission(PageTableLevel123Entry permission) { defaultPermission = permission; }
+	virtual bool HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
+		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
+	virtual PVOID GetNCr3ForCore(UINT32 cpuIdx) override;
+	virtual NTSTATUS Init() override;
+	virtual void Deinit() override;
+	#pragma code_seg()
+	CoreNptPageTableManager* GetCoreNptPageTables() { return corePageTables; }
+	SIZE_TYPE GetCoreNptPageTablesCnt() const { return pageTableCnt; }
+	#pragma code_seg("PAGE")
+	virtual ~PageTableManager() { Deinit(); }
+};
+
+//页表条目设置器，这里这样写只是不好写lambda表达式，这个类就类似于一个lambda表达式
+
+
 //每个核心的NPT页表管理器
 class CoreNptPageTableManager
 {
@@ -279,11 +354,14 @@ class CoreNptPageTableManager
 	PageTableRecords level34Records;
 	PageTableRecords level2Records;
 	PageTableRecords level1Records;
+	PageTableManager::EntrySetter* pEntrySetter;
 
 	//level代表页表的级数
 	PVOID FindPageTableForByAddr(PTR_TYPE pa, UINT32 level) const;
 
 public:
+	CoreNptPageTableManager() = delete;
+	CoreNptPageTableManager(PageTableManager::EntrySetter* _pEntrySetter) : pNptPageTable(INVALID_ADDR), pEntrySetter(_pEntrySetter) {}
 	#pragma code_seg()
 	CoreNptPageTableManager(CoreNptPageTableManager&& other)
 	{
@@ -292,6 +370,7 @@ public:
 	#pragma	code_seg()
 	CoreNptPageTableManager& operator=(CoreNptPageTableManager&& other)
 	{
+		pEntrySetter = other.pEntrySetter;
 		pNptPageTable = other.pNptPageTable;
 		level34Records = static_cast<PageTableRecords&&>(other.level34Records);
 		level2Records = static_cast<PageTableRecords&&>(other.level2Records);
@@ -299,9 +378,7 @@ public:
 		other.pNptPageTable = INVALID_ADDR;
 		return *this;
 	}
-	#pragma code_seg()
-	CoreNptPageTableManager() : pNptPageTable(INVALID_ADDR) {}
-	#pragma code_seg()
+	#pragma code_seg("PAGE")
 	~CoreNptPageTableManager() { Deinit(); }
 	NTSTATUS FixPageFault(PTR_TYPE startAddr, PTR_TYPE endAddr, bool usingLargePage);
 	//isUsing 为 false 代表还原大页
@@ -320,28 +397,6 @@ public:
 	NTSTATUS BuildNptPageTable();
 	#pragma code_seg()
 	PTR_TYPE GetNptPageTable() const { return pNptPageTable; }
-};
-
-//页表管理器
-class PageTableManager : public IManager, public INpfInterceptPlugin, public INCr3Provider
-{
-	PTR_TYPE pSystemPxe;
-	CoreNptPageTableManager* corePageTables;
-	SIZE_TYPE pageTableCnt;
-
-public:
-	#pragma code_seg("PAGE")
-	PageTableManager() : pSystemPxe(NULL), corePageTables(NULL), pageTableCnt(0) { PAGED_CODE(); }
-	virtual bool HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
-		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
-	virtual PVOID GetNCr3ForCore(UINT32 cpuIdx) override;
-	virtual NTSTATUS Init() override;
-	virtual void Deinit() override;
-	#pragma code_seg()
-	CoreNptPageTableManager* GetCoreNptPageTables() { return corePageTables; }
-	SIZE_TYPE GetCoreNptPageTablesCnt() const { return pageTableCnt; }
-	#pragma code_seg()
-	virtual ~PageTableManager() { PageTableManager::Deinit(); }
 };
 
 #endif

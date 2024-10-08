@@ -434,7 +434,7 @@ bool NptHookManager::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 				pGuestRegisters->rbx = NULL;
 				break;
 			}
-			CallCopyConstructor(pNewCopy, sharedData);
+			CallConstructor(pNewCopy, sharedData);
 			pGuestRegisters->rbx = (PTR_TYPE)pNewCopy;
 			break;
 		}

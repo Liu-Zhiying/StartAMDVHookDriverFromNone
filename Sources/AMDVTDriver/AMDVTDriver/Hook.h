@@ -720,7 +720,7 @@ public:
 	virtual NTSTATUS Init() override;
 	virtual void Deinit() override;
 	#pragma code_seg("PAGE")
-	~NptHookManager() { PAGED_CODE(); }
+	virtual ~NptHookManager() { PAGED_CODE(); Deinit(); }
 };
 
 #endif
