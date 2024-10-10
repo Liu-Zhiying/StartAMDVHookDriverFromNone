@@ -32,6 +32,9 @@ constexpr UINT32 COPY_LEVEL3_REF_ITEM_CPUID_SUBFUNCTION = 0x0000000F;
 constexpr UINT32 COPY_HOOKRECORD_CPUID_SUBFUNCTION = 0x00000010;
 constexpr UINT32 COPY_SHARED_DATA_CPUID_SUBFUNCTION = 0x00000011;
 constexpr UINT32 DESTROY_SHARED_DATA_COPY_CPUID_SUBFUNCTION = 0x00000012;
+constexpr UINT32 RESTORE_CR3_CPUID_SUBFUNCTION = 0x00000013;
+constexpr UINT32 ALLOC_NONPAGED_MEMORY_CPUID_SUBFUNCTION = 0x00000014;
+constexpr UINT32 FREE_NONPAGED_MEMORY_CPUID_SUBFUNCTION = 0x00000015;
 
 constexpr UINT32 HOOK_TAG = MAKE_TAG('h', 'o', 'o', 'k');
 
@@ -53,6 +56,12 @@ struct MsrHookParameter
 	bool enabled;
 };
 
+enum PageTableType
+{
+	ExternalPageTable,
+	InternalPageTable
+};
+
 struct MemoryCopyInfo
 {
 	PVOID pSource;
@@ -64,6 +73,7 @@ struct ChangePageSizeInfo
 {
 	PTR_TYPE pLevel3PhyAddr;
 	ULONG cpuIdx;
+	PageTableType type;
 	bool beLarge;
 };
 
@@ -71,6 +81,7 @@ struct ChangePageTablePermissionInfo
 {
 	PageTableLevel123Entry permission;
 	PTR_TYPE physicalAddress;
+	PageTableType type;
 	ULONG cpuIdx;
 	UINT32 level;
 };
@@ -79,6 +90,7 @@ struct SwapSmallPagePpnInfo
 {
 	PTR_TYPE physicalAddress1;
 	PTR_TYPE physicalAddress2;
+	PageTableType type;
 	ULONG cpuIdx;
 };
 
@@ -91,7 +103,7 @@ enum RefCountOperationType
 enum RefCountOperationObjectType
 {
 	SwapPageRefCntObject,
-	Level3RefObject,
+	Level3RefObject
 };
 
 struct OperateRefCountInfo
@@ -692,13 +704,16 @@ class NptHookManager : public IManager, public IBreakprointInterceptPlugin, publ
 {
 	NptHookSharedData sharedData;
 	NptHookSharedData* pSharedDataCopy;
-	KernelVector<CoreNptHookStatus, HOOK_TAG> coreNptHookStatus;
+	CoreNptHookStatus* pCoreNptHookStatus;
 	PageTableManager* pPageTableManager;
+	PageTableManager internalPageTableManager;
 
-	NTSTATUS ChangeLargePageToSmallPage(PTR_TYPE pOriginLevel3PhyAddr);
-	NTSTATUS ChangeSmallPageToLargePage(PTR_TYPE pOriginLevel3PhyAddr);
+	NTSTATUS ChangeLargePageToSmallPage(PTR_TYPE pOriginLevel3PhyAddr, PageTableType type);
+	NTSTATUS ChangeSmallPageToLargePage(PTR_TYPE pOriginLevel3PhyAddr, PageTableType type);
 
-	NTSTATUS ChangePageTablePermission(PTR_TYPE physicalAddress, PageTableLevel123Entry permission);
+	NTSTATUS ChangePageTablePermission(PTR_TYPE physicalAddress, PageTableLevel123Entry permission, PageTableType type, UINT32 level);
+
+	NTSTATUS SwapSmallPagePpn(PTR_TYPE physicalAddrees1, PTR_TYPE physicalAddress2, PageTableType type);
 
 	NTSTATUS CancelHookOperation(const SwapPageRefCnt& swapPageInfo);
 

@@ -211,8 +211,8 @@ public:
 	{
 		PAGED_CODE();
 
-		nptHookManager.Deinit();
 		msrHookManager.Deinit();
+		nptHookManager.Deinit();
 		svmManager.Deinit();
 		ptManager.Deinit();
 	}

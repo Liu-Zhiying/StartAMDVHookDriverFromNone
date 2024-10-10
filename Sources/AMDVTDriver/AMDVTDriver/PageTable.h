@@ -390,7 +390,7 @@ public:
 	//获取指定物理地址对应的NPT页表的最终地址
 	NTSTATUS GetNptFinalAddrForPhyAddr(PTR_TYPE phyAddr, PTR_TYPE& pNptFinalAddr, PTR_TYPE& level);
 	//修改所有页表的权限
-	void ChangeAllPageTablePermession(PageTableLevel123Entry entry);
+	void ChangeAllEndLevelPageTablePermession(PageTableLevel123Entry entry);
 	//修改特定页表的值
 	NTSTATUS ChangePageTablePermession(PTR_TYPE pa, PageTableLevel123Entry entry, UINT32 level);
 	void Deinit();

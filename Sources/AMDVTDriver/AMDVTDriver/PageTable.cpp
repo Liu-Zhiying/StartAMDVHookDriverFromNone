@@ -499,7 +499,7 @@ NTSTATUS CoreNptPageTableManager::GetNptFinalAddrForPhyAddr(PTR_TYPE phyAddr, PT
 }
 
 #pragma code_seg()
-void ChangeAllPageTablePremessionSub(PageTableLevel123* pPageTable, UINT32 level, PageTableRecords& level34Records, PageTableRecords& level2Records, PageTableRecords& level1Records, PageTableLevel123Entry entry)
+void ChangeAllEndLevelPageTablePremessionSub(PageTableLevel123* pPageTable, UINT32 level, PageTableRecords& level34Records, PageTableRecords& level2Records, PageTableRecords& level1Records, PageTableLevel123Entry entry)
 {
 	for (SIZE_TYPE idx = 0; idx < GetArrayElementCnt(pPageTable->entries); ++idx)
 	{
@@ -523,13 +523,13 @@ void ChangeAllPageTablePremessionSub(PageTableLevel123* pPageTable, UINT32 level
 				pSubPageTable = (PageTableLevel123*)level34Records.FindVaFromPa(GET_PHYADDR_FROM_PFN(pPageTable->entries[idx].fields.pagePpn));
 
 			if (pSubPageTable != (PageTableLevel123*)INVALID_ADDR)
-				ChangeAllPageTablePremessionSub(pSubPageTable, level - 1, level34Records, level2Records, level1Records, entry);
+				ChangeAllEndLevelPageTablePremessionSub(pSubPageTable, level - 1, level34Records, level2Records, level1Records, entry);
 		}
 	}
 }
 
 #pragma code_seg()
-void CoreNptPageTableManager::ChangeAllPageTablePermession(PageTableLevel123Entry entry)
+void CoreNptPageTableManager::ChangeAllEndLevelPageTablePermession(PageTableLevel123Entry entry)
 {
 	entry.fields.present = true;
 
@@ -539,7 +539,7 @@ void CoreNptPageTableManager::ChangeAllPageTablePermession(PageTableLevel123Entr
 	{
 		PageTableLevel123* pSubPageTable = (PageTableLevel123*)level34Records.FindVaFromPa(GET_PHYADDR_FROM_PFN(pPageTable->entries[idx].fields.pagePpn));
 		if (pSubPageTable != (PageTableLevel123*)INVALID_ADDR)
-			ChangeAllPageTablePremessionSub(pSubPageTable, 3, level34Records, level2Records, level1Records, entry);
+			ChangeAllEndLevelPageTablePremessionSub(pSubPageTable, 3, level34Records, level2Records, level1Records, entry);
 	}
 }
 

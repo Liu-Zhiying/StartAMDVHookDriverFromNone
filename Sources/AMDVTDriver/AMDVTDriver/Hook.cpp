@@ -94,10 +94,7 @@ bool NptHookManager::HandleBreakpoint(VirtCpuInfo* pVirtCpuInfo, GenericRegister
 
 	bool result = false;
 
-	if (coreNptHookStatus.Length() <= pVirtCpuInfo->otherInfo.cpuIdx)
-		return result;
-
-	const NptHookSharedData*  pSharedData = coreNptHookStatus[pVirtCpuInfo->otherInfo.cpuIdx].pSharedData;
+	const NptHookSharedData*  pSharedData = pCoreNptHookStatus[pVirtCpuInfo->otherInfo.cpuIdx].pSharedData;
 
 	if (pSharedData != NULL)
 	{
@@ -142,17 +139,16 @@ bool NptHookManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGue
 			UINT32 cpuIdx = pVirtCpuInfo->otherInfo.cpuIdx;
 
 			//获取核心NPT HOOK状态
-			CoreNptHookStatus& hookStatus = coreNptHookStatus[pVirtCpuInfo->otherInfo.cpuIdx];
+			CoreNptHookStatus& hookStatus = pCoreNptHookStatus[pVirtCpuInfo->otherInfo.cpuIdx];
 
 			//获取对应的核心页表管理器
-			CoreNptPageTableManager& corePageTableManager = pPageTableManager->GetCoreNptPageTables()[cpuIdx];
+			CoreNptPageTableManager& externalCorePageTableManager = pPageTableManager->GetCoreNptPageTables()[cpuIdx];
+			CoreNptPageTableManager& internalCorePageTableManager = internalPageTableManager.GetCoreNptPageTables()[cpuIdx];
 
 			SIZE_TYPE swapPageIdx = INVALID_INDEX;
 			PageTableLevel123Entry entry = {};
 
-			PTR_TYPE tempPhyAddr1 = {}, tempPhyAddr2 = {};
-
-			SwapPageRefCnt tempSwapPageInfo = {};
+			PTR_TYPE tempPhyAddr = INVALID_ADDR;
 
 			const NptHookSharedData* pSharedData = hookStatus.pSharedData;
 
@@ -165,11 +161,14 @@ bool NptHookManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGue
 
 					if (swapPageIdx != INVALID_INDEX)
 					{
-						//如果交换页存在，还原当前hook页面的交换（就是再次交换）
-						const SwapPageRefCnt& swapPageRef = pSharedData->swapPageRefs[swapPageIdx];
-						tempPhyAddr1 = MmGetPhysicalAddress(swapPageRef.pOriginVirtAddr).QuadPart;
-						tempPhyAddr2 = MmGetPhysicalAddress(swapPageRef.pSwapVirtAddr).QuadPart;
-						corePageTableManager.SwapSmallPagePpn(tempPhyAddr1, tempPhyAddr2);
+						//恢复上次hook页面为禁止执行
+						entry.fields.writeable = true;
+						entry.fields.userAccess = true;
+						entry.fields.executionDisabled = true;
+
+						tempPhyAddr = MmGetPhysicalAddress(pSharedData->swapPageRefs[swapPageIdx].pOriginVirtAddr).QuadPart;
+
+						internalCorePageTableManager.ChangePageTablePermession(tempPhyAddr, entry, 1);
 					}
 					else
 					{
@@ -183,22 +182,17 @@ bool NptHookManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGue
 
 				if (swapPageIdx != INVALID_INDEX)
 				{
-					const SwapPageRefCnt& swapPageRef = pSharedData->swapPageRefs[swapPageIdx];
-
-					//交换新hook页面
-					tempPhyAddr1 = MmGetPhysicalAddress(swapPageRef.pOriginVirtAddr).QuadPart;
-					tempPhyAddr2 = MmGetPhysicalAddress(swapPageRef.pSwapVirtAddr).QuadPart;
-					corePageTableManager.SwapSmallPagePpn(tempPhyAddr1, tempPhyAddr2);
-
-					//设置新hook页面可读可写可执行，其他页面均可读可写不可执行
+					//设置hook页面可执行
 					entry.fields.writeable = true;
 					entry.fields.userAccess = true;
-					entry.fields.executionDisabled = true;
-
-					corePageTableManager.ChangeAllPageTablePermession(entry);
-
 					entry.fields.executionDisabled = false;
-					corePageTableManager.ChangePageTablePermession(pa, entry, 1);
+
+					internalCorePageTableManager.ChangePageTablePermession(pa, entry, 1);
+
+					//切换到内部页表
+					tempPhyAddr = MmGetPhysicalAddress((PVOID)internalCorePageTableManager.GetNptPageTable()).QuadPart;
+
+					pVirtCpuInfo->guestVmcb.controlFields.nCr3 = tempPhyAddr;
 
 					//更新状态
 					hookStatus.pLastActiveHookPageVirtAddr = (PTR_TYPE)pSharedData->swapPageRefs[swapPageIdx].pOriginVirtAddr;
@@ -206,20 +200,17 @@ bool NptHookManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGue
 				}
 				else
 				{
-					//设置HOOK页面可读可写不可执行，其他页面均可读可写可执行
-					entry.fields.writeable = true;
-					entry.fields.userAccess = true;
+					//切换到外部页表
+					tempPhyAddr = MmGetPhysicalAddress((PVOID)externalCorePageTableManager.GetNptPageTable()).QuadPart;
 
-					corePageTableManager.ChangeAllPageTablePermession(entry);
-
-					entry.fields.executionDisabled = true;
-					for (SIZE_TYPE idx = 0; idx < pSharedData->swapPageRefs.Length(); ++idx)
-						corePageTableManager.ChangePageTablePermession(MmGetPhysicalAddress(pSharedData->swapPageRefs[idx].pOriginVirtAddr).QuadPart, entry, 1);
+					pVirtCpuInfo->guestVmcb.controlFields.nCr3 = tempPhyAddr;
 
 					//更新状态
 					hookStatus.pLastActiveHookPageVirtAddr = NULL;
 					hookStatus.premissionStatus = CoreNptHookStatus::PremissionStatus::HookPageNotExecuted;
 				}
+
+				pVirtCpuInfo->guestVmcb.controlFields.tlbControl = 0x3;
 
 				result = true;
 			}
@@ -238,6 +229,20 @@ bool NptHookManager::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 	UNREFERENCED_PARAMETER(pGuestVmcbPhyAddr);
 	UNREFERENCED_PARAMETER(pHostVmcbPhyAddr);
 
+	auto switchPageTable = [this](PageTableType type) -> PageTableManager*
+	{
+		switch (type)
+		{
+		case ExternalPageTable:
+			return pPageTableManager;
+		case InternalPageTable:
+			return &internalPageTableManager;
+		default:
+			KeBugCheck(MANUALLY_INITIATED_CRASH);
+			break;
+		}
+	};
+
 	//eax为配置NPT HOOK的CPUID编号
 
 	switch (((int)pVirtCpuInfo->guestVmcb.statusFields.rax))
@@ -252,17 +257,19 @@ bool NptHookManager::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 		{
 			ChangePageSizeInfo* pInfo = (ChangePageSizeInfo*)pGuestRegisters->rdx;
 
-			status = pPageTableManager->GetCoreNptPageTables()[pInfo->cpuIdx].UsingSmallPage(pInfo->pLevel3PhyAddr, !pInfo->beLarge);
+			PageTableManager* pTargetPageTableManager = switchPageTable(pInfo->type);
+
+			status = pTargetPageTableManager->GetCoreNptPageTables()[pInfo->cpuIdx].UsingSmallPage(pInfo->pLevel3PhyAddr, !pInfo->beLarge);
 
 			pGuestRegisters->rbx = status;
 
 			if (NT_SUCCESS(status) && !pInfo->beLarge)
 			{
-				status = pPageTableManager->GetCoreNptPageTables()[pInfo->cpuIdx].MapSmallPageByPhyAddr(pInfo->pLevel3PhyAddr, pInfo->pLevel3PhyAddr + 0x200000);
+				status = pTargetPageTableManager->GetCoreNptPageTables()[pInfo->cpuIdx].MapSmallPageByPhyAddr(pInfo->pLevel3PhyAddr, pInfo->pLevel3PhyAddr + 0x200000);
 				if (!NT_SUCCESS(status))
 				{
 					pGuestRegisters->rbx = status;
-					pPageTableManager->GetCoreNptPageTables()[pInfo->cpuIdx].UsingSmallPage(pInfo->pLevel3PhyAddr, !pInfo->beLarge);
+					pTargetPageTableManager->GetCoreNptPageTables()[pInfo->cpuIdx].UsingSmallPage(pInfo->pLevel3PhyAddr, !pInfo->beLarge);
 				}
 			}
 
@@ -283,7 +290,9 @@ bool NptHookManager::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 		{
 			const ChangePageTablePermissionInfo* pInfo = (ChangePageTablePermissionInfo*)pGuestRegisters->rdx;
 
-			status = pPageTableManager->GetCoreNptPageTables()[pInfo->cpuIdx].ChangePageTablePermession(pInfo->physicalAddress, pInfo->permission, pInfo->level);
+			PageTableManager* pTargetPageTableManager = switchPageTable(pInfo->type);
+
+			status = pTargetPageTableManager->GetCoreNptPageTables()[pInfo->cpuIdx].ChangePageTablePermession(pInfo->physicalAddress, pInfo->permission, pInfo->level);
 
 			pGuestRegisters->rbx = status;
 
@@ -293,7 +302,9 @@ bool NptHookManager::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 		{
 			const SwapSmallPagePpnInfo* pInfo = (SwapSmallPagePpnInfo*)pGuestRegisters->rdx;
 
-			status = pPageTableManager->GetCoreNptPageTables()[pInfo->cpuIdx].SwapSmallPagePpn(pInfo->physicalAddress1, pInfo->physicalAddress2);
+			PageTableManager* pTargetPageTableManager = switchPageTable(pInfo->type);
+
+			status = pTargetPageTableManager->GetCoreNptPageTables()[pInfo->cpuIdx].SwapSmallPagePpn(pInfo->physicalAddress1, pInfo->physicalAddress2);
 
 			pGuestRegisters->rbx = status;
 
@@ -363,6 +374,16 @@ bool NptHookManager::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 		case FREE_NONPAGED_EXECUTEABLE_MEMORY_CPUID_SUBFUNCTION:
 		{
 			FreeExecutableNonPagedMem((PVOID)pGuestRegisters->rdx, HOOK_TAG);
+			break;
+		}
+		case ALLOC_NONPAGED_MEMORY_CPUID_SUBFUNCTION:
+		{
+			pGuestRegisters->rbx = (PTR_TYPE)AllocNonPagedMem(pGuestRegisters->rdx, HOOK_TAG);
+			break;
+		}
+		case FREE_NONPAGED_MEMORY_CPUID_SUBFUNCTION:
+		{
+			FreeNonPagedMem((PVOID)pGuestRegisters->rdx, HOOK_TAG);
 			break;
 		}
 		case OPERATE_REF_COUNT_CPUID_SUBFUNCTION:
@@ -444,6 +465,11 @@ bool NptHookManager::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 			FreeNonPagedMem((NptHookSharedData*)pGuestRegisters->rdx, HOOK_TAG);
 			break;
 		}
+		case RESTORE_CR3_CPUID_SUBFUNCTION:
+		{
+			pVirtCpuInfo->guestVmcb.controlFields.nCr3 = MmGetPhysicalAddress((PVOID)pPageTableManager->GetCoreNptPageTables()[pGuestRegisters->rdx].GetNptPageTable()).QuadPart;
+			break;
+		}
 		}
 
 		pVirtCpuInfo->guestVmcb.statusFields.rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
@@ -457,9 +483,9 @@ bool NptHookManager::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 }
 
 #pragma code_seg("PAGE")
-NTSTATUS NptHookManager::ChangeLargePageToSmallPage(PTR_TYPE pOriginLevel3PhyAddr)
+NTSTATUS NptHookManager::ChangeLargePageToSmallPage(PTR_TYPE pOriginLevel3PhyAddr, PageTableType type)
 {
-	NTSTATUS status = STATUS_SUCCESS;
+	NTSTATUS result = STATUS_SUCCESS;
 	SIZE_TYPE cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
 
 	PTR_TYPE regs[4] = {};
@@ -467,6 +493,7 @@ NTSTATUS NptHookManager::ChangeLargePageToSmallPage(PTR_TYPE pOriginLevel3PhyAdd
 
 	info.beLarge = false;
 	info.pLevel3PhyAddr = pOriginLevel3PhyAddr;
+	info.type = type;
 
 	PROCESSOR_NUMBER processorNum = {};
 	GROUP_AFFINITY affinity = {}, oldAffinity = {};
@@ -492,18 +519,18 @@ NTSTATUS NptHookManager::ChangeLargePageToSmallPage(PTR_TYPE pOriginLevel3PhyAdd
 
 		if (!NT_SUCCESS(regs[1]))
 		{
-			status = (NTSTATUS)regs[1];
+			result = (NTSTATUS)regs[1];
 			break;
 		}
 	}
 
-	return status;
+	return result;
 }
 
 #pragma code_seg("PAGE")
-NTSTATUS NptHookManager::ChangeSmallPageToLargePage(PTR_TYPE pOriginLevel3PhyAddr)
+NTSTATUS NptHookManager::ChangeSmallPageToLargePage(PTR_TYPE pOriginLevel3PhyAddr, PageTableType type)
 {
-	NTSTATUS status = STATUS_SUCCESS;
+	NTSTATUS result = STATUS_SUCCESS;
 	SIZE_TYPE cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
 
 	PTR_TYPE regs[4] = {};
@@ -511,6 +538,7 @@ NTSTATUS NptHookManager::ChangeSmallPageToLargePage(PTR_TYPE pOriginLevel3PhyAdd
 
 	info.beLarge = true;
 	info.pLevel3PhyAddr = pOriginLevel3PhyAddr;
+	info.type = type;
 
 	PROCESSOR_NUMBER processorNum = {};
 	GROUP_AFFINITY affinity = {}, oldAffinity = {};
@@ -536,16 +564,16 @@ NTSTATUS NptHookManager::ChangeSmallPageToLargePage(PTR_TYPE pOriginLevel3PhyAdd
 
 		if (!NT_SUCCESS(regs[1]))
 		{
-			status = (NTSTATUS)regs[1];
+			result = (NTSTATUS)regs[1];
 			break;
 		}
 	}
 
-	return status;
+	return result;
 }
 
 #pragma code_seg("PAGE")
-NTSTATUS NptHookManager::ChangePageTablePermission(PTR_TYPE physicalAddress, PageTableLevel123Entry permission)
+NTSTATUS NptHookManager::ChangePageTablePermission(PTR_TYPE physicalAddress, PageTableLevel123Entry permission, PageTableType type, UINT32 level)
 {
 	NTSTATUS status = STATUS_SUCCESS;
 	SIZE_TYPE cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
@@ -555,7 +583,8 @@ NTSTATUS NptHookManager::ChangePageTablePermission(PTR_TYPE physicalAddress, Pag
 
 	info.physicalAddress = physicalAddress;
 	info.permission = permission;
-	info.level = 1;
+	info.level = level;
+	info.type = type;
 
 	PROCESSOR_NUMBER processorNum = {};
 	GROUP_AFFINITY affinity = {}, oldAffinity = {};
@@ -589,6 +618,52 @@ NTSTATUS NptHookManager::ChangePageTablePermission(PTR_TYPE physicalAddress, Pag
 	return status;
 }
 
+#pragma code_seg("PAGE")
+NTSTATUS NptHookManager::SwapSmallPagePpn(PTR_TYPE physicalAddrees1, PTR_TYPE physicalAddress2, PageTableType type)
+{
+	NTSTATUS status = STATUS_SUCCESS;
+	SIZE_TYPE cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
+
+	PTR_TYPE regs[4] = {};
+
+	PROCESSOR_NUMBER processorNum = {};
+	GROUP_AFFINITY affinity = {}, oldAffinity = {};
+
+	SwapSmallPagePpnInfo info = {};
+
+	info.physicalAddress1 = physicalAddrees1;
+	info.physicalAddress2 = physicalAddress2;
+	info.type = type;
+
+	for (ULONG idx = 0; idx < cpuCnt; ++idx)
+	{
+		KeGetProcessorNumberFromIndex(idx, &processorNum);
+		affinity = {};
+		affinity.Group = processorNum.Group;
+		affinity.Mask = 1ULL << processorNum.Number;
+		KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
+
+		regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+		regs[1] = 0;
+		regs[2] = SWAP_SMALL_PAGE_PPN_CPUID_SUBFUNCTION;
+		regs[3] = (PTR_TYPE)&info;
+
+		info.cpuIdx = idx;
+
+		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+		KeRevertToUserGroupAffinityThread(&oldAffinity);
+
+		if (!NT_SUCCESS(regs[1]))
+		{
+			status = (NTSTATUS)regs[1];
+			break;
+		}
+	}
+
+	return status;
+}
+
 NTSTATUS NptHookManager::CancelHookOperation(const SwapPageRefCnt& swapPageInfo)
 {
 	NTSTATUS status = STATUS_SUCCESS;
@@ -599,13 +674,13 @@ NTSTATUS NptHookManager::CancelHookOperation(const SwapPageRefCnt& swapPageInfo)
 	PROCESSOR_NUMBER processorNum = {};
 	GROUP_AFFINITY affinity = {}, oldAffinity = {};
 
-	PTR_TYPE physicalAddress = INVALID_ADDR;
-
 	PageTableLevel123Entry permission = {};
 	permission.fields.writeable = true;
 	permission.fields.userAccess = true;
 
 	ChangePageTablePermissionInfo info = {};
+
+	SwapSmallPagePpnInfo info2 = {};
 
 	info.permission = permission;
 	info.level = 1;
@@ -617,9 +692,19 @@ NTSTATUS NptHookManager::CancelHookOperation(const SwapPageRefCnt& swapPageInfo)
 
 	SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 
-	physicalAddress = regs[1];
+	info.physicalAddress = regs[1];
+	info2.physicalAddress1 = regs[1];
+	info.type = PageTableType::ExternalPageTable;
 
-	info.physicalAddress = physicalAddress;
+	regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+	regs[1] = NULL;
+	regs[2] = GET_PHYSICAL_ADDRESS_SUBFUNCTION;
+	regs[3] = (PTR_TYPE)swapPageInfo.pSwapVirtAddr;
+
+	SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+	info2.physicalAddress2 = regs[1];
+	info2.type = PageTableType::InternalPageTable;
 
 	for (ULONG idx = 0; idx < cpuCnt; ++idx)
 	{
@@ -629,40 +714,24 @@ NTSTATUS NptHookManager::CancelHookOperation(const SwapPageRefCnt& swapPageInfo)
 		affinity.Mask = 1ULL << processorNum.Number;
 		KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
 
-		CoreNptHookStatus& hookStatus = coreNptHookStatus[idx];
-
-		if (hookStatus.premissionStatus == CoreNptHookStatus::PremissionStatus::HookPageExecuted)
+		do
 		{
-			if (hookStatus.pLastActiveHookPageVirtAddr == (PTR_TYPE)swapPageInfo.pOriginVirtAddr)
+			//还原物理页面交换
+			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+			regs[1] = 0;
+			regs[2] = SWAP_SMALL_PAGE_PPN_CPUID_SUBFUNCTION;
+			regs[3] = (PTR_TYPE)&info2;
+
+			info2.cpuIdx = idx;
+
+			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+			if (!NT_SUCCESS(regs[1]))
 			{
-				regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
-				regs[1] = NULL;
-				regs[2] = GET_PHYSICAL_ADDRESS_SUBFUNCTION;
-				regs[3] = (PTR_TYPE)swapPageInfo.pSwapVirtAddr;
-
-				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
-
-				SwapSmallPagePpnInfo info2 = {};
-
-				info2.physicalAddress1 = physicalAddress;
-				info2.physicalAddress2 = regs[1];
-
-				regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
-				regs[1] = 0;
-				regs[2] = SWAP_SMALL_PAGE_PPN_CPUID_SUBFUNCTION;
-				regs[3] = (PTR_TYPE)&info2;
-
-				info2.cpuIdx = idx;
-
-				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
-
-				if (!NT_SUCCESS(regs[1]))
-				{
-					status = (NTSTATUS)regs[1];
-					break;
-				}
+				status = (NTSTATUS)regs[1];
+				break;
 			}
-
+			//内部NPT页表恢复执行禁止
 			permission.fields.executionDisabled = true;
 
 			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
@@ -670,12 +739,17 @@ NTSTATUS NptHookManager::CancelHookOperation(const SwapPageRefCnt& swapPageInfo)
 			regs[2] = CHANGE_PAGE_TABLE_PERMISSION_CPUID_SUBFUNCTION;
 			regs[3] = (PTR_TYPE)&info;
 
+			info.type = PageTableType::InternalPageTable;
 			info.cpuIdx = idx;
 
 			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
-		}
-		else
-		{
+
+			if (!NT_SUCCESS(regs[1]))
+			{
+				status = (NTSTATUS)regs[1];
+				break;
+			}
+			//外部NPT页表恢复可执行
 			permission.fields.executionDisabled = false;
 
 			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
@@ -683,18 +757,30 @@ NTSTATUS NptHookManager::CancelHookOperation(const SwapPageRefCnt& swapPageInfo)
 			regs[2] = CHANGE_PAGE_TABLE_PERMISSION_CPUID_SUBFUNCTION;
 			regs[3] = (PTR_TYPE)&info;
 
+			info.type = PageTableType::ExternalPageTable;
 			info.cpuIdx = idx;
 
 			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
-		}
+
+			if (!NT_SUCCESS(regs[1]))
+			{
+				status = (NTSTATUS)regs[1];
+				break;
+			}
+			//NCR3切换到外部NPT页表
+			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+			regs[1] = NULL;
+			regs[2] = RESTORE_CR3_CPUID_SUBFUNCTION;
+			regs[3] = idx;
+
+			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+		} while (false);
 
 		KeRevertToUserGroupAffinityThread(&oldAffinity);
 
-		if (!NT_SUCCESS(regs[1]))
-		{
-			status = (NTSTATUS)regs[1];
+		if (!NT_SUCCESS(status))
 			break;
-		}
 	}
 
 	return status;
@@ -731,7 +817,7 @@ void NptHookManager::SyncSharedData()
 		affinity.Mask = 1ULL << processorNum.Number;
 		KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
 
-		coreNptHookStatus[idx].pSharedData = (NptHookSharedData*)regs[1];
+		pCoreNptHookStatus[idx].pSharedData = (NptHookSharedData*)regs[1];
 
 		KeRevertToUserGroupAffinityThread(&oldAffinity);
 	}
@@ -768,6 +854,7 @@ NTSTATUS NptHookManager::AddHook(const HookRecord& record)
 	MemoryCopyInfo copyMemInfo = {};
 	OperateRefCountInfo operateRefInfo = {};
 	SwapPageRefCnt swapPageRefCnt = {};
+	PageTableLevel123Entry permission = {};
 	int stepCnt = 0;
 	
 	do
@@ -909,7 +996,19 @@ NTSTATUS NptHookManager::AddHook(const HookRecord& record)
 		if (level3RefIdx == INVALID_INDEX)
 		{
 			//如果没有查询到为小页的记录，就设置为小页，并新增记录
-			status = ChangeLargePageToSmallPage(swapPagePhyAddr & 0xFFFFFFFFFFE00000);
+			status = ChangeLargePageToSmallPage(swapPagePhyAddr & 0xFFFFFFFFFFE00000, PageTableType::ExternalPageTable);
+			if (!NT_SUCCESS(status))
+				break;
+
+			status = ChangeLargePageToSmallPage(swapPagePhyAddr & 0xFFFFFFFFFFE00000, PageTableType::InternalPageTable);
+			if (!NT_SUCCESS(status))
+				break;
+
+			permission.fields.writeable = true;
+			permission.fields.userAccess = true;
+			permission.fields.executionDisabled = false;
+
+			status = ChangePageTablePermission(swapPagePhyAddr & 0xFFFFFFFFFFE00000, permission, PageTableType::InternalPageTable, 2);
 			if (!NT_SUCCESS(status))
 				break;
 
@@ -950,7 +1049,19 @@ NTSTATUS NptHookManager::AddHook(const HookRecord& record)
 		if (level3RefIdx == INVALID_INDEX)
 		{
 			//如果没有查询到为小页的记录，就设置为小页，设置权限，并新增记录
-			status = ChangeLargePageToSmallPage(pOriginPhyAddr & 0xFFFFFFFFFFE00000);
+			status = ChangeLargePageToSmallPage(pOriginPhyAddr & 0xFFFFFFFFFFE00000, PageTableType::ExternalPageTable);
+			if (!NT_SUCCESS(status))
+				break;
+
+			status = ChangeLargePageToSmallPage(pOriginPhyAddr & 0xFFFFFFFFFFE00000, PageTableType::InternalPageTable);
+			if (!NT_SUCCESS(status))
+				break;
+
+			permission.fields.writeable = true;
+			permission.fields.userAccess = true;
+			permission.fields.executionDisabled = false;
+
+			status = ChangePageTablePermission(pOriginPhyAddr & 0xFFFFFFFFFFE00000, permission, PageTableType::InternalPageTable, 2);
 			if (!NT_SUCCESS(status))
 				break;
 
@@ -999,12 +1110,16 @@ NTSTATUS NptHookManager::AddHook(const HookRecord& record)
 	//对新hook执行权限修改
 	if (NT_SUCCESS(status) && needChangePagePermission)
 	{
-		PageTableLevel123Entry permission = {};
+		PTR_TYPE tempPhyAddr1 = MmGetPhysicalAddress((PVOID)swapPageRefCnt.pOriginVirtAddr).QuadPart;
+		PTR_TYPE tempPhyAddr2 = MmGetPhysicalAddress(swapPageRefCnt.pSwapVirtAddr).QuadPart;
+
+		SwapSmallPagePpn(tempPhyAddr1, tempPhyAddr2, PageTableType::InternalPageTable);
+
 		permission.fields.writeable = true;
 		permission.fields.userAccess = true;
 		permission.fields.executionDisabled = true;
 
-		ChangePageTablePermission(pOriginPhyAddr & 0xFFFFFFFFFFFF000, permission);
+		ChangePageTablePermission(pOriginPhyAddr & 0xFFFFFFFFFFFF000, permission, PageTableType::ExternalPageTable, 1);
 	}
 
 	//失败撤回操作
@@ -1016,7 +1131,14 @@ NTSTATUS NptHookManager::AddHook(const HookRecord& record)
 		{
 			if (level3RefIdx == INVALID_INDEX)
 			{
-				ChangeSmallPageToLargePage(pOriginPhyAddr & 0xFFFFFFFFFFE00000);
+				ChangeSmallPageToLargePage(pOriginPhyAddr & 0xFFFFFFFFFFE00000, PageTableType::ExternalPageTable);
+				ChangeSmallPageToLargePage(pOriginPhyAddr & 0xFFFFFFFFFFE00000, PageTableType::InternalPageTable);
+
+				permission.fields.writeable = true;
+				permission.fields.userAccess = true;
+				permission.fields.executionDisabled = true;
+
+				ChangePageTablePermission(pOriginPhyAddr & 0xFFFFFFFFFFE00000, permission, PageTableType::InternalPageTable, 2);
 
 				level3RefIdx = sharedData.FindSmallPageLevel3RefCntByPhyAddr(pOriginPhyAddr & 0xFFFFFFFFFFE00000);
 
@@ -1068,7 +1190,16 @@ NTSTATUS NptHookManager::AddHook(const HookRecord& record)
 			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 
 			if (regs[1])
-				ChangeSmallPageToLargePage(swapPagePhyAddr & 0xFFFFFFFFFFE00000);
+			{
+				ChangeSmallPageToLargePage(swapPagePhyAddr & 0xFFFFFFFFFFE00000, PageTableType::ExternalPageTable);
+				ChangeSmallPageToLargePage(swapPagePhyAddr & 0xFFFFFFFFFFE00000, PageTableType::InternalPageTable);
+
+				permission.fields.writeable = true;
+				permission.fields.userAccess = true;
+				permission.fields.executionDisabled = true;
+
+				ChangePageTablePermission(swapPagePhyAddr & 0xFFFFFFFFFFE00000, permission, PageTableType::InternalPageTable, 2);
+			}
 
 			break;
 		}
@@ -1156,6 +1287,7 @@ NTSTATUS NptHookManager::RemoveHook(PVOID pHookOriginVirtAddr)
 	MemoryCopyInfo copyMemInfo = {};
 	OperateRefCountInfo operateRefInfo = {};
 	SwapPageRefCnt swapPageRefCnt = {};
+	PageTableLevel123Entry permission = {};
 
 	bool originPageToLargePage = false;
 	bool swapPageToLargePage = false;
@@ -1325,10 +1457,28 @@ NTSTATUS NptHookManager::RemoveHook(PVOID pHookOriginVirtAddr)
 		SyncSharedData();
 
 		if (originPageToLargePage)
-			ChangeSmallPageToLargePage(pOriginPhyAddr & 0xFFFFFFFFFFE00000);
+		{
+			ChangeSmallPageToLargePage(pOriginPhyAddr & 0xFFFFFFFFFFE00000, PageTableType::ExternalPageTable);
+			ChangeSmallPageToLargePage(pOriginPhyAddr & 0xFFFFFFFFFFE00000, PageTableType::InternalPageTable);
+
+			permission.fields.writeable = true;
+			permission.fields.userAccess = true;
+			permission.fields.executionDisabled = true;
+
+			ChangePageTablePermission(pOriginPhyAddr & 0xFFFFFFFFFFE00000, permission, PageTableType::InternalPageTable, 2);
+		}
 
 		if (swapPageToLargePage)
-			ChangeSmallPageToLargePage(swapPagePhyAddr & 0xFFFFFFFFFFE00000);
+		{
+			ChangeSmallPageToLargePage(swapPagePhyAddr & 0xFFFFFFFFFFE00000, PageTableType::ExternalPageTable);
+			ChangeSmallPageToLargePage(swapPagePhyAddr & 0xFFFFFFFFFFE00000, PageTableType::InternalPageTable);
+
+			permission.fields.writeable = true;
+			permission.fields.userAccess = true;
+			permission.fields.executionDisabled = true;
+
+			ChangePageTablePermission(swapPagePhyAddr & 0xFFFFFFFFFFE00000, permission, PageTableType::InternalPageTable, 2);
+		}
 	} while (false);
 
 	return status;
@@ -1338,10 +1488,34 @@ NTSTATUS NptHookManager::RemoveHook(PVOID pHookOriginVirtAddr)
 NTSTATUS NptHookManager::Init()
 {
 	UINT32 cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
-	coreNptHookStatus.SetCapacity(cpuCnt);
+	pCoreNptHookStatus = (CoreNptHookStatus*)AllocNonPagedMem(sizeof(CoreNptHookStatus) * cpuCnt, PT_TAG);
+
+	if (pCoreNptHookStatus == NULL)
+		return STATUS_MEMORY_NOT_ALLOCATED;
 
 	for (SIZE_TYPE idx = 0; idx < cpuCnt; ++idx)
-		coreNptHookStatus.PushBack(CoreNptHookStatus());
+		CallConstructor(pCoreNptHookStatus + idx);
+
+	//构建内置页表
+	NTSTATUS status = internalPageTableManager.Init();
+
+	if (!NT_SUCCESS(status))
+		return status;
+
+	//设置内置页表默认权限为禁止执行
+	PageTableLevel123Entry permission = {};
+	permission.fields.userAccess = true;
+	permission.fields.writeable = true;
+	permission.fields.executionDisabled = true;
+
+	for (SIZE_TYPE idx = 0; idx < internalPageTableManager.GetCoreNptPageTablesCnt(); ++idx)
+	{
+		CoreNptPageTableManager& pCoreNptPageTableManager = internalPageTableManager.GetCoreNptPageTables()[idx];
+
+		pCoreNptPageTableManager.ChangeAllEndLevelPageTablePermession(permission);;
+	}
+
+	internalPageTableManager.SetDefaultPermission(permission);
 
 	return STATUS_SUCCESS;
 }
@@ -1349,6 +1523,47 @@ NTSTATUS NptHookManager::Init()
 #pragma code_seg("PAGE")
 void NptHookManager::Deinit()
 {
+	SIZE_TYPE cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
+
+	PROCESSOR_NUMBER processorNum = {};
+	GROUP_AFFINITY affinity = {}, oldAffinity = {};
+
+	PTR_TYPE regs[4] = {};
+
+	//释放NPT HOOK 状态内存
+	for (SIZE_TYPE idx = 0; idx < cpuCnt; ++idx)
+		CallDestroyer(pCoreNptHookStatus + idx);
+
+	regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+	regs[1] = NULL;
+	regs[2] = FREE_NONPAGED_MEMORY_CPUID_SUBFUNCTION;
+	regs[3] = (PTR_TYPE)pCoreNptHookStatus;
+
+	SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+	//还原hook
 	for (SIZE_TYPE idx = 0; idx < sharedData.hookRecords.Length(); ++idx)
 		RemoveHook(sharedData.hookRecords[0].pOriginVirtAddr);
+
+	//还原CR3
+	for (ULONG idx = 0; idx < cpuCnt; ++idx)
+	{
+		KeGetProcessorNumberFromIndex(idx, &processorNum);
+		affinity = {};
+		affinity.Group = processorNum.Group;
+		affinity.Mask = 1ULL << processorNum.Number;
+		KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
+
+		regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+		regs[1] = NULL;
+		regs[2] = RESTORE_CR3_CPUID_SUBFUNCTION;
+		regs[3] = idx;
+
+		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+		KeRevertToUserGroupAffinityThread(&oldAffinity);
+	}
+
+	//析构内置NPT页表
+	internalPageTableManager.Deinit();	
 }

@@ -193,14 +193,14 @@ inline KernelVector<ElementType, allocTag, memType>::~KernelVector()
 
 #pragma code_seg()
 template<typename ElementType, UINT32 allocTag, MemType memType>
-inline KernelVector<ElementType, allocTag, memType>::KernelVector(KernelVector<ElementType, allocTag, memType>&& container)
+inline KernelVector<ElementType, allocTag, memType>::KernelVector(KernelVector&& container) : KernelVector()
 {
 	*this = static_cast<KernelVector<ElementType, allocTag, memType>&&>(container);
 }
 
 #pragma code_seg()
 template<typename ElementType, UINT32 allocTag, MemType memType>
-inline KernelVector<ElementType, allocTag, memType>& KernelVector<ElementType, allocTag, memType>::operator=(KernelVector<ElementType, allocTag, memType>&& container)
+inline KernelVector<ElementType, allocTag, memType>& KernelVector<ElementType, allocTag, memType>::operator=(KernelVector&& container)
 {
 	if (&container == this)
 		return *this;
