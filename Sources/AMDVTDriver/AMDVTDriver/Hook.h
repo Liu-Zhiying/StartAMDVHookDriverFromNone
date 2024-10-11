@@ -729,13 +729,40 @@ public:
 	virtual bool HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
 	#pragma code_seg("PAGE")
-	NptHookManager() : pPageTableManager(NULL), pSharedDataCopy(NULL) { PAGED_CODE(); }
+	NptHookManager() : pPageTableManager(NULL), pSharedDataCopy(NULL), pCoreNptHookStatus(NULL) { PAGED_CODE(); }
 	NTSTATUS AddHook(const HookRecord& record);
 	NTSTATUS RemoveHook(PVOID pHookOriginVirtAddr);
 	virtual NTSTATUS Init() override;
 	virtual void Deinit() override;
 	#pragma code_seg("PAGE")
 	virtual ~NptHookManager() { PAGED_CODE(); Deinit(); }
+};
+
+class SimulateSceHookManager : public IInvalidOpcodeInterceptPlugin, public IManager
+{
+public:
+	enum InstructionType
+	{
+		Syscall,
+		Sysret
+	};
+
+	typedef void(*HookCallback)(GenericRegisters* pRegisters, InstructionType type);
+
+	HookCallback pCallback;
+	#pragma code_seg("PAGE")
+	SimulateSceHookManager() : pCallback(NULL) { PAGED_CODE(); }
+
+	virtual bool HandleInvalidOpcode(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
+		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
+
+	#pragma code_seg("PAGE")
+	virtual NTSTATUS Init() override { return STATUS_SUCCESS; }
+	#pragma code_seg("PAGE")
+	virtual void Deinit() {}
+
+	#pragma code_seg("PAGED")
+	virtual ~SimulateSceHookManager() {}
 };
 
 #endif

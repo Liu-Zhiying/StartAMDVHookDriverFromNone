@@ -224,6 +224,7 @@ bool NptHookManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGue
 	return result;
 }
 
+#pragma code_seg()
 bool NptHookManager::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
 {
 	UNREFERENCED_PARAMETER(pGuestVmcbPhyAddr);
@@ -664,6 +665,7 @@ NTSTATUS NptHookManager::SwapSmallPagePpn(PTR_TYPE physicalAddrees1, PTR_TYPE ph
 	return status;
 }
 
+#pragma code_seg("PAGE")
 NTSTATUS NptHookManager::CancelHookOperation(const SwapPageRefCnt& swapPageInfo)
 {
 	NTSTATUS status = STATUS_SUCCESS;
@@ -1566,4 +1568,139 @@ void NptHookManager::Deinit()
 
 	//析构内置NPT页表
 	internalPageTableManager.Deinit();	
+}
+
+#pragma code_seg)
+bool SimulateSceHookManager::HandleInvalidOpcode(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
+{
+	//syscall
+	//0x0f 0x05
+	//sysret
+	//0x0f 0x07
+
+	if (pCallback == NULL)
+		KeBugCheck(MANUALLY_INITIATED_CRASH);
+
+	bool result = false;
+
+	UINT8* pByte = (UINT8*)pVirtCpuInfo->guestVmcb.statusFields.rip;
+
+	if (pByte[0] == 0x0f)
+	{
+		switch (pByte[1])
+		{
+		case 0x05:
+		{
+			//调用回调通知
+			GenericRegisters guestRegistersCopy = *pGuestRegisters;
+
+			guestRegistersCopy.rip = pVirtCpuInfo->guestVmcb.statusFields.rip;
+			guestRegistersCopy.rsp = pVirtCpuInfo->guestVmcb.statusFields.rsp;
+			guestRegistersCopy.rax = pVirtCpuInfo->guestVmcb.statusFields.rax;
+			guestRegistersCopy.rflags = pVirtCpuInfo->guestVmcb.statusFields.rflags;
+
+			pCallback(&guestRegistersCopy, InstructionType::Syscall);
+
+			//模拟syscall
+
+			PTR_TYPE tempRip = NULL;
+
+			PTR_TYPE starMsrValue = pVirtCpuInfo->guestVmcb.statusFields.star;
+			pGuestRegisters->rcx = pVirtCpuInfo->guestVmcb.controlFields.nRip;									//RCX.q = next_RIP
+			pGuestRegisters->r11 = pVirtCpuInfo->guestVmcb.statusFields.rflags;									// R11.q = RFLAGS
+
+			UINT16 syscallCs = ((starMsrValue >> 32) & 0xffff);
+
+			SegmentAttribute csAttribute = GetSegmentAttribute(pVirtCpuInfo->guestVmcb.statusFields.cs.selector, pVirtCpuInfo->guestVmcb.statusFields.gdtr.base);
+			SegmentAttribute ssAttribute = GetSegmentAttribute(pVirtCpuInfo->guestVmcb.statusFields.ss.selector, pVirtCpuInfo->guestVmcb.statusFields.gdtr.base);
+
+			//判断是32位用户程序进入还是64位用户程序进入，选择不同的位置执行
+			if (csAttribute.Fields.LongMode)
+				tempRip = pVirtCpuInfo->guestVmcb.statusFields.lstar;
+			else
+				tempRip = pVirtCpuInfo->guestVmcb.statusFields.cstar;
+
+			csAttribute.Fields.LongMode = 1;
+			csAttribute.Fields.Dpl = 0;
+
+			ssAttribute.Fields.LongMode = 1;
+			ssAttribute.Fields.Dpl = 0;
+
+			pVirtCpuInfo->guestVmcb.statusFields.cs.selector = syscallCs & 0xfffc;
+			pVirtCpuInfo->guestVmcb.statusFields.cs.base = 0;
+			pVirtCpuInfo->guestVmcb.statusFields.cs.limit = 0xFFFFFFFF;
+			pVirtCpuInfo->guestVmcb.statusFields.cs.attrib = csAttribute.AsUInt16;
+
+			pVirtCpuInfo->guestVmcb.statusFields.ss.selector = syscallCs + 8;
+			pVirtCpuInfo->guestVmcb.statusFields.ss.base = 0;
+			pVirtCpuInfo->guestVmcb.statusFields.ss.limit = 0xFFFFFFFF;
+			pVirtCpuInfo->guestVmcb.statusFields.ss.attrib = ssAttribute.AsUInt16;
+
+			PTR_TYPE sfmaskMsrValue = pVirtCpuInfo->guestVmcb.statusFields.sfmask;
+			pVirtCpuInfo->guestVmcb.statusFields.rflags &= ~sfmaskMsrValue;																		//RFLAGS AND ~MSR_SFMASK 
+			pVirtCpuInfo->guestVmcb.statusFields.rflags &= ~(1 << EFLAGS_RF_OFFSET);															//RFLAGS.RF = 0
+
+			//CPL = 0
+			pVirtCpuInfo->guestVmcb.statusFields.cs.selector &= ~0x3;
+
+			//设置RIP
+			pVirtCpuInfo->guestVmcb.statusFields.rip = tempRip;
+
+			result = true;
+			break;
+		}
+		case 0x07:
+		{
+			//调用回调通知
+			GenericRegisters guestRegistersCopy = *pGuestRegisters;
+
+			guestRegistersCopy.rip = pVirtCpuInfo->guestVmcb.statusFields.rip;
+			guestRegistersCopy.rsp = pVirtCpuInfo->guestVmcb.statusFields.rsp;
+			guestRegistersCopy.rax = pVirtCpuInfo->guestVmcb.statusFields.rax;
+			guestRegistersCopy.rflags = pVirtCpuInfo->guestVmcb.statusFields.rflags;
+
+			pCallback(&guestRegistersCopy, InstructionType::Sysret);
+
+			//模拟sysret
+
+			PTR_TYPE tempRip = NULL;
+
+			PTR_TYPE starMsrValue = pVirtCpuInfo->guestVmcb.statusFields.star;
+
+			pVirtCpuInfo->guestVmcb.statusFields.cs.base = 0;
+			pVirtCpuInfo->guestVmcb.statusFields.cs.limit = 0xFFFFFFFF;
+
+			UINT16 sysretCs = (starMsrValue >> 48) & 0xffff;
+
+			if (IoIs32bitProcess(NULL))
+			{
+				tempRip = (UINT32)pGuestRegisters->rcx;
+			}
+			else
+			{
+				//cs.selector += 16
+				sysretCs += 0x10;
+				tempRip = pGuestRegisters->rcx;
+			}
+
+			SegmentAttribute csAttribute = GetSegmentAttribute(sysretCs, pVirtCpuInfo->guestVmcb.statusFields.gdtr.base);
+
+			pVirtCpuInfo->guestVmcb.statusFields.cs.selector = sysretCs | 0x3;
+			pVirtCpuInfo->guestVmcb.statusFields.cs.attrib = csAttribute.AsUInt16;
+
+			//CPL = 3
+			pVirtCpuInfo->guestVmcb.statusFields.cs.selector &= 0x3;
+
+			//RFLAGS.q = r11
+			pVirtCpuInfo->guestVmcb.statusFields.rflags = pGuestRegisters->r11;
+
+			result = true;
+			break;
+		}
+		default:
+			break;
+		}
+	}
+
+	return result;
 }

@@ -180,6 +180,7 @@ class SVMManager : public IManager
 	IBreakprointInterceptPlugin* pBreakpointInterceptPlugin;
 	INCr3Provider* pNCr3Provider;
 	IInvalidOpcodeInterceptPlugin* pInvalidOpcodeInterceptPlugin;
+	bool enableSce;
 	NTSTATUS EnterVirtualization();
 	void LeaveVirtualization();
 	
@@ -187,7 +188,7 @@ public:
 	//请勿调用该函数，这个函数由VMM自动调用
 	void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr);
 	#pragma code_seg("PAGE")
-	SVMManager() : pVirtCpuInfo(NULL), cpuCnt(0), pMsrInterceptPlugin(NULL), pCpuIdInterceptPlugin(NULL), pNpfInterceptPlugin(NULL), pNCr3Provider(NULL), pBreakpointInterceptPlugin(NULL), pInvalidOpcodeInterceptPlugin(NULL) { PAGED_CODE(); }
+	SVMManager() : pVirtCpuInfo(NULL), cpuCnt(0), pMsrInterceptPlugin(NULL), pCpuIdInterceptPlugin(NULL), pNpfInterceptPlugin(NULL), pNCr3Provider(NULL), pBreakpointInterceptPlugin(NULL), pInvalidOpcodeInterceptPlugin(NULL), enableSce(true) { PAGED_CODE(); }
 	#pragma code_seg("PAGE")
 	void SetMsrInterceptPlugin(IMsrInterceptPlugin* _pMsrInterceptPlugin) { PAGED_CODE(); pMsrInterceptPlugin = _pMsrInterceptPlugin; }
 	#pragma code_seg("PAGE")
@@ -200,12 +201,45 @@ public:
 	void SetBreakpointPlugin(IBreakprointInterceptPlugin* _pBreakpointInterceptPlugin) { PAGED_CODE(); pBreakpointInterceptPlugin = _pBreakpointInterceptPlugin; }
 	#pragma code_seg("PAGE")
 	void SetINvalidOpcodePlugin(IInvalidOpcodeInterceptPlugin* _pInvalidOpcodeInterceptPlugin) { PAGED_CODE(); pInvalidOpcodeInterceptPlugin = _pInvalidOpcodeInterceptPlugin; }
-	static SVMStatus CheckSVM();
+	#pragma code_seg("PAGE")
+	void EnanbleSce(bool enable) { PAGED_CODE(); enableSce = enable; }
+	static SVMStatus CheckSVM();	
 	virtual NTSTATUS Init() override;
 	virtual void Deinit() override;
 	#pragma code_seg("PAGE")
 	virtual ~SVMManager() { PAGED_CODE(); SVMManager::Deinit(); }
 };
+
+//段选择器的attribute
+//照抄https://github.com/tandasat/SimpleSvm
+typedef struct _SEGMENT_ATTRIBUTE
+{
+	union
+	{
+		UINT16 AsUInt16;
+		struct
+		{
+			UINT16 Type : 4;        // [0:3]
+			UINT16 System : 1;      // [4]
+			UINT16 Dpl : 2;         // [5:6]
+			UINT16 Present : 1;     // [7]
+			UINT16 Avl : 1;         // [8]
+			UINT16 LongMode : 1;    // [9]
+			UINT16 DefaultBit : 1;  // [10]
+			UINT16 Granularity : 1; // [11]
+			UINT16 Reserved1 : 4;   // [12:15]
+		} Fields;
+	};
+} SEGMENT_ATTRIBUTE, * PSEGMENT_ATTRIBUTE;
+
+typedef SEGMENT_ATTRIBUTE SegmentAttribute;
+
+//获取段描述
+SegmentAttribute GetSegmentAttribute(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase);
+//获取段基地址
+UINT64 GetSegmentBaseAddress(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase);
+//获取段limit，后面加一个2是防止和系统函数冲突，可以直接使用系统函数
+UINT32 GetSegmentLimit2(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase);
 
 #endif
 

@@ -111,8 +111,10 @@ constexpr UINT32 EFER_SVME_OFFSET = 12;
 constexpr UINT32 CPUID_FN_80000001_ECX_SVM_OFFSET = 2;
 constexpr UINT32 VM_CR_SVMDIS_OFFSET = 4;
 constexpr UINT32 NPT_ENABLE_OFFSET = 0;
+constexpr UINT32 SCE_ENABLE_OFFSET = 0;
 constexpr UINT32 CPUID_FN_SVM_FEATURE = 0x80000001;
 constexpr UINT32 CPUID_FN_NPT_FEATURE = 0x8000000a;
+constexpr UINT32 EFLAGS_RF_OFFSET = 16;
 
 template<typename ElementType, UINT32 allocTag, MemType memType = NonPaged>
 class KernelVector

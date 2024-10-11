@@ -42,28 +42,6 @@ typedef struct _SEGMENT_DESCRIPTOR
 	} OptionalField;
 } SEGMENT_DESCRIPTOR, * PSEGMENT_DESCRIPTOR;
 
-//段选择器的attribute
-//照抄https://github.com/tandasat/SimpleSvm
-typedef struct _SEGMENT_ATTRIBUTE
-{
-	union
-	{
-		UINT16 AsUInt16;
-		struct
-		{
-			UINT16 Type : 4;        // [0:3]
-			UINT16 System : 1;      // [4]
-			UINT16 Dpl : 2;         // [5:6]
-			UINT16 Present : 1;     // [7]
-			UINT16 Avl : 1;         // [8]
-			UINT16 LongMode : 1;    // [9]
-			UINT16 DefaultBit : 1;  // [10]
-			UINT16 Granularity : 1; // [11]
-			UINT16 Reserved1 : 4;   // [12:15]
-		} Fields;
-	};
-} SEGMENT_ATTRIBUTE, * PSEGMENT_ATTRIBUTE;
-
 //一系列汇编函数
 //源代码在SVM_asm.asm里面
 //主要都是寄存器读取操作
@@ -86,7 +64,7 @@ extern "C" void _run_svm_vmrun(VirtCpuInfo* pInfo, PVOID pGuestVmcbPhyAddr, PVOI
 //原函数名字是SvGetSegmentAccessRight
 //获取段寄存器Attribute
 #pragma code_seg("PAGE")
-UINT16 _GetSegmentAttribute(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
+SegmentAttribute GetSegmentAttribute(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 {
 	PAGED_CODE();
 	PSEGMENT_DESCRIPTOR descriptor = NULL;
@@ -107,12 +85,12 @@ UINT16 _GetSegmentAttribute(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 	attribute.Fields.Granularity = descriptor->Fields.Granularity;
 	attribute.Fields.Reserved1 = 0;
 
-	return attribute.AsUInt16;
+	return attribute;
 }
 
 //获取段寄存器Base
 #pragma code_seg("PAGE")
-UINT64 _GetSegmentBaseAddress(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
+UINT64 GetSegmentBaseAddress(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 {
 	PAGED_CODE();
 	PSEGMENT_DESCRIPTOR descriptor;
@@ -131,7 +109,7 @@ UINT64 _GetSegmentBaseAddress(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBas
 
 //获取段寄存器Limit
 #pragma code_seg("PAGE")
-UINT32 _GetSegmentLimit(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
+UINT32 GetSegmentLimit2(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 {
 	PAGED_CODE();
 	PSEGMENT_DESCRIPTOR descriptor;
@@ -474,37 +452,37 @@ NTSTATUS SVMManager::EnterVirtualization()
 			//X64 代码段和数据段的base和limit是无效的
 			//base 强制为 0（强制平坦段）
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.cs.selector = _cs_selector();
-			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.cs.attrib = _GetSegmentAttribute(_cs_selector(), gdtrBase);
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.cs.attrib = GetSegmentAttribute(_cs_selector(), gdtrBase).AsUInt16;
 
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ds.selector = _ds_selector();
-			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ds.attrib = _GetSegmentAttribute(_ds_selector(), gdtrBase);
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ds.attrib = GetSegmentAttribute(_ds_selector(), gdtrBase).AsUInt16;
 
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.es.selector = _es_selector();
-			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.es.attrib = _GetSegmentAttribute(_es_selector(), gdtrBase);
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.es.attrib = GetSegmentAttribute(_es_selector(), gdtrBase).AsUInt16;
 
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ss.selector = _ss_selector();
-			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ss.attrib = _GetSegmentAttribute(_ss_selector(), gdtrBase);
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ss.attrib = GetSegmentAttribute(_ss_selector(), gdtrBase).AsUInt16;
 
 			//下面的这一组信息可以使用vmsave指令直接获取
 			//这里为了研究原理手动获取
 			//*************************************** BEGIN ***************************************
 
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.fs.selector = _fs_selector();
-			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.fs.attrib = _GetSegmentAttribute(_fs_selector(), gdtrBase);
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.fs.attrib = GetSegmentAttribute(_fs_selector(), gdtrBase).AsUInt16;
 
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.gs.selector = _gs_selector();
-			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.gs.attrib = _GetSegmentAttribute(_gs_selector(), gdtrBase);
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.gs.attrib = GetSegmentAttribute(_gs_selector(), gdtrBase).AsUInt16;
 
 			//对于TR LDTR base limit 依然有效
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ldtr.selector = ldtrSelector;
-			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ldtr.base = _GetSegmentBaseAddress(ldtrSelector, gdtrBase);
-			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ldtr.limit = _GetSegmentLimit(ldtrSelector, gdtrBase);
-			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ldtr.attrib = _GetSegmentAttribute(ldtrSelector, gdtrBase);
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ldtr.base = GetSegmentBaseAddress(ldtrSelector, gdtrBase);
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ldtr.limit = GetSegmentLimit2(ldtrSelector, gdtrBase);
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ldtr.attrib = GetSegmentAttribute(ldtrSelector, gdtrBase).AsUInt16;
 
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.tr.selector = trSelector;
-			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.tr.base = _GetSegmentBaseAddress(trSelector, gdtrBase);
-			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.tr.limit = _GetSegmentLimit(trSelector, gdtrBase);
-			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.tr.attrib = _GetSegmentAttribute(trSelector, gdtrBase);
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.tr.base = GetSegmentBaseAddress(trSelector, gdtrBase);
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.tr.limit = GetSegmentLimit2(trSelector, gdtrBase);
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.tr.attrib = GetSegmentAttribute(trSelector, gdtrBase).AsUInt16;
 
 			//FSBase GSBase KenrelGSBase 可以不为0 但是是放在MSR寄存器里面的
 			/*
@@ -532,6 +510,11 @@ NTSTATUS SVMManager::EnterVirtualization()
 
 			//填充 VMCB EFER 的 EFER 值中SVME位必须为1，否则vmrun会失败
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.efer = __readmsr(IA32_MSR_EFER);
+
+			//需要时禁用syscall和sysret
+			if (!enableSce)
+				pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.efer &= ~(1 << SCE_ENABLE_OFFSET);
+
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.cr0 = __readcr0();
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.cr2 = __readcr2();
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.cr3 = __readcr3();
