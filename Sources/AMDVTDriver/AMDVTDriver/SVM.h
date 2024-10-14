@@ -51,6 +51,7 @@ class ICpuidInterceptPlugin;
 class INpfInterceptPlugin;
 class SVMManager;
 
+//SVM 每个核心的虚拟化信息
 struct VirtCpuInfo
 {
 	DECLSPEC_ALIGN(PAGE_SIZE) VMCB guestVmcb;
@@ -66,6 +67,7 @@ struct VirtCpuInfo
 	} otherInfo;
 };
 
+//MSR拦截插件
 class IMsrInterceptPlugin
 {
 public:
@@ -83,6 +85,7 @@ public:
 	virtual ~IMsrInterceptPlugin() {}
 };
 
+//CPUID拦截插件
 class ICpuidInterceptPlugin
 {
 public:
@@ -93,6 +96,7 @@ public:
 	virtual ~ICpuidInterceptPlugin() {}
 };
 
+//NPF拦截插件
 class INpfInterceptPlugin
 {
 public:
@@ -103,33 +107,40 @@ public:
 	virtual ~INpfInterceptPlugin() {}
 };
 
+//BP拦截插件
 class IBreakprointInterceptPlugin
 {
 public:
+	//处理拦截的BP事件，true代表已经处理，false代表未处理
 	virtual bool HandleBreakpoint(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) = 0;
 	#pragma code_seg()
 	virtual ~IBreakprointInterceptPlugin() {}
 };
 
+//UD拦截插件
 class IInvalidOpcodeInterceptPlugin
 {
 public:
+	//处理拦截的UD事件，true代表已经处理，false代表未处理
 	virtual bool HandleInvalidOpcode(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) = 0;
 	#pragma code_seg()
 	virtual ~IInvalidOpcodeInterceptPlugin() {}
 };
 
+//DE拦截插件
 class IDebugInterceptPlugin
 {
 public:
+	//处理拦截的DE事件，true代表已经处理，false代表未处理
 	virtual bool HandleDebug(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, 
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) = 0;
 	#pragma code_seg()
 	virtual ~IDebugInterceptPlugin() {}
 };
 
+//NPT页表提供接口
 class INCr3Provider
 {
 public:

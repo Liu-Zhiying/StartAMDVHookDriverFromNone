@@ -408,9 +408,9 @@ public:
 	NTSTATUS MapSmallPageByPhyAddr(PTR_TYPE begPhyAddr, PTR_TYPE endPhyAddr);
 	//交换小页的最终物理地址
 	NTSTATUS SwapSmallPagePpn(PTR_TYPE phyAddr1, PTR_TYPE phyAddr2);
-	//获取指定物理地址对应的NPT页表的最终地址
+	//获取指定虚拟地址对应的NPT页表的最终PPN对应的物理地址
 	NTSTATUS GetNptFinalAddrForPhyAddr(PTR_TYPE phyAddr, PTR_TYPE& pNptFinalAddr, PTR_TYPE& level);
-	//修改所有页表的权限
+	//修改所有最底层页表的权限
 	void ChangeAllEndLevelPageTablePermession(PageTableLevel123Entry entry);
 	//修改特定页表的值
 	NTSTATUS ChangePageTablePermession(PTR_TYPE pa, PageTableLevel123Entry entry, UINT32 level);

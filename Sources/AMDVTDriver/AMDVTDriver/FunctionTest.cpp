@@ -2,13 +2,19 @@
 #include "main.h"
 
 #pragma code_seg()
-void TestLStarHookCallback()
+void TestLStarHookCallback(GenericRegisters* pRegisters, PVOID param1, PVOID param2, PVOID param3)
 {
+	UNREFERENCED_PARAMETER(pRegisters);
+	UNREFERENCED_PARAMETER(param1);
+	UNREFERENCED_PARAMETER(param2);
+	UNREFERENCED_PARAMETER(param3);
+
 	static bool showMessage = false;
 	if (!showMessage)
 	{
 		showMessage = true;
 		KdPrint(("Msr Hook OK!\n"));
+		KdPrint(("rax = %llu, user rsp = %p, param1 = %llu, param2 = %llu, param3 = %llu\n", pRegisters->rax, (PVOID)pRegisters->extraInfo1, param1, param2, param3));
 	}
 }
 
@@ -85,11 +91,6 @@ void GlobalManager::HookApi()
 		return;
 	}
 
-	//获取ExAllocatePool2的物理地址
-	PTR_TYPE apiPhyAddr = MmGetPhysicalAddress(apiVirtAddr).QuadPart;
-
-	KdPrint(("GlobalManager::HookApi(): ExAllocatePool2 physical address: %llx\n", apiPhyAddr));
-
 	//构造hook时返回执行原函数的代码，注意，这里的hook代码只对Windows 11 24h2有效
 	//0x48, 0x89, 0x5c, 0x24, 0x10 
 	//mov qword ptr [rsp+10h], rbx 这条指令是ExAllocatePool2在Windows 11 24h2的第一条指令
@@ -125,7 +126,7 @@ void GlobalManager::EnableMsrHook()
 	PAGED_CODE();
 
 	//HOOK MSR_LSTAR
-	EnableLStrHook<1>(&msrHookManager, TestLStarHookCallback);
+	EnableLStrHook<1>(&msrHookManager, TestLStarHookCallback,(PVOID)1, (PVOID)2, (PVOID)3);
 }
 
 #pragma code_seg("PAGE")

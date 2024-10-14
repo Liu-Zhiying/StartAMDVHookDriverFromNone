@@ -119,26 +119,33 @@ struct OperateRefCountInfo
 //无效MSR编号常量
 const UINT32 INVALID_MSRNUM = (UINT32)-1;
 
-typedef void(*pLStarHookCallback)();
+//HOOK MSR_LSTAR 的函数原型，GenericRegisters 的 extraInfo1 是 用户态 rsp 地址
+typedef void(*pLStarHookCallback)(GenericRegisters* pRegisters, PVOID param1, PVOID param2, PVOID param3);
 
 //READ_MSR_CPUID_SUBFUNCTION 和 WRITE_MSR_CPUID_SUBFUNCTION 的参数
 struct MsrOperationParameter
 {
 	//MSR 编号
 	UINT32 msrNum;
-	//要写入的新值或者读取回写的指针
+	//MSR 值数组的指针，索引是核心索引
 	PTR_TYPE* pValueInOut;
 };
 
+//MSR HOOK 管理器，msrHookCount代表要Hook的MSR的个数
 template<SIZE_TYPE msrHookCount>
 class MsrHookManager : public IManager, public IMsrInterceptPlugin, public ICpuidInterceptPlugin
 {
+	//MSR HOOK 值备份
 	MsrHookParameter parameters[msrHookCount];
+	//是否已经初始化
 	bool inited;
+	//CPO核心个数
 	ULONG cpuCnt;
+	//锁
 	ReadWriteLock locker;
 public:
 	MsrHookManager();
+	//设置每个要hook的msr的编号
 	void SetHookMsrs(UINT32(&msrNums)[msrHookCount]);
 	virtual NTSTATUS Init() override;
 	virtual void Deinit() override;
@@ -151,9 +158,9 @@ public:
 		UINT32 msrNum) override;
 	virtual bool HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
-	//启用 msr hook
-	void EnableMsrHook(UINT32 msrNum, PTR_TYPE readValue);
-	//禁用 msr hook writeFakeValueToMsr代表是否将欺骗值写入msr以还原msr
+	//启用 msr hook，msrNum代表编号，realValue 代表真实值，之后对msr的读写都是在欺骗值的内存中，不会影响真实值
+	void EnableMsrHook(UINT32 msrNum, PTR_TYPE realValue);
+	//禁用 msr hook，writeFakeValueToMsr代表是否将欺骗值写入msr以还原msr
 	void DisableMsrHook(UINT32 msrNum, bool writeFakeValueToMsr = true);
 	#pragma code_seg("PAGE")
 	virtual ~MsrHookManager() { PAGED_CODE(); Deinit(); }
@@ -187,8 +194,9 @@ NTSTATUS MsrHookManager<msrHookCount>::Init()
 	NTSTATUS status = STATUS_SUCCESS;
 	if (!inited)
 	{
+		//获取CPU核心数
 		cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
-
+		//为每个要hook的msr分配值备份空间
 		for (MsrHookParameter& param : parameters)
 		{
 			param.pFakeValues = (PTR_TYPE*)AllocNonPagedMem(sizeof * param.pFakeValues * cpuCnt, HOOK_TAG);
@@ -217,6 +225,7 @@ void MsrHookManager<msrHookCount>::Deinit()
 		GROUP_AFFINITY affinity = {}, oldAffinity = {};
 		MsrOperationParameter optParam = {};
 
+		//回写欺骗值到每个核心的MSR
 		for (SIZE_TYPE idx1 = 0; idx1 < msrHookCount; ++idx1)
 		{
 			if (parameters[idx1].enabled)
@@ -242,7 +251,7 @@ void MsrHookManager<msrHookCount>::Deinit()
 				parameters[idx1].enabled = false;
 			}
 		}
-
+		//释放内存
 		for (MsrHookParameter param : parameters)
 		{
 			if (param.pFakeValues != NULL)
@@ -251,7 +260,7 @@ void MsrHookManager<msrHookCount>::Deinit()
 				param.pFakeValues = NULL;
 			}
 		}
-
+		//清空成员
 		cpuCnt = 0;
 
 		inited = false;
@@ -272,6 +281,7 @@ inline void MsrHookManager<msrHookCount>::SetMsrPremissionMap(RTL_BITMAP& bitmap
 	constexpr UINT32 THIRD_MSRPM_OFFSET = 0x1000 * CHAR_BIT;
 	constexpr UINT32 MSRPM_MSR_LENGTH = 0x2000;
 
+	//根据要hook的msr编号设置msr permission map
 	for (const MsrHookParameter& param : parameters)
 	{
 		UINT32 msrpmOffset = 0;
@@ -387,6 +397,7 @@ inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo,
 			IA32_MSR_SYSENTER_ESP
 			IA32_MSR_SYSENTER_EIP
 			这些msr寄存器是由VMCB决定，所以从VMCB中读取
+			其他msr则直接读
 			*/
 
 			switch (pOptParam->msrNum)
@@ -452,6 +463,7 @@ inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo,
 			IA32_MSR_SYSENTER_ESP
 			IA32_MSR_SYSENTER_EIP
 			这些msr寄存器是由VMCB决定，所以直接写入VMCB
+			其他msr则直接写
 			*/
 
 			switch (pOptParam->msrNum)
@@ -521,6 +533,7 @@ inline void MsrHookManager<msrHookCount>::EnableMsrHook(UINT32 msrNum, PTR_TYPE 
 
 	for (SIZE_TYPE idx1 = 0; idx1 < msrHookCount; ++idx1)
 	{
+		//如果没有启用该msr的hook，而且msr编号匹配
 		if (!parameters[idx1].enabled && parameters[idx1].msrNum == msrNum)
 		{
 			for (ULONG idx2 = 0; idx2 < cpuCnt; ++idx2)
@@ -532,6 +545,7 @@ inline void MsrHookManager<msrHookCount>::EnableMsrHook(UINT32 msrNum, PTR_TYPE 
 				affinity.Mask = 1ULL << processorNum.Number;
 				KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
 
+				//读取每一个核心的原值作为欺骗值
 				optParam.msrNum = msrNum;
 				optParam.pValueInOut = &parameters[idx1].pFakeValues[idx2];
 
@@ -542,6 +556,7 @@ inline void MsrHookManager<msrHookCount>::EnableMsrHook(UINT32 msrNum, PTR_TYPE 
 
 				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 
+				//写入真实值到每个核心
 				optParam.msrNum = msrNum;
 				optParam.pValueInOut = &realValue;
 
@@ -574,8 +589,10 @@ inline void MsrHookManager<msrHookCount>::DisableMsrHook(UINT32 msrNum, bool wri
 
 	for (SIZE_TYPE idx1 = 0; idx1 < msrHookCount; ++idx1)
 	{
+		//如果已经启用该msr的hook，而且msr编号匹配
 		if (parameters[idx1].enabled && parameters[idx1].msrNum == msrNum)
 		{
+			//回写欺骗值到每个核心的MSR
 			if (writeFakeValueToMsr)
 			{
 				for (ULONG idx2 = 0; idx2 < cpuCnt; ++idx2)
@@ -602,13 +619,14 @@ inline void MsrHookManager<msrHookCount>::DisableMsrHook(UINT32 msrNum, bool wri
 	locker.WriteUnlock();
 }
 
+//MSR_LSTAR HOOK 帮助函数，启用HOOK
 //启用IA32_MSR_LSTAR HOOK 使用之前需要调用MsrHookManager::SetHookMsrs注册IA32_MSR_LSTAR
 #pragma code_seg("PAGE")
 template<SIZE_TYPE msrCnt>
-void EnableLStrHook(MsrHookManager<msrCnt>* pMsrHookManager, pLStarHookCallback pCallback)
+void EnableLStrHook(MsrHookManager<msrCnt>* pMsrHookManager, pLStarHookCallback pCallback, PVOID param1, PVOID param2, PVOID param3)
 {
 	PAGED_CODE();
-	extern void SetLStrHookEntryParameters(PTR_TYPE oldEntry, PTR_TYPE pCallback);
+	extern void SetLStrHookEntryParameters(PTR_TYPE oldEntry, PTR_TYPE pCallback, PTR_TYPE param1, PTR_TYPE param2, PTR_TYPE param3);
 	extern PTR_TYPE GetLStarHookEntry();
 
 	MsrOperationParameter optParam = {};
@@ -620,10 +638,11 @@ void EnableLStrHook(MsrHookManager<msrCnt>* pMsrHookManager, pLStarHookCallback 
 
 	SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 
-	SetLStrHookEntryParameters((PTR_TYPE)pOldEntry, (PTR_TYPE)pCallback);
+	SetLStrHookEntryParameters((PTR_TYPE)pOldEntry, (PTR_TYPE)pCallback, (PTR_TYPE)param1, (PTR_TYPE)param2, (PTR_TYPE)param3);
 	pMsrHookManager->EnableMsrHook(IA32_MSR_LSTAR, (PTR_TYPE)GetLStarHookEntry());
 }
 
+//MSR_LSTAR HOOK 帮助函数，禁用HOOK
 #pragma code_seg("PAGE")
 template<SIZE_TYPE msrCnt>
 void DisableLStrHook(MsrHookManager<msrCnt>* pMsrHookManager)
@@ -633,13 +652,13 @@ void DisableLStrHook(MsrHookManager<msrCnt>* pMsrHookManager)
 }
 
 //页表Level3改小页的记录项，如果计数为0，则可以恢复大页
-struct SmallPageLevel3RefCnt
+struct SmallPageLevel2RefCnt
 {
 	//包含level 1 2 3偏移的的物理地址
 	PTR_TYPE level3PhyAddr;
 	SIZE_TYPE refCnt;
 	#pragma code_seg()
-	SmallPageLevel3RefCnt() : level3PhyAddr(INVALID_ADDR), refCnt(0) {}
+	SmallPageLevel2RefCnt() : level3PhyAddr(INVALID_ADDR), refCnt(0) {}
 };
 
 //交换页的记录
@@ -665,16 +684,21 @@ struct NptHookRecord
 	NptHookRecord() : pOriginVirtAddr(NULL), pGotoVirtAddr(NULL) {}
 };
 
+//NPT HOOK 核心间共享的数据，主要是HOOK记录、小页记录、交换页记录
 class NptHookSharedData
 {
 public:
-	KernelVector<SmallPageLevel3RefCnt, HOOK_TAG> level3Refs;
+	KernelVector<SmallPageLevel2RefCnt, HOOK_TAG> level3Refs;
 	KernelVector<SwapPageRefCnt, HOOK_TAG> swapPageRefs;
 	KernelVector<NptHookRecord, HOOK_TAG> hookRecords;
 
+	//通过hook的原始虚拟地址查找记录（HookRecord）
 	SIZE_TYPE FindHookRecordByOriginVirtAddr(PVOID pOriginAddr) const;
-	SIZE_TYPE FindSmallPageLevel3RefCntByPhyAddr(PTR_TYPE phyAddr) const;
-	SIZE_TYPE FindSwapPageRefCntByPhyAddr(PTR_TYPE phyAddr) const;
+	//通过物理地址（只带有Level 4 3 2三级偏移）查找小页记录（SmallPageLevel3RefCnt）
+	SIZE_TYPE FindSmallPageLevel2RefCntByPhyAddr(PTR_TYPE phyAddr) const;
+	//通过hook源物理地址查找交换页记录（SwapPageRefCnt）
+	SIZE_TYPE FindSwapPageRefCntByOriginPhyAddr(PTR_TYPE phyAddr) const;
+	//通过hook源虚拟地址查找交换页记录（SwapPageRefCnt）
 	SIZE_TYPE FindSwapPageRefCntByOriginVirtAddr(PVOID pOriginAddr) const;
 
 	NptHookSharedData() = default;
@@ -701,6 +725,11 @@ struct CoreNptHookStatus
 	};
 	PremissionStatus premissionStatus;
 	PTR_TYPE pLastActiveHookPageVirtAddr;
+	//核心间共享的数据的拷贝的指针7
+
+	//核心间共享的数据会有两份，一份在NptHookManager中，另一份则由这个指针指向
+	//修改HOOK时，先更新NptHookManager中的数据，再拷贝一份NptHookManager中，并将拷贝的指针更新到这个指针中，最后销毁这个指针旧值指向的数据
+
 	const NptHookSharedData* pSharedData;
 public:
 	#pragma code_seg()
@@ -709,35 +738,48 @@ public:
 
 class NptHookManager : public IManager, public IBreakprointInterceptPlugin, public INpfInterceptPlugin, public ICpuidInterceptPlugin
 {
+	//核心间共享数据
 	NptHookSharedData sharedData;
+	//核心间共享数据拷贝的指针
 	NptHookSharedData* pSharedDataCopy;
+	//每个核心的NPT HOOK状态
 	CoreNptHookStatus* pCoreNptHookStatus;
+	//外部页表管理器的指针
 	PageTableManager* pPageTableManager;
+	//内部页表管理器，每个核心在内部页表和外部页表之间切换，加快NPT HOOK的速度
 	PageTableManager internalPageTableManager;
 
+	//使用大页映射和使用小页映射切换
 	NTSTATUS ChangeLargePageToSmallPage(PTR_TYPE pOriginLevel3PhyAddr, PageTableType type);
 	NTSTATUS ChangeSmallPageToLargePage(PTR_TYPE pOriginLevel3PhyAddr, PageTableType type);
-
+	//修改页表的权限
 	NTSTATUS ChangePageTablePermission(PTR_TYPE physicalAddress, PageTableLevel123Entry permission, PageTableType type, UINT32 level);
-
+	//交换小页的PPN
 	NTSTATUS SwapSmallPagePpn(PTR_TYPE physicalAddrees1, PTR_TYPE physicalAddress2, PageTableType type);
-
+	//取消hook对页表的操作
 	NTSTATUS CancelHookOperation(const SwapPageRefCnt& swapPageInfo);
-
+	//同步共享数据
 	void SyncSharedData();
+
+	//上面的成员函数的核心功能都通过CPUID交由VMM处理
 
 public:
 	#pragma code_seg("PAGE")
 	void SetPageTableManager(PageTableManager* _pPageTableManager) { PAGED_CODE(); pPageTableManager = _pPageTableManager; }
+	//HOOK 跳转
 	virtual bool HandleBreakpoint(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
+	//HOOK页表权限修改
 	virtual bool HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
+	//提供修改HOOK使用的必须功能
 	virtual bool HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
 	#pragma code_seg("PAGE")
 	NptHookManager() : pPageTableManager(NULL), pSharedDataCopy(NULL), pCoreNptHookStatus(NULL) { PAGED_CODE(); }
+	//添加hook
 	NTSTATUS AddHook(const NptHookRecord& record);
+	//删除hook，pHookOriginVirtAddr是hook位置的虚拟地址
 	NTSTATUS RemoveHook(PVOID pHookOriginVirtAddr);
 	virtual NTSTATUS Init() override;
 	virtual void Deinit() override;
