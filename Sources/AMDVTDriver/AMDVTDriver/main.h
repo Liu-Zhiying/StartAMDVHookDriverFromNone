@@ -15,7 +15,6 @@ class GlobalManager : public IManager
 	SVMManager svmManager;
 	MsrHookManager<1> msrHookManager;
 	NptHookManager nptHookManager;
-	SimulateSceHookManager simulateSceHookManager;
 public:
 	void SetMsrHookParameters();
 	void SetNptHook();
