@@ -121,6 +121,15 @@ public:
 	virtual ~IInvalidOpcodeInterceptPlugin() {}
 };
 
+class IDebugInterceptPlugin
+{
+public:
+	virtual bool HandleDebug(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, 
+		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) = 0;
+	#pragma code_seg()
+	virtual ~IDebugInterceptPlugin() {}
+};
+
 class INCr3Provider
 {
 public:
@@ -178,6 +187,7 @@ class SVMManager : public IManager
 	ICpuidInterceptPlugin* pCpuIdInterceptPlugin;
 	INpfInterceptPlugin* pNpfInterceptPlugin;
 	IBreakprointInterceptPlugin* pBreakpointInterceptPlugin;
+	IDebugInterceptPlugin* pDebugInterceptPlugin;
 	INCr3Provider* pNCr3Provider;
 	IInvalidOpcodeInterceptPlugin* pInvalidOpcodeInterceptPlugin;
 	bool enableSce;
@@ -188,7 +198,7 @@ public:
 	//请勿调用该函数，这个函数由VMM自动调用
 	void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr);
 	#pragma code_seg("PAGE")
-	SVMManager() : pVirtCpuInfo(NULL), cpuCnt(0), pMsrInterceptPlugin(NULL), pCpuIdInterceptPlugin(NULL), pNpfInterceptPlugin(NULL), pNCr3Provider(NULL), pBreakpointInterceptPlugin(NULL), pInvalidOpcodeInterceptPlugin(NULL), enableSce(true) { PAGED_CODE(); }
+	SVMManager() : pVirtCpuInfo(NULL), cpuCnt(0), pMsrInterceptPlugin(NULL), pCpuIdInterceptPlugin(NULL), pNpfInterceptPlugin(NULL), pNCr3Provider(NULL), pBreakpointInterceptPlugin(NULL), pInvalidOpcodeInterceptPlugin(NULL), pDebugInterceptPlugin(NULL), enableSce(true) { PAGED_CODE(); }
 	#pragma code_seg("PAGE")
 	void SetMsrInterceptPlugin(IMsrInterceptPlugin* _pMsrInterceptPlugin) { PAGED_CODE(); pMsrInterceptPlugin = _pMsrInterceptPlugin; }
 	#pragma code_seg("PAGE")
@@ -201,6 +211,8 @@ public:
 	void SetBreakpointPlugin(IBreakprointInterceptPlugin* _pBreakpointInterceptPlugin) { PAGED_CODE(); pBreakpointInterceptPlugin = _pBreakpointInterceptPlugin; }
 	#pragma code_seg("PAGE")
 	void SetINvalidOpcodePlugin(IInvalidOpcodeInterceptPlugin* _pInvalidOpcodeInterceptPlugin) { PAGED_CODE(); pInvalidOpcodeInterceptPlugin = _pInvalidOpcodeInterceptPlugin; }
+	#pragma code_seg("PAGE")
+	void SetDebugInterceptPlugin(IDebugInterceptPlugin* _pDebugInterceptPlugin) { PAGED_CODE(); pDebugInterceptPlugin = _pDebugInterceptPlugin; }
 	#pragma code_seg("PAGE")
 	void EnanbleSce(bool enable) { PAGED_CODE(); enableSce = enable; }
 	static SVMStatus CheckSVM();	

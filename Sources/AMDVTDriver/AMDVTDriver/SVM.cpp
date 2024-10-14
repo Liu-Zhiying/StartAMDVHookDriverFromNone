@@ -128,9 +128,11 @@ UINT32 GetSegmentLimit2(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 #pragma code_seg()
 extern "C" void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
 {
+	//转发到SVMManager::VmExitHandler函数
 	return pVirtCpuInfo->otherInfo.pSvmManager->VmExitHandler(pVirtCpuInfo, pGuestRegisters, pGuestVmcbPhyAddr, pHostVmcbPhyAddr);
 }
 
+//获取CPU生产商的字符串
 #pragma code_seg("PAGE")
 void CPUString(char* outputString)
 {
@@ -179,6 +181,7 @@ NTSTATUS MsrPremissionsMapManager::Init()
 	//VM_CR读取写入拦截
 	RtlSetBits(&bitmapHeader, VM_CR_OFFSET, 2);
 
+	//如果MSR拦截插件存在，让插件设置拦截标志位
 	if (pMsrInterceptPlugin != NULL)
 		pMsrInterceptPlugin->SetMsrPremissionMap(bitmapHeader);
 
@@ -205,6 +208,7 @@ SVMStatus SVMManager::CheckSVM()
 	PAGED_CODE();
 	char szCpuString[13];
 	CPUString(szCpuString);
+	//检查是否是AMD CPU
 	if (strcmp(szCpuString, "AuthenticAMD"))
 		return SVMS_NONAMDCPU;
 
@@ -259,6 +263,7 @@ NTSTATUS SVMManager::Init()
 
 		status = STATUS_INSUFFICIENT_RESOURCES;
 
+		//虚拟化硬件检查
 		if (svmStatus & SVMStatus::SVMS_NONAMDCPU)
 		{
 			KdPrint(("SVMManager::Init(): Not AMD Processor!\n"));
@@ -277,7 +282,8 @@ NTSTATUS SVMManager::Init()
 			break;
 		}
 
-		if (!(svmStatus & SVMStatus::SVMS_NPT_ENABLED))
+		//如果提供了NPT页表而且SVM不支持NPT，那么提示不支持NPT
+		if (!(svmStatus & SVMStatus::SVMS_NPT_ENABLED) && pNCr3Provider != NULL)
 		{
 			KdPrint(("SVMManager::Init(): NPT feature is not enabled!\n"));
 			break;
@@ -292,7 +298,7 @@ NTSTATUS SVMManager::Init()
 
 		if (pVirtCpuInfo == NULL || !NT_SUCCESS(msrPremissionMap.Init()))
 		{
-			KdPrint(("SVMManager::Init(): Memory not enough!\n"));
+			KdPrint(("SVMManager::Init(): MSR premission map init failed!\n"));
 			break;
 		}
 
@@ -313,7 +319,7 @@ NTSTATUS SVMManager::Init()
 
 		if (!NT_SUCCESS(status))
 		{
-			KdPrint(("SVMManager::Init(): Memory not enough!\n"));
+			KdPrint(("SVMManager::Init(): CPU Virtualization resource init failed!\n"));
 			break;
 		}
 		//进入虚拟化
@@ -424,11 +430,15 @@ NTSTATUS SVMManager::EnterVirtualization()
 
 			//如果断点拦截插件存在，打开断点拦截
 			if (pBreakpointInterceptPlugin != NULL)
-				pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.interceptExceptionX = (1UL << 3);
+				pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.interceptExceptionX = (1UL << BP_EXPECTION_VECTOR_INDEX);
 
 			//如果UD拦截插件存在，打开UD拦截
 			if (pInvalidOpcodeInterceptPlugin != NULL)
-				pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.interceptExceptionX |= (1UL << 6);
+				pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.interceptExceptionX |= (1UL << UD_EXCEPTION_VECTOR_INDEX);
+
+			//如果DE拦截插件存在，打开DE拦截
+			if (pDebugInterceptPlugin != NULL)
+				pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.interceptExceptionX |= (1LL << DB_EXCEPTION_VECTOR_INDEX);
 
 			pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.msrpmBasePA = msrPremissionMap.GetPhyAddress();
 			pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.guestASID = 1;
@@ -683,7 +693,7 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 
 		//默认直接注入断点异常由guest处理
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.data = 0;
-		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vector = 3;
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vector = BP_EXPECTION_VECTOR_INDEX;
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.type = 3;
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vaild = 1;
 		pVMMVirtCpuInfo->guestVmcb.statusFields.rip = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
@@ -697,22 +707,32 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 
 		//注入UD异常由guest处理
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.data = 0;
-		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vector = 6;
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vector = UD_EXCEPTION_VECTOR_INDEX;
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.type = 3;
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vaild = 1;
-		//pVMMVirtCpuInfo->guestVmcb.statusFields.rip = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
+		break;
+	}
+	case VMEXIT_REASON_EXCEPTION_DB:
+	{
+		if (pDebugInterceptPlugin != NULL &&
+			pDebugInterceptPlugin->HandleDebug(pVMMVirtCpuInfo, pGuestRegisters, pGuestVmcbPhyAddr, pHostVmcbPhyAddr))
+			return;
+
+		//注入DB异常由guest处理
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.data = 0;
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vector = DB_EXCEPTION_VECTOR_INDEX;
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.type = 3;
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vaild = 1;
 		break;
 	}
 	case VMEXIT_REASON_VMRUN:
 	{
 		//注入断点异常由guest处理
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.data = 0;
-		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vector = 3;
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vector = BP_EXPECTION_VECTOR_INDEX;
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.type = 3;
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vaild = 1;
 		pVMMVirtCpuInfo->guestVmcb.statusFields.rip = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
-
-		//KeBugCheck(MANUALLY_INITIATED_CRASH);
 		break;
 	}
 	case VMEXIT_REASON_NPF:

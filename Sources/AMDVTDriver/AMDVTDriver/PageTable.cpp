@@ -1,15 +1,18 @@
 #include "PageTable.h"
 #include <intrin.h>
 
+//计算物理地址的PFN
 #define GET_PFN_FROM_PHYADDR(phyAddr) (((phyAddr) >> 12) & 0xfffffff)
+//PFN转换为物理地址
 #define GET_PHYADDR_FROM_PFN(pfn) (((pfn) & 0xfffffff) << 12)
+//简单移位
 #define MUL_UNIT(value, rightShift) ((value) << (rightShift))
 
-//获取页表基地址（虚拟地址）
-#pragma code_seg("PAGE")
+//获取当前页表基地址（虚拟地址）
+//适用于Windows 10 1607 之后的页表随机化
+#pragma code_seg()
 void GetSysPXEVirtAddr(PTR_TYPE* pPxeOut)
 {
-	PAGED_CODE();
 	//读取Cr3物理地址并使用Windows内核函数转换为虚拟地址
 	//注意：MmGetVirtualForPhysical被微软标记为保留，除了名字外啥也没提
 	PTR_TYPE pxePhyAddr = __readcr3();
@@ -68,10 +71,10 @@ void GetSysPXEVirtAddr(PTR_TYPE* pPxeOut)
 	*/
 
 	//显示结果
-	KdPrint(("GetWinPageTableVirtualAddr(): PXE: 0x%llx\n", *pPxeOut));
-	KdPrint(("GetWinPageTableVirtualAddr(): PPE: 0x%llx\n", (*pPxeOut) & 0xFFFFFFFFFFE00000));
-	KdPrint(("GetWinPageTableVirtualAddr(): PDE: 0x%llx\n", (*pPxeOut) & 0xFFFFFFFFC0000000));
-	KdPrint(("GetWinPageTableVirtualAddr(): PTE: 0x%llx\n", (*pPxeOut) & 0xFFFFFF8000000000));
+	//KdPrint(("GetWinPageTableVirtualAddr(): PXE: 0x%llx\n", *pPxeOut));
+	//KdPrint(("GetWinPageTableVirtualAddr(): PPE: 0x%llx\n", (*pPxeOut) & 0xFFFFFFFFFFE00000));
+	//KdPrint(("GetWinPageTableVirtualAddr(): PDE: 0x%llx\n", (*pPxeOut) & 0xFFFFFFFFC0000000));
+	//KdPrint(("GetWinPageTableVirtualAddr(): PTE: 0x%llx\n", (*pPxeOut) & 0xFFFFFF8000000000));
 
 	return;
 }
@@ -85,20 +88,22 @@ NTSTATUS AllocNewPageTable(EntryType* fatherEntry, PageTableRecords& records, PT
 
 	do
 	{
+		//分配内存
 		TableType* pSubTable = (TableType*)AllocNonPagedMem(sizeof * pSubTable, PT_TAG);
 		if (pSubTable == NULL)
 		{
 			status = STATUS_INSUFFICIENT_RESOURCES;
 			break;
 		}
-
+		//返回新页表虚拟地址
 		va = (PTR_TYPE)pSubTable;
+		//获取新页表物理地址
 		PTR_TYPE pa = (PTR_TYPE)MmGetPhysicalAddress((PVOID)pSubTable).QuadPart;
-
+		//添加到页表记录
 		records.PushBack(PageTableRecord((PTR_TYPE)pSubTable, pa));
-
+		//设置父页表项
 		entrySetter(fatherEntry, GET_PFN_FROM_PHYADDR(pa), false);
-
+		//清空子页表
 		RtlZeroMemory(pSubTable, sizeof * pSubTable);
 
 	} while (false);
@@ -118,6 +123,7 @@ NTSTATUS ProcessNptPageTableFrontLevelImpl(TableType* pTable, PTR_TYPE startPhyA
 
 	do
 	{
+		//检查参数，结束地址必须大于起始地址
 		if (endPhyAddr <= startPhyAddr)
 		{
 			status = STATUS_INVALID_PARAMETER;
@@ -134,16 +140,18 @@ NTSTATUS ProcessNptPageTableFrontLevelImpl(TableType* pTable, PTR_TYPE startPhyA
 			++idxCnt;
 		PTR_TYPE endIdx = startIdx + idxCnt;
 
+		//检查参数，防止越界
 		if (endIdx > 0x200)
 		{
 			status = STATUS_INVALID_PARAMETER;
 			break;
 		}
 
+		//初始化页表项
 		for (PTR_TYPE idx = startIdx; idx < endIdx; ++idx)
 		{
 			PTR_TYPE va = (PTR_TYPE)INVALID_ADDR;
-
+			//如果该页表项为空，则分配子页表并初始化，并获取子页表的虚拟地址
 			if (!pTable->entries[idx].fields.present)
 			{
 				if constexpr (level == 2)
@@ -155,6 +163,7 @@ NTSTATUS ProcessNptPageTableFrontLevelImpl(TableType* pTable, PTR_TYPE startPhyA
 				if (!NT_SUCCESS(status))
 					break;
 			}
+			//如果该页表项不为空，直接获取子页表虚拟地址
 			else
 			{
 				//不处理大页
@@ -166,7 +175,7 @@ NTSTATUS ProcessNptPageTableFrontLevelImpl(TableType* pTable, PTR_TYPE startPhyA
 
 				//新建页表时记录了虚拟地址和物理地址
 				//在记录项里面通过物理地址查找虚拟地址
-				//避免了微软保留API的使用
+				//避免了微软保留API（MmGetVirtualForPhysical）的使用
 
 				if constexpr (level == 2)
 					va = level1Records.FindVaFromPa(GET_PHYADDR_FROM_PFN(pTable->entries[idx].fields.pagePpn));
@@ -191,6 +200,7 @@ NTSTATUS ProcessNptPageTableFrontLevelImpl(TableType* pTable, PTR_TYPE startPhyA
 			if (endPhyAddr < newEndPhyAddr)
 				newEndPhyAddr = endPhyAddr;
 
+			//调用下一步处理函数处理子页表
 			status = nextStep((SubTableType*)va, newStartPhyAddr, newEndPhyAddr, level34Records, level2Records, level1Records, entrySetter);
 			if (!NT_SUCCESS(status))
 				break;
@@ -222,6 +232,7 @@ NTSTATUS ProcessNptPageTableeEndLevelImpl(PageTableLevel123* pTable, PTR_TYPE st
 
 	do
 	{
+		//检查参数，结束地址必须大于起始地址
 		if (endPhyAddr <= startPhyAddr)
 		{
 			status = STATUS_INVALID_PARAMETER;
@@ -235,12 +246,13 @@ NTSTATUS ProcessNptPageTableeEndLevelImpl(PageTableLevel123* pTable, PTR_TYPE st
 			++idxCnt;
 		PTR_TYPE endIdx = startIdx + idxCnt;
 
+		//检查参数，防止越界
 		if (endIdx > 0x200)
 		{
 			status = STATUS_INVALID_PARAMETER;
 			break;
 		}
-
+		//处理每个页表项
 		for (PTR_TYPE idx = startIdx; idx < endIdx; ++idx)
 		{
 			if (!pTable->entries[idx].fields.present)
@@ -282,6 +294,7 @@ static NTSTATUS CallNptLargePageProcessor(PageTableLevel4* pTable, PTR_TYPE star
 //修改所有页表权限
 #pragma code_seg()
 
+//处理NPF
 #pragma code_seg()
 bool PageTableManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
 {
@@ -321,6 +334,7 @@ PVOID PageTableManager::GetNCr3ForCore(UINT32 cpuIdx)
 		return (PVOID)MmGetPhysicalAddress((PVOID)pageTables[cpuIdx].GetNptPageTable()).QuadPart;
 }
 
+///通过物理地址和需要的级数查找页表，失败返回INVALID_ADDR
 #pragma code_seg()
 PVOID CoreNptPageTableManager::FindPageTableForByAddr(PTR_TYPE pa, UINT32 level) const
 {
@@ -342,7 +356,7 @@ PVOID CoreNptPageTableManager::FindPageTableForByAddr(PTR_TYPE pa, UINT32 level)
 			break;
 
 		tempPa = GET_PHYADDR_FROM_PFN(((PageTableLevel4*)pNptPageTable)->entries[pageTableIdx].fields.pagePpn);
-		tempVa = level34Records.FindVaFromPa(tempPa);
+		tempVa = level3Records.FindVaFromPa(tempPa);
 
 		if (tempVa == INVALID_ADDR)
 			break;
@@ -365,7 +379,7 @@ PVOID CoreNptPageTableManager::FindPageTableForByAddr(PTR_TYPE pa, UINT32 level)
 			else if (levelIdx == 2)
 				tempVa = level2Records.FindVaFromPa(tempPa);
 			else
-				tempVa = level34Records.FindVaFromPa(tempPa);
+				tempVa = level3Records.FindVaFromPa(tempPa);
 
 			if (tempVa == INVALID_ADDR)
 				break;
@@ -385,9 +399,9 @@ PVOID CoreNptPageTableManager::FindPageTableForByAddr(PTR_TYPE pa, UINT32 level)
 NTSTATUS CoreNptPageTableManager::FixPageFault(PTR_TYPE startAddr, PTR_TYPE endAddr, bool usingLargePage)
 {
 	if (usingLargePage)
-		return CallNptLargePageProcessor((PageTableLevel4*)pNptPageTable, startAddr, endAddr, level34Records, level2Records, level1Records, *pEntrySetter);
+		return CallNptLargePageProcessor((PageTableLevel4*)pNptPageTable, startAddr, endAddr, level3Records, level2Records, level1Records, *pEntrySetter);
 	else
-		return CallNptSmallPageProcessor((PageTableLevel4*)pNptPageTable, startAddr, endAddr, level34Records, level2Records, level1Records, *pEntrySetter);
+		return CallNptSmallPageProcessor((PageTableLevel4*)pNptPageTable, startAddr, endAddr, level3Records, level2Records, level1Records, *pEntrySetter);
 }
 
 #pragma code_seg()
@@ -399,22 +413,24 @@ NTSTATUS CoreNptPageTableManager::UsingSmallPage(PTR_TYPE phyAddr, bool isUsing)
 
 	do
 	{
+		//物理地址的LEVEL4偏移必须是0
 		if ((phyAddr >> 12) & 0x1ff)
 		{
 			status = STATUS_INVALID_PARAMETER;
 			break;
 		}
-
+		//查找目标页表
 		pTargetPageTable = (PageTableLevel123*)FindPageTableForByAddr(phyAddr, 2);
-
+		//找不到目标页表返回失败
 		if (pTargetPageTable == (PageTableLevel123*)INVALID_ADDR)
 		{
 			status = STATUS_INVALID_PARAMETER;
 			break;
 		}
-
+		//改小页
 		if (isUsing)
 		{
+			//如果已经是小页，就不用再修改属性
 			if (pTargetPageTable->entries[pageTableIdx].fields.present &&
 				!pTargetPageTable->entries[pageTableIdx].fields.size)
 				return STATUS_SUCCESS;
@@ -423,8 +439,10 @@ NTSTATUS CoreNptPageTableManager::UsingSmallPage(PTR_TYPE phyAddr, bool isUsing)
 			pTargetPageTable->entries[pageTableIdx].fields.present = false;
 			pTargetPageTable->entries[pageTableIdx].fields.size = false;
 		}
+		//改大页
 		else
 		{
+			//如果已经是大页，就不用再修改属性
 			if (pTargetPageTable->entries[pageTableIdx].fields.present &&
 				pTargetPageTable->entries[pageTableIdx].fields.size)
 				return STATUS_SUCCESS;
@@ -537,24 +555,26 @@ void CoreNptPageTableManager::ChangeAllEndLevelPageTablePermession(PageTableLeve
 
 	for (SIZE_TYPE idx = 0; idx < GetArrayElementCnt(pPageTable->entries); ++idx)
 	{
-		PageTableLevel123* pSubPageTable = (PageTableLevel123*)level34Records.FindVaFromPa(GET_PHYADDR_FROM_PFN(pPageTable->entries[idx].fields.pagePpn));
+		PageTableLevel123* pSubPageTable = (PageTableLevel123*)level3Records.FindVaFromPa(GET_PHYADDR_FROM_PFN(pPageTable->entries[idx].fields.pagePpn));
 		if (pSubPageTable != (PageTableLevel123*)INVALID_ADDR)
-			ChangeAllEndLevelPageTablePremessionSub(pSubPageTable, 3, level34Records, level2Records, level1Records, entry);
+			ChangeAllEndLevelPageTablePremessionSub(pSubPageTable, 3, level3Records, level2Records, level1Records, entry);
 	}
 }
 
 #pragma code_seg()
 NTSTATUS CoreNptPageTableManager::ChangePageTablePermession(PTR_TYPE pa, PageTableLevel123Entry entry, UINT32 level)
 {
+	//找到对应的页表
 	PageTableLevel123* pageTable = (PageTableLevel123*)FindPageTableForByAddr(pa, level);
 	PageTableLevel123Entry* pTargetEntry = NULL;
 
 	if (pageTable == (PageTableLevel123*)INVALID_ADDR)
 		return STATUS_UNSUCCESSFUL;
 
+	//找到对应的页表项
 	pTargetEntry = &pageTable->entries[(pa >> (12 + (level - 1) * 9)) & 0x1ff];
 
-	//写入权限
+	//先构造修改后的页表项的数据，再整体拷贝到页表项中，这样会快一些
 	entry.fields.pagePpn = pTargetEntry->fields.pagePpn;
 	entry.fields.present = pTargetEntry->fields.present;
 	entry.fields.size = pTargetEntry->fields.size;
@@ -570,23 +590,28 @@ void CoreNptPageTableManager::Deinit()
 	PAGED_CODE();
 	if (pNptPageTable != INVALID_ADDR)
 	{
-		for (SIZE_TYPE idx = 0; idx < level34Records.Length(); ++idx)
-			FreeNonPagedMem((PVOID)level34Records[idx].pVirtAddr, PT_TAG);
+		//LEVEL 3 页表释放
+		for (SIZE_TYPE idx = 0; idx < level3Records.Length(); ++idx)
+			FreeNonPagedMem((PVOID)level3Records[idx].pVirtAddr, PT_TAG);
 
-		level34Records.Clear();
+		level3Records.Clear();
 
+		//LEVEL 2 页表释放
 		for (SIZE_TYPE idx = 0; idx < level2Records.Length(); ++idx)
 			FreeNonPagedMem((PVOID)level2Records[idx].pVirtAddr, PT_TAG);
 
 		level2Records.Clear();
 
+		//LEVEL 1 页表释放
 		for (SIZE_TYPE idx = 0; idx < level1Records.Length(); ++idx)
 			FreeNonPagedMem((PVOID)level1Records[idx].pVirtAddr, PT_TAG);
 
 		level1Records.Clear();
 
+		//LEVEL 4 页表释放
 		FreeNonPagedMem((PVOID)pNptPageTable, PT_TAG);
 
+		//置空
 		pNptPageTable = INVALID_ADDR;
 	}
 }
@@ -599,7 +624,7 @@ NTSTATUS CoreNptPageTableManager::BuildNptPageTable()
 
 	do
 	{
-		//分配的内存刚好是一个页面，使用该函数比使用MmAllocateContiguousMemory快很多，其他地方也是类似
+		//分配的内存刚好是一个页面，使用ExAllocatePool2函数比使用MmAllocateContiguousMemory快很多，其他地方也是类似
 		PageTableLevel4* pNptLevel4PageTable = (PageTableLevel4*)AllocNonPagedMem(sizeof * pNptLevel4PageTable, PT_TAG);
 		if (pNptLevel4PageTable == NULL)
 		{
@@ -614,7 +639,7 @@ NTSTATUS CoreNptPageTableManager::BuildNptPageTable()
 		//构建页表
 		//初始化时全部使用2MB大页，节约内存同时可以覆盖全部物理地址
 		//需要HOOK时把对应部分改成小页即可
-		status = CallNptLargePageProcessor(pNptLevel4PageTable, 0x0, 0x000000FFFFFFFFFF, level34Records, level2Records, level1Records, *pEntrySetter);
+		status = CallNptLargePageProcessor(pNptLevel4PageTable, 0x0, 0x000000FFFFFFFFFF, level3Records, level2Records, level1Records, *pEntrySetter);
 
 	} while (false);
 
@@ -629,33 +654,29 @@ NTSTATUS PageTableManager::Init()
 
 	do
 	{
-		//获取Windows页表地址
-		//Windows 10 1607之后有页表随机化，确认随机化之后的页表基址
-		GetSysPXEVirtAddr(&pSystemPxe);
-		if (pSystemPxe == NULL)
-		{
-			KdPrint(("PageTableManager::Init(): Can not find system PXE virtual address."));
-			status = STATUS_INVALID_PARAMETER;
-			break;
-		}
-
 		if (corePageTables == NULL)
 		{
+			//获取当前核心数量， 分配 sizeof(CoreNptPageTableManager) * 核心数 内存
 			UINT32 cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
 			corePageTables = (CoreNptPageTableManager*)AllocNonPagedMem(sizeof * corePageTables * cpuCnt, PT_TAG);
 			if (corePageTables == NULL)
 			{
+				KdPrint(("PageTableManager::Init(): Can not allocate memory for core pagetable manager.\n"));
 				status = STATUS_INSUFFICIENT_RESOURCES;
 				break;
 			}
+			//页表数量等同于核心数
 			pageTableCnt = cpuCnt;
-
+			//初始化CoreNptPageTableManager并构建页表
 			for (SIZE_TYPE idx = 0; idx < pageTableCnt; ++idx)
 			{
 				CallConstructor(&corePageTables[idx], &entrySetter);
 				status = corePageTables[idx].BuildNptPageTable();
 				if (!NT_SUCCESS(status))
+				{
+					KdPrint(("PageTableManager::Init(): Can not build npt page table.\n"));
 					break;
+				}
 			}
 		}
 
@@ -673,12 +694,15 @@ void PageTableManager::Deinit()
 	PAGED_CODE();
 	if (corePageTables != NULL)
 	{
+		//释放CoreNptPageTableManager占用的资源
 		for (SIZE_TYPE idx = 0; idx < pageTableCnt; ++idx)
 		{
 			corePageTables[idx].Deinit();
 			CallDestroyer(&corePageTables[idx]);
 		}
+		//释放CoreNptPageTableManager本省占用的内存
 		FreeNonPagedMem(corePageTables, PT_TAG);
+		//置空成员
 		corePageTables = NULL;
 		pageTableCnt = 0;
 	}

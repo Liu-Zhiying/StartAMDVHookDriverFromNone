@@ -35,7 +35,7 @@ typedef UINT32 PTR_TYPE;
 void* operator new(size_t, void* pObj);
 void operator delete(void*, UINT64);
 
-//调用placement new
+//调用构造函数初始化内存
 #pragma code_seg()
 template<typename T, typename ...Args>
 void CallConstructor(T* pObj, Args&& ...args)
@@ -43,7 +43,7 @@ void CallConstructor(T* pObj, Args&& ...args)
 	new (pObj) T(args...);
 }
 
-//调用placement delete
+//对指定内存的对象进行析构
 #pragma code_seg()
 template<typename T>
 void CallDestroyer(T* pObj)
@@ -69,6 +69,7 @@ SIZE_TYPE GetArrayElementCnt(T (&)[n])
 	return n;
 }
 
+//封装一下内存分配函数
 PVOID AllocNonPagedMem(SIZE_TYPE byteCnt, ULONG tag);
 void FreeNonPagedMem(PVOID pMem, ULONG tag);
 PVOID AllocPagedMem(SIZE_TYPE byteCnt, ULONG tag);
@@ -78,7 +79,7 @@ void FreeContigousMem(PVOID pMem, ULONG tag);
 PVOID AllocExecutableNonPagedMem(SIZE_TYPE byteCnt, ULONG tag);
 void FreeExecutableNonPagedMem(PVOID pMem, ULONG tag);
 
-//循环使用0超时等待对象知道成功，这样设计是为了可以在DISPATCH_LEVEL下可以等待
+//轮询等待对象知道成功，这样设计是为了可以在DISPATCH_LEVEL下可以等待
 void WaitForSignleObjectInfinte(PVOID Object, KWAIT_REASON WaitReason, KPROCESSOR_MODE WaitMode, BOOLEAN Alertable);
 
 enum MemType
@@ -88,10 +89,12 @@ enum MemType
 	ContigousMem,
 };
 
+//一些无效值
 constexpr PHYSICAL_ADDRESS HIGHEST_PHY_ADDR = { (ULONG)-1,-1 };
 constexpr PTR_TYPE INVALID_ADDR = (PTR_TYPE)-1;
 constexpr SIZE_TYPE INVALID_INDEX = (SIZE_TYPE)-1;
 
+//一些CPU相关的常量，比如MSR 编号，某标志的偏移位数
 constexpr UINT32 IA32_MSR_EFER = 0xc0000080;
 constexpr UINT32 IA32_MSR_PAT = 0x00000277;
 constexpr UINT32 IA32_MSR_FS_BASE = 0xC0000100;
@@ -115,7 +118,12 @@ constexpr UINT32 SCE_ENABLE_OFFSET = 0;
 constexpr UINT32 CPUID_FN_SVM_FEATURE = 0x80000001;
 constexpr UINT32 CPUID_FN_NPT_FEATURE = 0x8000000a;
 constexpr UINT32 EFLAGS_RF_OFFSET = 16;
+constexpr UINT32 EFLAGS_TF_OFFSET = 8;
+constexpr UINT32 BP_EXPECTION_VECTOR_INDEX = 3;
+constexpr UINT32 UD_EXCEPTION_VECTOR_INDEX = 6;
+constexpr UINT32 DB_EXCEPTION_VECTOR_INDEX = 1;
 
+//类似C++11中的std::vector，内核模式的变长数组
 template<typename ElementType, UINT32 allocTag, MemType memType = NonPaged>
 class KernelVector
 {
@@ -153,20 +161,21 @@ public:
 template<typename ElementType, UINT32 allocTag, MemType memType>
 inline KernelVector<ElementType, allocTag, memType>::KernelVector() : pData(NULL), length(0), capacity(0)
 {
+	//根据内存类型，选择不同的内存分配释放函数
 	switch (memType)
 	{
-	case NonPaged:
+	case MemType::NonPaged:
 	{
 		pMemAlloc = AllocNonPagedMem;
 		pMemFree = FreeNonPagedMem;
 		break;
 	}
-	case Paged:
+	case MemType::Paged:
 	{
 		pMemAlloc = AllocPagedMem;
 		pMemFree = FreePagedMem;
 	}
-	case ContigousMem:
+	case MemType::ContigousMem:
 	{
 		pMemAlloc = AllocContiguousMem;
 		pMemFree = FreeContigousMem;

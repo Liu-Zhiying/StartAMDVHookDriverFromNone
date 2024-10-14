@@ -96,6 +96,17 @@ LStarHookEntry Proc
 	jmp [OldLStarEntry]
 
 LStarHookEntry Endp
-End
+
+;允许r0访r3数据
+_mystac Proc
+stac
+ret
+_mystac Endp
+
+;静止r0访问r3数据
+_myclac Proc
+clac
+ret
+_myclac Endp
 
 End

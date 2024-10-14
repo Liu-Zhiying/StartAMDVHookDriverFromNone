@@ -71,6 +71,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Basic.cpp" />
+    <ClCompile Include="FunctionTest.cpp" />
     <ClCompile Include="Hook.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="PageTable.cpp" />
@@ -80,6 +81,7 @@
     <ClInclude Include="Basic.h" />
     <ClInclude Include="CasLockers.h" />
     <ClInclude Include="Hook.h" />
+    <ClInclude Include="main.h" />
     <ClInclude Include="PageTable.h" />
     <ClInclude Include="SVM.h" />
     <ClInclude Include="VMCB.h" />

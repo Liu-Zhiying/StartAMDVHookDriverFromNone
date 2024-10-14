@@ -1,8 +1,11 @@
 #include "Hook.h"
+#include <intrin.h>
 
 extern "C" PTR_TYPE LStarHookCallback;
 extern "C" PTR_TYPE OldLStarEntry;
 extern "C" void LStarHookEntry();
+extern "C" void _mystac();
+extern "C" void _myclac();
 
 #pragma code_seg("PAGE")
 void SetLStrHookEntryParameters(PTR_TYPE oldEntry, PTR_TYPE pCallback)
@@ -94,7 +97,7 @@ bool NptHookManager::HandleBreakpoint(VirtCpuInfo* pVirtCpuInfo, GenericRegister
 
 	bool result = false;
 
-	const NptHookSharedData*  pSharedData = pCoreNptHookStatus[pVirtCpuInfo->otherInfo.cpuIdx].pSharedData;
+	const NptHookSharedData* pSharedData = pCoreNptHookStatus[pVirtCpuInfo->otherInfo.cpuIdx].pSharedData;
 
 	if (pSharedData != NULL)
 	{
@@ -122,7 +125,7 @@ bool NptHookManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGue
 	UNREFERENCED_PARAMETER(pHostVmcbPhyAddr);
 
 	bool result = false;
-	
+
 	NpfExitInfo1 exitInfo = {};
 	PTR_TYPE pa = pVirtCpuInfo->guestVmcb.controlFields.exitInfo2;
 	exitInfo.data = pVirtCpuInfo->guestVmcb.controlFields.exitInfo1;
@@ -231,18 +234,18 @@ bool NptHookManager::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 	UNREFERENCED_PARAMETER(pHostVmcbPhyAddr);
 
 	auto switchPageTable = [this](PageTableType type) -> PageTableManager*
-	{
-		switch (type)
 		{
-		case ExternalPageTable:
-			return pPageTableManager;
-		case InternalPageTable:
-			return &internalPageTableManager;
-		default:
-			KeBugCheck(MANUALLY_INITIATED_CRASH);
-			break;
-		}
-	};
+			switch (type)
+			{
+			case ExternalPageTable:
+				return pPageTableManager;
+			case InternalPageTable:
+				return &internalPageTableManager;
+			default:
+				KeBugCheck(MANUALLY_INITIATED_CRASH);
+				break;
+			}
+		};
 
 	//eax为配置NPT HOOK的CPUID编号
 
@@ -313,7 +316,7 @@ bool NptHookManager::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 		}
 		case ADD_HOOK_ITEM_CPUID_SUBFUNCTION:
 		{
-			sharedData.hookRecords.PushBack(*((const HookRecord*)pGuestRegisters->rdx));
+			sharedData.hookRecords.PushBack(*((const NptHookRecord*)pGuestRegisters->rdx));
 			break;
 		}
 		case REMOVE_HOOK_ITEM_CPUID_SUBFUNCTION:
@@ -432,7 +435,7 @@ bool NptHookManager::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 		}
 		case COPY_HOOKRECORD_CPUID_SUBFUNCTION:
 		{
-			HookRecord* pDestnation = (HookRecord*)pGuestRegisters->rbx;
+			NptHookRecord* pDestnation = (NptHookRecord*)pGuestRegisters->rbx;
 			*pDestnation = sharedData.hookRecords[pGuestRegisters->rdx];
 			break;
 		}
@@ -803,7 +806,7 @@ void NptHookManager::SyncSharedData()
 	regs[1] = NULL;
 	regs[2] = COPY_SHARED_DATA_CPUID_SUBFUNCTION;
 	regs[3] = NULL;
-	
+
 	SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 
 	//拷贝失败咋蓝屏
@@ -840,7 +843,7 @@ void NptHookManager::SyncSharedData()
 }
 
 #pragma code_seg("PAGE")
-NTSTATUS NptHookManager::AddHook(const HookRecord& record)
+NTSTATUS NptHookManager::AddHook(const NptHookRecord& record)
 {
 	NTSTATUS status = STATUS_SUCCESS;
 	PTR_TYPE pOriginPhyAddr = NULL;
@@ -858,7 +861,7 @@ NTSTATUS NptHookManager::AddHook(const HookRecord& record)
 	SwapPageRefCnt swapPageRefCnt = {};
 	PageTableLevel123Entry permission = {};
 	int stepCnt = 0;
-	
+
 	do
 	{
 		hookIdx = sharedData.FindHookRecordByOriginVirtAddr(record.pOriginVirtAddr);
@@ -932,7 +935,7 @@ NTSTATUS NptHookManager::AddHook(const HookRecord& record)
 			SwapPageRefCnt newItem = {};
 
 			newItem.pOriginVirtAddr = (PVOID)pOriginPageVirtAddr;
-			newItem.pSwapVirtAddr= swapPageVirtAddr;
+			newItem.pSwapVirtAddr = swapPageVirtAddr;
 			newItem.refCnt = 1;
 
 			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
@@ -967,7 +970,7 @@ NTSTATUS NptHookManager::AddHook(const HookRecord& record)
 
 			//写入断点
 			UINT8 hookData = NptHookCode;
-			
+
 			copyMemInfo.pSource = &hookData;
 			copyMemInfo.pDestination = (UINT8*)swapPageRefCnt.pSwapVirtAddr + ((PTR_TYPE)record.pOriginVirtAddr & 0xfff);
 			copyMemInfo.Length = 1;
@@ -1284,7 +1287,7 @@ NTSTATUS NptHookManager::RemoveHook(PVOID pHookOriginVirtAddr)
 	SIZE_TYPE level3RefIdx = INVALID_INDEX;
 	SIZE_TYPE swapPageIdx = INVALID_INDEX;
 	PTR_TYPE swapPagePhyAddr = INVALID_ADDR;
-	HookRecord record = {};
+	NptHookRecord record = {};
 	PTR_TYPE regs[4] = {};
 	MemoryCopyInfo copyMemInfo = {};
 	OperateRefCountInfo operateRefInfo = {};
@@ -1351,7 +1354,7 @@ NTSTATUS NptHookManager::RemoveHook(PVOID pHookOriginVirtAddr)
 
 			if (regs[1])
 				originPageToLargePage = true;
-				
+
 		}
 
 		//根据hook原始页面大的起始地址查询交换页引用计数
@@ -1567,140 +1570,5 @@ void NptHookManager::Deinit()
 	}
 
 	//析构内置NPT页表
-	internalPageTableManager.Deinit();	
-}
-
-#pragma code_seg)
-bool SimulateSceHookManager::HandleInvalidOpcode(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
-{
-	//syscall
-	//0x0f 0x05
-	//sysret
-	//0x0f 0x07
-
-	if (pCallback == NULL)
-		KeBugCheck(MANUALLY_INITIATED_CRASH);
-
-	bool result = false;
-
-	UINT8* pByte = (UINT8*)pVirtCpuInfo->guestVmcb.statusFields.rip;
-
-	if (pByte[0] == 0x0f)
-	{
-		switch (pByte[1])
-		{
-		case 0x05:
-		{
-			//调用回调通知
-			GenericRegisters guestRegistersCopy = *pGuestRegisters;
-
-			guestRegistersCopy.rip = pVirtCpuInfo->guestVmcb.statusFields.rip;
-			guestRegistersCopy.rsp = pVirtCpuInfo->guestVmcb.statusFields.rsp;
-			guestRegistersCopy.rax = pVirtCpuInfo->guestVmcb.statusFields.rax;
-			guestRegistersCopy.rflags = pVirtCpuInfo->guestVmcb.statusFields.rflags;
-
-			pCallback(&guestRegistersCopy, InstructionType::Syscall);
-
-			//模拟syscall
-
-			PTR_TYPE tempRip = NULL;
-
-			PTR_TYPE starMsrValue = pVirtCpuInfo->guestVmcb.statusFields.star;
-			pGuestRegisters->rcx = pVirtCpuInfo->guestVmcb.controlFields.nRip;									//RCX.q = next_RIP
-			pGuestRegisters->r11 = pVirtCpuInfo->guestVmcb.statusFields.rflags;									// R11.q = RFLAGS
-
-			UINT16 syscallCs = ((starMsrValue >> 32) & 0xffff);
-
-			SegmentAttribute csAttribute = GetSegmentAttribute(pVirtCpuInfo->guestVmcb.statusFields.cs.selector, pVirtCpuInfo->guestVmcb.statusFields.gdtr.base);
-			SegmentAttribute ssAttribute = GetSegmentAttribute(pVirtCpuInfo->guestVmcb.statusFields.ss.selector, pVirtCpuInfo->guestVmcb.statusFields.gdtr.base);
-
-			//判断是32位用户程序进入还是64位用户程序进入，选择不同的位置执行
-			if (csAttribute.Fields.LongMode)
-				tempRip = pVirtCpuInfo->guestVmcb.statusFields.lstar;
-			else
-				tempRip = pVirtCpuInfo->guestVmcb.statusFields.cstar;
-
-			csAttribute.Fields.LongMode = 1;
-			csAttribute.Fields.Dpl = 0;
-
-			ssAttribute.Fields.LongMode = 1;
-			ssAttribute.Fields.Dpl = 0;
-
-			pVirtCpuInfo->guestVmcb.statusFields.cs.selector = syscallCs & 0xfffc;
-			pVirtCpuInfo->guestVmcb.statusFields.cs.base = 0;
-			pVirtCpuInfo->guestVmcb.statusFields.cs.limit = 0xFFFFFFFF;
-			pVirtCpuInfo->guestVmcb.statusFields.cs.attrib = csAttribute.AsUInt16;
-
-			pVirtCpuInfo->guestVmcb.statusFields.ss.selector = syscallCs + 8;
-			pVirtCpuInfo->guestVmcb.statusFields.ss.base = 0;
-			pVirtCpuInfo->guestVmcb.statusFields.ss.limit = 0xFFFFFFFF;
-			pVirtCpuInfo->guestVmcb.statusFields.ss.attrib = ssAttribute.AsUInt16;
-
-			PTR_TYPE sfmaskMsrValue = pVirtCpuInfo->guestVmcb.statusFields.sfmask;
-			pVirtCpuInfo->guestVmcb.statusFields.rflags &= ~sfmaskMsrValue;																		//RFLAGS AND ~MSR_SFMASK 
-			pVirtCpuInfo->guestVmcb.statusFields.rflags &= ~(1 << EFLAGS_RF_OFFSET);															//RFLAGS.RF = 0
-
-			//CPL = 0
-			pVirtCpuInfo->guestVmcb.statusFields.cs.selector &= ~0x3;
-
-			//设置RIP
-			pVirtCpuInfo->guestVmcb.statusFields.rip = tempRip;
-
-			result = true;
-			break;
-		}
-		case 0x07:
-		{
-			//调用回调通知
-			GenericRegisters guestRegistersCopy = *pGuestRegisters;
-
-			guestRegistersCopy.rip = pVirtCpuInfo->guestVmcb.statusFields.rip;
-			guestRegistersCopy.rsp = pVirtCpuInfo->guestVmcb.statusFields.rsp;
-			guestRegistersCopy.rax = pVirtCpuInfo->guestVmcb.statusFields.rax;
-			guestRegistersCopy.rflags = pVirtCpuInfo->guestVmcb.statusFields.rflags;
-
-			pCallback(&guestRegistersCopy, InstructionType::Sysret);
-
-			//模拟sysret
-
-			PTR_TYPE tempRip = NULL;
-
-			PTR_TYPE starMsrValue = pVirtCpuInfo->guestVmcb.statusFields.star;
-
-			pVirtCpuInfo->guestVmcb.statusFields.cs.base = 0;
-			pVirtCpuInfo->guestVmcb.statusFields.cs.limit = 0xFFFFFFFF;
-
-			UINT16 sysretCs = (starMsrValue >> 48) & 0xffff;
-
-			if (IoIs32bitProcess(NULL))
-			{
-				tempRip = (UINT32)pGuestRegisters->rcx;
-			}
-			else
-			{
-				//cs.selector += 16
-				sysretCs += 0x10;
-				tempRip = pGuestRegisters->rcx;
-			}
-
-			SegmentAttribute csAttribute = GetSegmentAttribute(sysretCs, pVirtCpuInfo->guestVmcb.statusFields.gdtr.base);
-
-			pVirtCpuInfo->guestVmcb.statusFields.cs.selector = sysretCs | 0x3;
-			pVirtCpuInfo->guestVmcb.statusFields.cs.attrib = csAttribute.AsUInt16;
-
-			//CPL = 3
-			pVirtCpuInfo->guestVmcb.statusFields.cs.selector &= 0x3;
-
-			//RFLAGS.q = r11
-			pVirtCpuInfo->guestVmcb.statusFields.rflags = pGuestRegisters->r11;
-
-			result = true;
-			break;
-		}
-		default:
-			break;
-		}
-	}
-
-	return result;
+	internalPageTableManager.Deinit();
 }

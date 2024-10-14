@@ -41,9 +41,10 @@ constexpr UINT32 HOOK_TAG = MAKE_TAG('h', 'o', 'o', 'k');
 //int 3 opcode
 constexpr UINT32 NptHookCode = 0xCC;
 
-//辅助函数，用于跳转到VMM处理MSR HOOK参数的修改
+//辅助函数，用于跳转到VMM处理
 extern "C" void SetRegsThenCpuid(PTR_TYPE* rax, PTR_TYPE* rbx, PTR_TYPE* rcx, PTR_TYPE* rdx);
 
+//一些调用 VMM CPUID处理功能的参数定义
 struct MsrHookParameter
 {
 	//锁定的MXR真实值
@@ -61,14 +62,14 @@ enum PageTableType
 	ExternalPageTable,
 	InternalPageTable
 };
-
+//COPY_MEMORY_CPUID_SUBFUNCTION 
 struct MemoryCopyInfo
 {
 	PVOID pSource;
 	PVOID pDestination;
 	SIZE_TYPE Length;
 };
-
+//CHANGE_PAGE_SIZE_CPUID_SUBFUNCTION
 struct ChangePageSizeInfo
 {
 	PTR_TYPE pLevel3PhyAddr;
@@ -76,7 +77,7 @@ struct ChangePageSizeInfo
 	PageTableType type;
 	bool beLarge;
 };
-
+//CHANGE_PAGE_TABLE_PERMISSION_CPUID_SUBFUNCTION
 struct ChangePageTablePermissionInfo
 {
 	PageTableLevel123Entry permission;
@@ -85,7 +86,7 @@ struct ChangePageTablePermissionInfo
 	ULONG cpuIdx;
 	UINT32 level;
 };
-
+//SWAP_SMALL_PAGE_PPN_CPUID_SUBFUNCTION
 struct SwapSmallPagePpnInfo
 {
 	PTR_TYPE physicalAddress1;
@@ -93,6 +94,8 @@ struct SwapSmallPagePpnInfo
 	PageTableType type;
 	ULONG cpuIdx;
 };
+
+//三个enum和OperateRefCountInfo struct 都是  OPERATE_REF_COUNT_CPUID_SUBFUNCTION 的参数
 
 enum RefCountOperationType
 {
@@ -113,13 +116,17 @@ struct OperateRefCountInfo
 	RefCountOperationObjectType objectType;
 };
 
+//无效MSR编号常量
 const UINT32 INVALID_MSRNUM = (UINT32)-1;
 
 typedef void(*pLStarHookCallback)();
 
+//READ_MSR_CPUID_SUBFUNCTION 和 WRITE_MSR_CPUID_SUBFUNCTION 的参数
 struct MsrOperationParameter
 {
+	//MSR 编号
 	UINT32 msrNum;
+	//要写入的新值或者读取回写的指针
 	PTR_TYPE* pValueInOut;
 };
 
@@ -648,14 +655,14 @@ struct SwapPageRefCnt
 };
 
 //hook条目记录
-struct HookRecord
+struct NptHookRecord
 {
 	//hook原始虚拟地址
 	PVOID pOriginVirtAddr;
 	//hook的跳转地址
 	PVOID pGotoVirtAddr;
 	#pragma code_seg()
-	HookRecord() : pOriginVirtAddr(NULL), pGotoVirtAddr(NULL) {}
+	NptHookRecord() : pOriginVirtAddr(NULL), pGotoVirtAddr(NULL) {}
 };
 
 class NptHookSharedData
@@ -663,7 +670,7 @@ class NptHookSharedData
 public:
 	KernelVector<SmallPageLevel3RefCnt, HOOK_TAG> level3Refs;
 	KernelVector<SwapPageRefCnt, HOOK_TAG> swapPageRefs;
-	KernelVector<HookRecord, HOOK_TAG> hookRecords;
+	KernelVector<NptHookRecord, HOOK_TAG> hookRecords;
 
 	SIZE_TYPE FindHookRecordByOriginVirtAddr(PVOID pOriginAddr) const;
 	SIZE_TYPE FindSmallPageLevel3RefCntByPhyAddr(PTR_TYPE phyAddr) const;
@@ -730,39 +737,12 @@ public:
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
 	#pragma code_seg("PAGE")
 	NptHookManager() : pPageTableManager(NULL), pSharedDataCopy(NULL), pCoreNptHookStatus(NULL) { PAGED_CODE(); }
-	NTSTATUS AddHook(const HookRecord& record);
+	NTSTATUS AddHook(const NptHookRecord& record);
 	NTSTATUS RemoveHook(PVOID pHookOriginVirtAddr);
 	virtual NTSTATUS Init() override;
 	virtual void Deinit() override;
 	#pragma code_seg("PAGE")
 	virtual ~NptHookManager() { PAGED_CODE(); Deinit(); }
-};
-
-class SimulateSceHookManager : public IInvalidOpcodeInterceptPlugin, public IManager
-{
-public:
-	enum InstructionType
-	{
-		Syscall,
-		Sysret
-	};
-
-	typedef void(*HookCallback)(GenericRegisters* pRegisters, InstructionType type);
-
-	HookCallback pCallback;
-	#pragma code_seg("PAGE")
-	SimulateSceHookManager() : pCallback(NULL) { PAGED_CODE(); }
-
-	virtual bool HandleInvalidOpcode(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
-		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
-
-	#pragma code_seg("PAGE")
-	virtual NTSTATUS Init() override { return STATUS_SUCCESS; }
-	#pragma code_seg("PAGE")
-	virtual void Deinit() {}
-
-	#pragma code_seg("PAGED")
-	virtual ~SimulateSceHookManager() {}
 };
 
 #endif

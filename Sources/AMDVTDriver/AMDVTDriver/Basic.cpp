@@ -76,6 +76,7 @@ void FreeExecutableNonPagedMem(PVOID pMem, ULONG tag)
 	ExFreePoolWithTag(pMem, tag);
 }
 
+//轮询方式等待内核对象（这个函数目前没有使用）
 #pragma code_seg()
 void WaitForSignleObjectInfinte(PVOID Object, KWAIT_REASON WaitReason, KPROCESSOR_MODE WaitMode, BOOLEAN Alertable)
 {

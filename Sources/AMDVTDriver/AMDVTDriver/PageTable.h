@@ -132,19 +132,20 @@ typedef union
 		UINT64 guestPageTables : 1;         // [33]
 	} fields;
 } NpfExitInfo1;
-
+//LEVEL 4页表
 struct PageTableLevel4
 {
 	typedef PageTableLevel4Entry EntryType;
 	PageTableLevel4Entry entries[0x200];
 };
-
+//LEVE 1 2 3页表
 struct PageTableLevel123
 {
 	typedef PageTableLevel123Entry EntryType;
 	PageTableLevel123Entry entries[0x200];
 };
 
+//分配的NPT页表记录条目
 struct PageTableRecord
 {
 	PTR_TYPE pVirtAddr;
@@ -157,6 +158,8 @@ struct PageTableRecord
 	~PageTableRecord() {}
 };
 
+//NPT页表记录器，记录所有封分配初始化的NPT页表的物理地址和虚拟地址
+//使用简单的哈希表实现，查询速度会快一些
 template<SIZE_TYPE bucketCnt>
 class PageTableRecordBacket
 {
@@ -170,6 +173,7 @@ class PageTableRecordBacket
 public:
 	#pragma code_seg()
 	PageTableRecordBacket() {}
+	//移动构造和拷贝
 	#pragma code_seg()
 	PageTableRecordBacket(PageTableRecordBacket&& other)
 	{
@@ -178,11 +182,14 @@ public:
 	#pragma code_seg()
 	PageTableRecordBacket& operator=(PageTableRecordBacket&& other)
 	{
-		for (SIZE_TYPE i = 0; i < bucketCnt; i++)
-			data[i] = static_cast<KernelVector<PageTableRecord, PT_TAG>&&>(other.data[i]);
+		if (&other != this)
+		{
+			for (SIZE_TYPE i = 0; i < bucketCnt; i++)
+				data[i] = static_cast<KernelVector<PageTableRecord, PT_TAG>&&>(other.data[i]);
+		}
 		return *this;
 	}
-
+	//条目个数
 	#pragma code_seg()
 	SIZE_TYPE Length() const
 	{
@@ -191,11 +198,13 @@ public:
 			result += bucket.Length();
 		return result;
 	}
+	//添加条目
 	#pragma code_seg()
 	void PushBack(const PageTableRecord& record)
 	{
 		data[GetBucketIdx(record.pPhyAddr)].PushBack(record);
 	}
+	//通过物理地址寻找条目索引
 	#pragma code_seg()
 	PTR_TYPE FindVaFromPa(PTR_TYPE pa) const
 	{
@@ -207,12 +216,14 @@ public:
 		}
 		return (PTR_TYPE)INVALID_ADDR;
 	}
+	//删除所有条目
 	#pragma code_seg()
 	void Clear()
 	{
 		for (auto& bucket : data)
 			bucket.Clear();
 	}
+	//通过索引获取条目（只读）
 	#pragma code_seg()
 	const PageTableRecord& operator[](SIZE_TYPE idx) const
 	{
@@ -233,6 +244,7 @@ public:
 			KeBugCheck(MEMORY_MANAGEMENT);
 		return (*pBucket)[idx - cnt];
 	}
+	//通过索引获取条目（读写）
 	#pragma code_seg()
 	PageTableRecord& operator[](SIZE_TYPE idx)
 	{
@@ -253,6 +265,7 @@ public:
 			KeBugCheck(MEMORY_MANAGEMENT);
 		return (*pBucket)[idx - cnt];
 	}
+	//通过物理地址删除条目
 	#pragma code_seg()
 	bool RemoveByPa(PTR_TYPE pa)
 	{
@@ -278,7 +291,7 @@ class CoreNptPageTableManager;
 class PageTableManager : public IManager, public INpfInterceptPlugin, public INCr3Provider
 {
 public:
-	//页表条目填充器，这个类的作用等同于一个lambda表达式
+	//页表条目设置器，这里这样写只是不好写lambda表达式，这个类就类似于一个lambda表达式
 	class EntrySetter
 	{
 	public:
@@ -344,14 +357,14 @@ public:
 	virtual ~PageTableManager() { Deinit(); }
 };
 
-//页表条目设置器，这里这样写只是不好写lambda表达式，这个类就类似于一个lambda表达式
+
 
 
 //每个核心的NPT页表管理器
 class CoreNptPageTableManager
 {
 	PTR_TYPE pNptPageTable;
-	PageTableRecords level34Records;
+	PageTableRecords level3Records;
 	PageTableRecords level2Records;
 	PageTableRecords level1Records;
 	PageTableManager::EntrySetter* pEntrySetter;
@@ -360,30 +373,38 @@ class CoreNptPageTableManager
 	PVOID FindPageTableForByAddr(PTR_TYPE pa, UINT32 level) const;
 
 public:
+	//删除默认构造
 	CoreNptPageTableManager() = delete;
+	//使用PageTableManager::EntrySetter构造，PageTableManager::EntrySetter决定构造页表的默认权限
 	CoreNptPageTableManager(PageTableManager::EntrySetter* _pEntrySetter) : pNptPageTable(INVALID_ADDR), pEntrySetter(_pEntrySetter) {}
+	//移动构造
 	#pragma code_seg()
 	CoreNptPageTableManager(CoreNptPageTableManager&& other)
 	{
 		*this = static_cast<CoreNptPageTableManager&&>(other);
 	}
+	//移动构造
 	#pragma	code_seg()
 	CoreNptPageTableManager& operator=(CoreNptPageTableManager&& other)
 	{
-		pEntrySetter = other.pEntrySetter;
-		pNptPageTable = other.pNptPageTable;
-		level34Records = static_cast<PageTableRecords&&>(other.level34Records);
-		level2Records = static_cast<PageTableRecords&&>(other.level2Records);
-		level1Records = static_cast<PageTableRecords&&>(other.level1Records);
-		other.pNptPageTable = INVALID_ADDR;
+		if (&other != this)
+		{
+			pEntrySetter = other.pEntrySetter;
+			pNptPageTable = other.pNptPageTable;
+			level3Records = static_cast<PageTableRecords&&>(other.level3Records);
+			level2Records = static_cast<PageTableRecords&&>(other.level2Records);
+			level1Records = static_cast<PageTableRecords&&>(other.level1Records);
+			other.pNptPageTable = INVALID_ADDR;
+		}
 		return *this;
 	}
 	#pragma code_seg("PAGE")
 	~CoreNptPageTableManager() { Deinit(); }
+	//映射缺页函数
 	NTSTATUS FixPageFault(PTR_TYPE startAddr, PTR_TYPE endAddr, bool usingLargePage);
 	//isUsing 为 false 代表还原大页
 	NTSTATUS UsingSmallPage(PTR_TYPE phyAddr, bool isUsing);
-	//小页映射函数
+	//小页映射函数，等同于FixPageFault(begPhyAddr, endPhyAddr, false)
 	NTSTATUS MapSmallPageByPhyAddr(PTR_TYPE begPhyAddr, PTR_TYPE endPhyAddr);
 	//交换小页的最终物理地址
 	NTSTATUS SwapSmallPagePpn(PTR_TYPE phyAddr1, PTR_TYPE phyAddr2);
@@ -398,5 +419,8 @@ public:
 	#pragma code_seg()
 	PTR_TYPE GetNptPageTable() const { return pNptPageTable; }
 };
+
+//查询当前CR3（顶层页表）的虚拟地址
+void GetSysPXEVirtAddr(PTR_TYPE* pPxeOut);
 
 #endif
