@@ -110,11 +110,11 @@ bool NptHookManager::HandleBreakpoint(VirtCpuInfo* pVirtCpuInfo, GenericRegister
 	if (pSharedData != NULL)
 	{
 		//如果匹配到hook，直接跳转
-		SIZE_TYPE hookIdx = pSharedData->FindHookRecordByOriginVirtAddr((PVOID)pVirtCpuInfo->guestVmcb.statusFields.rip);
+		SIZE_TYPE hookIdx = pSharedData->FindHookRecordByOriginVirtAddr((PVOID)pGuestRegisters->rip);
 
 		if (hookIdx != INVALID_INDEX)
 		{
-			pVirtCpuInfo->guestVmcb.statusFields.rip = (UINT64)pSharedData->hookRecords[hookIdx].pGotoVirtAddr;
+			pGuestRegisters->rip = (UINT64)pSharedData->hookRecords[hookIdx].pGotoVirtAddr;
 			result = true;
 		}
 	}
@@ -264,7 +264,7 @@ bool NptHookManager::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 
 	//eax为配置NPT HOOK的CPUID编号
 
-	switch (((int)pVirtCpuInfo->guestVmcb.statusFields.rax))
+	switch (((int)pGuestRegisters->rax))
 	{
 	case NPT_HOOK_TOOL_CPUID_FUNCTION:
 	{
@@ -529,7 +529,7 @@ bool NptHookManager::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 		}
 		}
 
-		pVirtCpuInfo->guestVmcb.statusFields.rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
+		pGuestRegisters->rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
 
 		return true;
 	}

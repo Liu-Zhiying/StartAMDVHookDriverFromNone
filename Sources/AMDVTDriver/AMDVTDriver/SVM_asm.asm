@@ -352,19 +352,31 @@ mov rsp, rax
 ret
 
 exit_virtualization:
+;备份rbx
 mov [rsp + 8], rbx
+
 add rsp, 10h
+;获取guest的rsp指针
 mov rax, [rsp - 18h]
+;对guest 的 rsp 减去 20h 这里是把备份的rax rbx rflags 数据拷贝过去
+;已经填写guest返回地址，方便最后切换rsp之后连续push还原寄存器并用ret返回
 sub rax, 20h
+;拷贝guest返回地址
+
 mov rbx, [rsp - 20h]
 mov [rax + 18h], rbx
+;拷贝备份rax
 mov rbx, [rsp - 10h]
 mov [rax + 10h], rbx
+;拷贝备份rbx
 mov rbx, [rsp - 8h]
 mov [rax + 8h], rbx
+;拷贝人flags 
 mov rbx, [rsp - 38h]
 mov [rax], rbx
+;切换栈指针
 mov rsp, rax
+;还原寄存器并跳转到guest继续执行
 popfq
 pop rbx
 pop rax

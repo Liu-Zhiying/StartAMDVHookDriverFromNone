@@ -128,8 +128,18 @@ UINT32 GetSegmentLimit2(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 #pragma code_seg()
 extern "C" void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
 {
+	pGuestRegisters->rip = pVirtCpuInfo->guestVmcb.statusFields.rip;
+	pGuestRegisters->rsp = pVirtCpuInfo->guestVmcb.statusFields.rsp;
+	pGuestRegisters->rax = pVirtCpuInfo->guestVmcb.statusFields.rax;
+	pGuestRegisters->rflags = pVirtCpuInfo->guestVmcb.statusFields.rflags;
+
 	//转发到SVMManager::VmExitHandler函数
-	return pVirtCpuInfo->otherInfo.pSvmManager->VmExitHandler(pVirtCpuInfo, pGuestRegisters, pGuestVmcbPhyAddr, pHostVmcbPhyAddr);
+	pVirtCpuInfo->otherInfo.pSvmManager->VmExitHandler(pVirtCpuInfo, pGuestRegisters, pGuestVmcbPhyAddr, pHostVmcbPhyAddr);
+
+	pVirtCpuInfo->guestVmcb.statusFields.rip = pGuestRegisters->rip;
+	pVirtCpuInfo->guestVmcb.statusFields.rsp = pGuestRegisters->rsp;
+	pVirtCpuInfo->guestVmcb.statusFields.rax = pGuestRegisters->rax;
+	pVirtCpuInfo->guestVmcb.statusFields.rflags = pGuestRegisters->rflags;
 }
 
 //获取CPU生产商的字符串
@@ -296,7 +306,14 @@ NTSTATUS SVMManager::Init()
 		cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
 		pVirtCpuInfo = (VirtCpuInfo**)AllocNonPagedMem(cpuCnt * sizeof(VirtCpuInfo*), SVM_TAG);
 
-		if (pVirtCpuInfo == NULL || !NT_SUCCESS(msrPremissionMap.Init()))
+		if (pVirtCpuInfo == NULL)
+		{
+			status = STATUS_INSUFFICIENT_RESOURCES;
+			KdPrint(("SVMManager::Init(): Cpu virtualization memory failed!\n"));
+			break;
+		}
+
+		if (!NT_SUCCESS(msrPremissionMap.Init()))
 		{
 			KdPrint(("SVMManager::Init(): MSR premission map init failed!\n"));
 			break;
@@ -599,7 +616,7 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 				pGuestVmcbPhyAddr, pHostVmcbPhyAddr))
 			return;
 
-		if (((int)pVMMVirtCpuInfo->guestVmcb.statusFields.rax) == GUEST_CALL_VMM_CPUID_FUNCTION)
+		if (((int)pGuestRegisters->rax) == GUEST_CALL_VMM_CPUID_FUNCTION)
 		{
 			switch (pGuestRegisters->rcx)
 			{
@@ -607,19 +624,20 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 			{
 				//设置退出虚拟化之后的指令寄存器和栈寄存器
 				pGuestRegisters->extraInfo1 = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
-				pGuestRegisters->extraInfo2 = pVMMVirtCpuInfo->guestVmcb.statusFields.rsp;
+				pGuestRegisters->extraInfo2 = pGuestRegisters->rsp;
 
-				//设置RFlags
-				pGuestRegisters->rflags = pVMMVirtCpuInfo->guestVmcb.statusFields.rflags;
+				//设置RFlags到pGuestRegisters指向的结构体中（这一步在VmExitHandler全局函数中已经完成）
 
+				//在gif打开但是没有退出VMM这一段时间禁用中断
+				_disable();
 				//在退出VMM时打开GIF，否则退出后系统会接收不了中断假死，在进入Host模式的时候GIF是关闭状态
 				__svm_stgi();
-				__svm_vmsave((SIZE_TYPE)pGuestVmcbPhyAddr);
+				//加载guest状态
+				__svm_vmload((SIZE_TYPE)pGuestVmcbPhyAddr);
 
 				//退出虚拟化并继续执行guest
 				UINT64 eferVal = __readmsr(IA32_MSR_EFER);
 				__writemsr(IA32_MSR_EFER, eferVal & ~(1ULL << EFER_SVME_OFFSET));
-				__writeeflags((UINT32)pVMMVirtCpuInfo->guestVmcb.statusFields.rflags);
 
 				break;
 			}
@@ -629,19 +647,19 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 		{
 			int cpuidResult[4] = {};
 
-			__cpuidex(cpuidResult, (int)pVMMVirtCpuInfo->guestVmcb.statusFields.rax, (int)pGuestRegisters->rcx);
+			__cpuidex(cpuidResult, (int)pGuestRegisters->rax, (int)pGuestRegisters->rcx);
 
-			if (((int)pVMMVirtCpuInfo->guestVmcb.statusFields.rax) == CPUID_FN_SVM_FEATURE)
+			if (((int)pGuestRegisters->rax) == CPUID_FN_SVM_FEATURE)
 				cpuidResult[2] &= ~(1UL << CPUID_FN_80000001_ECX_SVM_OFFSET);
 
-			*reinterpret_cast<UINT32*>(&pVMMVirtCpuInfo->guestVmcb.statusFields.rax) = cpuidResult[0];
+			*reinterpret_cast<UINT32*>(&pGuestRegisters->rax) = cpuidResult[0];
 			*reinterpret_cast<UINT32*>(&pGuestRegisters->rbx) = cpuidResult[1];
 			*reinterpret_cast<UINT32*>(&pGuestRegisters->rcx) = cpuidResult[2];
 			*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = cpuidResult[3];
 		}
 
 		//guest到下一条指令执行
-		pVMMVirtCpuInfo->guestVmcb.statusFields.rip = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
+		pGuestRegisters->rip = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
 
 		break;
 	}
@@ -653,7 +671,7 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 
 		if (isWriteAccess)
 		{
-			value.LowPart = (UINT32)pVMMVirtCpuInfo->guestVmcb.statusFields.rax;
+			value.LowPart = (UINT32)pGuestRegisters->rax;
 			value.HighPart = (UINT32)pGuestRegisters->rdx;
 
 			if (pMsrInterceptPlugin != NULL &&
@@ -684,12 +702,12 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 			if (msrNum == IA32_MSR_EFER)
 				value.QuadPart &= ~(1UL << EFER_SVME_OFFSET);
 
-			*reinterpret_cast<UINT32*>(&pVMMVirtCpuInfo->guestVmcb.statusFields.rax) = value.LowPart;
+			*reinterpret_cast<UINT32*>(&pGuestRegisters->rax) = value.LowPart;
 			*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = value.HighPart;
 		}
 
 		//guest到下一条指令执行
-		pVMMVirtCpuInfo->guestVmcb.statusFields.rip = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
+		pGuestRegisters->rip = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
 
 		break;
 	}
@@ -704,7 +722,7 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vector = BP_EXPECTION_VECTOR_INDEX;
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.type = 3;
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vaild = 1;
-		pVMMVirtCpuInfo->guestVmcb.statusFields.rip = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
+		pGuestRegisters->rip = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
 		break;
 	}
 	case VMEXIT_REASON_EXCEPTION_UD:
@@ -740,7 +758,7 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vector = BP_EXPECTION_VECTOR_INDEX;
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.type = 3;
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vaild = 1;
-		pVMMVirtCpuInfo->guestVmcb.statusFields.rip = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
+		pGuestRegisters->rip = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
 		break;
 	}
 	case VMEXIT_REASON_NPF:

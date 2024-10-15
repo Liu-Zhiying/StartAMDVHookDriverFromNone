@@ -319,9 +319,9 @@ inline bool MsrHookManager<msrHookCount>::HandleMsrImterceptRead(VirtCpuInfo* pV
 		{
 			LARGE_INTEGER value = {};
 			value.QuadPart = parameters[idx].pFakeValues[pVirtCpuInfo->otherInfo.cpuIdx];
-			*reinterpret_cast<UINT32*>(&pVirtCpuInfo->guestVmcb.statusFields.rax) = value.LowPart;
+			*reinterpret_cast<UINT32*>(&pGuestRegisters->rax) = value.LowPart;
 			*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = value.HighPart;
-			pVirtCpuInfo->guestVmcb.statusFields.rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
+			pGuestRegisters->rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
 			handled = true;
 			break;
 		}
@@ -353,10 +353,10 @@ inline bool MsrHookManager<msrHookCount>::HandleMsrInterceptWrite(VirtCpuInfo* p
 		if (parameters[idx].enabled && msrNum == parameters[idx].msrNum)
 		{
 			LARGE_INTEGER value = {};
-			value.LowPart = (UINT32)pVirtCpuInfo->guestVmcb.statusFields.rax;
+			value.LowPart = (UINT32)pGuestRegisters->rax;
 			value.HighPart = (UINT32)pGuestRegisters->rdx;
 			parameters[idx].pFakeValues[pVirtCpuInfo->otherInfo.cpuIdx] = value.QuadPart;
-			pVirtCpuInfo->guestVmcb.statusFields.rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
+			pGuestRegisters->rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
 			handled = true;
 			break;
 		}
@@ -376,7 +376,7 @@ inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo,
 	UNREFERENCED_PARAMETER(pHostVmcbPhyAddr);
 
 	//eaxÎªÅäÖÃMSR HOOKµÄCPUID±àºÅ
-	if (((int)pVirtCpuInfo->guestVmcb.statusFields.rax) == CONFIGURE_MSR_HOOK_CPUID_FUNCTION)
+	if (((int)pGuestRegisters->rax) == CONFIGURE_MSR_HOOK_CPUID_FUNCTION)
 	{
 		bool handled = false;
 		MsrOperationParameter* pOptParam = (MsrOperationParameter*)pGuestRegisters->rdx;
@@ -443,7 +443,7 @@ inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo,
 				break;
 			}
 
-			pVirtCpuInfo->guestVmcb.statusFields.rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
+			pGuestRegisters->rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
 
 			handled = true;
 		}
@@ -509,7 +509,7 @@ inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo,
 				break;
 			}
 
-			pVirtCpuInfo->guestVmcb.statusFields.rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
+			pGuestRegisters->rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
 
 			handled = true;
 		}
