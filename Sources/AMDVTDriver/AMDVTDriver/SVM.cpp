@@ -402,8 +402,6 @@ NTSTATUS SVMManager::EnterVirtualization()
 		KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
 
 		_save_or_load_regs(&registerBackup);
-		//标记进入虚拟化之后，需要恢复的寄存器
-		registerBackup.rax = (UINT64)&registerBackup;
 
 		if (!pVirtCpuInfo[cpuIdx]->otherInfo.isInVirtualizaion)
 		{
@@ -459,28 +457,39 @@ NTSTATUS SVMManager::EnterVirtualization()
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.idtr.base = idtrBase;
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.idtr.limit = idtrLimit;
 
-			//X64 代码段和数据段的base和limit是无效的
+			//X64 代码段和数据段的base和limit是无效的（FS,GS除外）
 			//base 强制为 0（强制平坦段）
+			//这里还是读取了原始的base和limit
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.cs.selector = _cs_selector();
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.cs.base = GetSegmentBaseAddress(_cs_selector(), gdtrBase);
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.cs.limit = GetSegmentLimit2(_cs_selector(), gdtrBase);
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.cs.attrib = GetSegmentAttribute(_cs_selector(), gdtrBase).AsUInt16;
 
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ds.selector = _ds_selector();
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ds.base = GetSegmentBaseAddress(_ds_selector(), gdtrBase);
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ds.limit = GetSegmentLimit2(_ds_selector(), gdtrBase);
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ds.attrib = GetSegmentAttribute(_ds_selector(), gdtrBase).AsUInt16;
 
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.es.selector = _es_selector();
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.es.base = GetSegmentBaseAddress(_es_selector(), gdtrBase);
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.es.limit = GetSegmentLimit2(_es_selector(), gdtrBase);
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.es.attrib = GetSegmentAttribute(_es_selector(), gdtrBase).AsUInt16;
 
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ss.selector = _ss_selector();
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ss.base = GetSegmentBaseAddress(_ss_selector(), gdtrBase);
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ss.limit = GetSegmentLimit2(_ss_selector(), gdtrBase);
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.ss.attrib = GetSegmentAttribute(_ss_selector(), gdtrBase).AsUInt16;
 
 			//下面的这一组信息可以使用vmsave指令直接获取
 			//这里为了研究原理手动获取
 			//*************************************** BEGIN ***************************************
-
+			
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.fs.selector = _fs_selector();
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.fs.limit = GetSegmentLimit2(_fs_selector(), gdtrBase);
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.fs.attrib = GetSegmentAttribute(_fs_selector(), gdtrBase).AsUInt16;
 
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.gs.selector = _gs_selector();
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.gs.limit = GetSegmentLimit2(_gs_selector(), gdtrBase);
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.gs.attrib = GetSegmentAttribute(_gs_selector(), gdtrBase).AsUInt16;
 
 			//对于TR LDTR base limit 依然有效
@@ -495,29 +504,27 @@ NTSTATUS SVMManager::EnterVirtualization()
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.tr.attrib = GetSegmentAttribute(trSelector, gdtrBase).AsUInt16;
 
 			//FSBase GSBase KenrelGSBase 可以不为0 但是是放在MSR寄存器里面的
-			/*
-			IA32_MSR_FS_BASE（下标0xC0000100）
-			IA32_MSR_GS_BASE（下标0xC0000101）
-			IA32_MSR_KERNEL_GS_BASE（下标0xC0000102）
-			*/
+			//IA32_MSR_FS_BASE（下标0xC0000100）
+			//IA32_MSR_GS_BASE（下标0xC0000101）
+			//IA32_MSR_KERNEL_GS_BASE（下标0xC0000102）
 
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.fs.base = __readmsr(IA32_MSR_FS_BASE);
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.gs.base = __readmsr(IA32_MSR_GS_BASE);
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.kernelGsBase = __readmsr(IA32_MSR_KERNEL_GS_BASE);
 
 			//对于32位系统才需要填充 SYSENTER_CS SYSENTER_ESP SYSENTER_EIP
-
-			//pVirtCpuInfo[idx]->guestVmcb.statusFields.sysenterCs = __readmsr(IA32_MSR_SYSENTER_CS);
-			//pVirtCpuInfo[idx]->guestVmcb.statusFields.sysenterEsp = __readmsr(IA32_MSR_SYSENTER_ESP);
-			//pVirtCpuInfo[idx]->guestVmcb.statusFields.sysenterEip = __readmsr(IA32_MSR_SYSENTER_EIP);
+			
+			//pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.sysenterCs = __readmsr(IA32_MSR_SYSENTER_CS);
+			//pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.sysenterEsp = __readmsr(IA32_MSR_SYSENTER_ESP);
+			//pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.sysenterEip = __readmsr(IA32_MSR_SYSENTER_EIP);
 
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.star = __readmsr(IA32_MSR_STAR);
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.lstar = __readmsr(IA32_MSR_LSTAR);
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.cstar = __readmsr(IA32_MSR_CSTAR);
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.sfmask = __readmsr(IA32_MSR_SF_MASK);
-
+			
 			//*************************************** END ***************************************
-
+			
 			//填充 VMCB EFER 的 EFER 值中SVME位必须为1，否则vmrun会失败
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.efer = __readmsr(IA32_MSR_EFER);
 
@@ -529,7 +536,8 @@ NTSTATUS SVMManager::EnterVirtualization()
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.cr2 = __readcr2();
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.cr3 = __readcr3();
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.cr4 = __readcr4();
-			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.rax = registerBackup.rax;
+			//设置rax为GenericRegisters的地址，这样__save_or_load_regs就能通过rax访问到GenericRegisters并恢复寄存器
+			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.rax = (PTR_TYPE)&registerBackup;
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.rflags = registerBackup.rflags;
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.rsp = registerBackup.rsp;
 			pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields.rip = registerBackup.rip;
@@ -539,8 +547,8 @@ NTSTATUS SVMManager::EnterVirtualization()
 
 			pVirtCpuInfo[cpuIdx]->hostVmcb.statusFields = pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields;
 
-			//__svm_vmsave((size_t)MmGetPhysicalAddress(&pVirtCpuInfo[idx]->guestVmcb).QuadPart);
-			//__svm_vmsave((size_t)MmGetPhysicalAddress(&pVirtCpuInfo[idx]->hostVmcb).QuadPart);
+			//__svm_vmsave((size_t)MmGetPhysicalAddress(&pVirtCpuInfo[cpuIdx]->guestVmcb).QuadPart);
+			//__svm_vmsave((size_t)MmGetPhysicalAddress(&pVirtCpuInfo[cpuIdx]->hostVmcb).QuadPart);
 
 			_run_svm_vmrun
 			(

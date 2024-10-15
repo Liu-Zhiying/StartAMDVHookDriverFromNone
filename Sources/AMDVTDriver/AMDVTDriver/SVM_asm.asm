@@ -105,7 +105,7 @@ _save_or_load_regs Proc
 	mov [rcx + 158h], rdx
 	mov [rcx + 160h], rcx
 	mov [rcx + 168h], rbx
-	mov qword ptr [rcx + 170h], 0h
+	mov [rcx + 170h], rax
 	
 	;取当前Rflags
 	pushfq
@@ -116,9 +116,6 @@ _save_or_load_regs Proc
 	;把rip指向判断是否load寄存器的位置
 	mov rax, offset if_load_regs
 	mov [rcx + 180h], rax
-
-	;取rsp，这个值没啥用
-	mov [rcx + 188h], rsp
 	
 	;取函数返回之后的第一条地址
 	;如果是进入虚拟化之后执行到if_load_regs时，这个会作为load寄存器之后的执行地址
@@ -129,7 +126,7 @@ _save_or_load_regs Proc
 	;如果是进入虚拟化之后执行到if_load_regs时，这个会作为最后还原的rsp
 	mov rax, rsp
 	add rax, 8h
-	mov [rcx + 198h], rax
+	mov [rcx + 188h], rax
 
 	;rax置0，跳过load寄存器
 	;如果是进入虚拟化之后再次执行到if_load_regs
@@ -177,12 +174,14 @@ if_load_regs:
 	push qword ptr [rcx + 178h]
 	popfq
 	;还原rsp
-	mov rsp, [rax + 198h]
-	;跳转指令
-	mov rax, [rax + 190h]
-	jmp rax
+	mov rsp, [rax + 188h]
+	;还原rax
+	mov rax, [rax + 170h]
+	jmp qword ptr [rcx + 190h]
 
 return:
+	;还原rax
+	mov rax, [rcx + 170h]
 	ret
 _save_or_load_regs Endp
 
