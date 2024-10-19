@@ -221,34 +221,26 @@ void MsrHookManager<msrHookCount>::Deinit()
 	PAGED_CODE();
 	if (inited)
 	{
-		PROCESSOR_NUMBER processorNum = {};
-		GROUP_AFFINITY affinity = {}, oldAffinity = {};
-		MsrOperationParameter optParam = {};
+		auto coreAction = [this](UINT32 coreIndex, SIZE_TYPE idx1) -> NTSTATUS
+			{
+				MsrOperationParameter optParam = {};
+
+				optParam.msrNum = parameters[idx1].msrNum;
+				optParam.pValueInOut = &parameters[idx1].pFakeValues[coreIndex];
+
+				PTR_TYPE regs[] = { CONFIGURE_MSR_HOOK_CPUID_FUNCTION, parameters[idx1].msrNum, WRITE_MSR_CPUID_SUBFUNCTION, (PTR_TYPE)&optParam };
+				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+				return STATUS_SUCCESS;
+			};
 
 		//回写欺骗值到每个核心的MSR
-		for (SIZE_TYPE idx1 = 0; idx1 < msrHookCount; ++idx1)
+		for (SIZE_TYPE idx = 0; idx < msrHookCount; ++idx)
 		{
-			if (parameters[idx1].enabled)
+			if (parameters[idx].enabled)
 			{
-				for (ULONG idx2 = 0; idx2 < cpuCnt; ++idx2)
-				{
-					KeGetProcessorNumberFromIndex(idx2, &processorNum);
-
-					affinity = {};
-					affinity.Group = processorNum.Group;
-					affinity.Mask = 1ULL << processorNum.Number;
-					KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
-
-					optParam.msrNum = parameters[idx1].msrNum;
-					optParam.pValueInOut = &parameters[idx1].pFakeValues[idx2];
-
-					PTR_TYPE regs[] = { CONFIGURE_MSR_HOOK_CPUID_FUNCTION, parameters[idx1].msrNum, WRITE_MSR_CPUID_SUBFUNCTION, (PTR_TYPE)&optParam };
-					SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
-
-					KeRevertToUserGroupAffinityThread(&oldAffinity);
-				}
-
-				parameters[idx1].enabled = false;
+				RunOnEachCore(0, cpuCnt, coreAction, idx);
+				parameters[idx].enabled = false;
 			}
 		}
 		//释放内存
@@ -524,52 +516,45 @@ template<SIZE_TYPE msrHookCount>
 inline void MsrHookManager<msrHookCount>::EnableMsrHook(UINT32 msrNum, PTR_TYPE realValue)
 {
 	PAGED_CODE();
-	PROCESSOR_NUMBER processorNum = {};
-	GROUP_AFFINITY affinity = {}, oldAffinity = {};
-	MsrOperationParameter optParam = {};
-	PTR_TYPE regs[4] = {};
-
 	locker.WriteLock();
 
-	for (SIZE_TYPE idx1 = 0; idx1 < msrHookCount; ++idx1)
+	auto coreAction = [this](UINT32 coreIndex, SIZE_TYPE idx, UINT32 msrNum, PTR_TYPE realValue) -> NTSTATUS
+		{
+			MsrOperationParameter optParam = {};
+			PTR_TYPE regs[4] = {};
+
+			//读取每一个核心的原值作为欺骗值
+			optParam.msrNum = msrNum;
+			optParam.pValueInOut = &parameters[idx].pFakeValues[coreIndex];
+
+			regs[0] = CONFIGURE_MSR_HOOK_CPUID_FUNCTION;
+			regs[1] = msrNum;
+			regs[2] = READ_MSR_CPUID_SUBFUNCTION;
+			regs[3] = (PTR_TYPE)&optParam;
+
+			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+			//写入真实值到每个核心
+			optParam.msrNum = msrNum;
+			optParam.pValueInOut = &realValue;
+
+			regs[0] = CONFIGURE_MSR_HOOK_CPUID_FUNCTION;
+			regs[1] = msrNum;
+			regs[2] = WRITE_MSR_CPUID_SUBFUNCTION;
+			regs[3] = (PTR_TYPE)&optParam;
+
+			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+			return STATUS_SUCCESS;
+		};
+
+	for (SIZE_TYPE idx = 0; idx < msrHookCount; ++idx)
 	{
 		//如果没有启用该msr的hook，而且msr编号匹配
-		if (!parameters[idx1].enabled && parameters[idx1].msrNum == msrNum)
+		if (!parameters[idx].enabled && parameters[idx].msrNum == msrNum)
 		{
-			for (ULONG idx2 = 0; idx2 < cpuCnt; ++idx2)
-			{
-				KeGetProcessorNumberFromIndex(idx2, &processorNum);
-
-				affinity = {};
-				affinity.Group = processorNum.Group;
-				affinity.Mask = 1ULL << processorNum.Number;
-				KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
-
-				//读取每一个核心的原值作为欺骗值
-				optParam.msrNum = msrNum;
-				optParam.pValueInOut = &parameters[idx1].pFakeValues[idx2];
-
-				regs[0] = CONFIGURE_MSR_HOOK_CPUID_FUNCTION;
-				regs[1] = msrNum;
-				regs[2] = READ_MSR_CPUID_SUBFUNCTION;
-				regs[3] = (PTR_TYPE)&optParam;
-
-				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
-
-				//写入真实值到每个核心
-				optParam.msrNum = msrNum;
-				optParam.pValueInOut = &realValue;
-
-				regs[0] = CONFIGURE_MSR_HOOK_CPUID_FUNCTION;
-				regs[1] = msrNum;
-				regs[2] = WRITE_MSR_CPUID_SUBFUNCTION;
-				regs[3] = (PTR_TYPE)&optParam;
-
-				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
-
-				KeRevertToUserGroupAffinityThread(&oldAffinity);
-			}
-			parameters[idx1].enabled = true;
+			RunOnEachCore(0, cpuCnt, coreAction, idx, msrNum, realValue);
+			parameters[idx].enabled = true;
 		}
 	}
 
@@ -587,32 +572,25 @@ inline void MsrHookManager<msrHookCount>::DisableMsrHook(UINT32 msrNum, bool wri
 
 	locker.WriteLock();
 
-	for (SIZE_TYPE idx1 = 0; idx1 < msrHookCount; ++idx1)
+	auto coreAction = [this](UINT32 coreIndex, SIZE_TYPE idx) -> NTSTATUS
+		{
+			optParam.msrNum = msrNum;
+			optParam.pValueInOut = &parameters[idx].pFakeValues[coreIndex];
+
+			SetRegsThenCpuid(CONFIGURE_MSR_HOOK_CPUID_FUNCTION, msrNum, WRITE_MSR_CPUID_SUBFUNCTION, (PTR_TYPE)&optParam);
+
+			return STATUS_SUCCESS;
+		};
+
+	for (SIZE_TYPE idx = 0; idx < msrHookCount; ++idx)
 	{
 		//如果已经启用该msr的hook，而且msr编号匹配
-		if (parameters[idx1].enabled && parameters[idx1].msrNum == msrNum)
+		if (parameters[idx].enabled && parameters[idx].msrNum == msrNum)
 		{
 			//回写欺骗值到每个核心的MSR
 			if (writeFakeValueToMsr)
-			{
-				for (ULONG idx2 = 0; idx2 < cpuCnt; ++idx2)
-				{
-					KeGetProcessorNumberFromIndex(idx2, &processorNum);
-
-					affinity = {};
-					affinity.Group = processorNum.Group;
-					affinity.Mask = 1ULL << processorNum.Number;
-					KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
-
-					optParam.msrNum = msrNum;
-					optParam.pValueInOut = &parameters[idx1].pFakeValues[idx2];
-
-					SetRegsThenCpuid(CONFIGURE_MSR_HOOK_CPUID_FUNCTION, msrNum, WRITE_MSR_CPUID_SUBFUNCTION, (PTR_TYPE)&optParam);
-
-					KeRevertToUserGroupAffinityThread(&oldAffinity);
-				}
-			}
-			parameters[idx1].enabled = false;
+				RunOnEachCore(0, cpuCnt, coreAction, coreAction, idx);
+			parameters[idx].enabled = false;
 		}
 	}
 
@@ -738,6 +716,8 @@ public:
 
 class NptHookManager : public IManager, public IBreakprointInterceptPlugin, public INpfInterceptPlugin, public ICpuidInterceptPlugin
 {
+	//CPU核心数
+	ULONG cpuCnt;
 	//核心间共享数据
 	NptHookSharedData sharedData;
 	//核心间共享数据拷贝的指针
@@ -776,7 +756,7 @@ public:
 	virtual bool HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
 	#pragma code_seg("PAGE")
-	NptHookManager() : pPageTableManager(NULL), pSharedDataCopy(NULL), pCoreNptHookStatus(NULL) { PAGED_CODE(); }
+	NptHookManager() : pPageTableManager(NULL), pSharedDataCopy(NULL), pCoreNptHookStatus(NULL), cpuCnt(0) { PAGED_CODE(); }
 	//添加hook
 	NTSTATUS AddHook(const NptHookRecord& record);
 	//删除hook，pHookOriginVirtAddr是hook位置的虚拟地址

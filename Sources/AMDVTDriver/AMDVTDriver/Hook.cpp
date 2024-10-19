@@ -542,9 +542,6 @@ bool NptHookManager::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 #pragma code_seg("PAGE")
 NTSTATUS NptHookManager::ChangeLargePageToSmallPage(PTR_TYPE pOriginLevel3PhyAddr, PageTableType type)
 {
-	NTSTATUS result = STATUS_SUCCESS;
-	SIZE_TYPE cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
-
 	PTR_TYPE regs[4] = {};
 	ChangePageSizeInfo info = {};
 
@@ -552,44 +549,29 @@ NTSTATUS NptHookManager::ChangeLargePageToSmallPage(PTR_TYPE pOriginLevel3PhyAdd
 	info.pLevel3PhyAddr = pOriginLevel3PhyAddr;
 	info.type = type;
 
+	auto coreAction = [&](UINT32 idx) -> NTSTATUS
+		{
+			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+			regs[1] = 0;
+			regs[2] = CHANGE_PAGE_SIZE_CPUID_SUBFUNCTION;
+			regs[3] = (PTR_TYPE)&info;
+
+			info.cpuIdx = idx;
+
+			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+			return (NTSTATUS)regs[1];
+		};
+
 	PROCESSOR_NUMBER processorNum = {};
 	GROUP_AFFINITY affinity = {}, oldAffinity = {};
 
-	for (ULONG idx = 0; idx < cpuCnt; ++idx)
-	{
-		KeGetProcessorNumberFromIndex(idx, &processorNum);
-		affinity = {};
-		affinity.Group = processorNum.Group;
-		affinity.Mask = 1ULL << processorNum.Number;
-		KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
-
-		regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
-		regs[1] = 0;
-		regs[2] = CHANGE_PAGE_SIZE_CPUID_SUBFUNCTION;
-		regs[3] = (PTR_TYPE)&info;
-
-		info.cpuIdx = idx;
-
-		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
-
-		KeRevertToUserGroupAffinityThread(&oldAffinity);
-
-		if (!NT_SUCCESS(regs[1]))
-		{
-			result = (NTSTATUS)regs[1];
-			break;
-		}
-	}
-
-	return result;
+	return RunOnEachCore(0, cpuCnt, coreAction);
 }
 
 #pragma code_seg("PAGE")
 NTSTATUS NptHookManager::ChangeSmallPageToLargePage(PTR_TYPE pOriginLevel3PhyAddr, PageTableType type)
 {
-	NTSTATUS result = STATUS_SUCCESS;
-	SIZE_TYPE cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
-
 	PTR_TYPE regs[4] = {};
 	ChangePageSizeInfo info = {};
 
@@ -597,44 +579,26 @@ NTSTATUS NptHookManager::ChangeSmallPageToLargePage(PTR_TYPE pOriginLevel3PhyAdd
 	info.pLevel3PhyAddr = pOriginLevel3PhyAddr;
 	info.type = type;
 
-	PROCESSOR_NUMBER processorNum = {};
-	GROUP_AFFINITY affinity = {}, oldAffinity = {};
-
-	for (ULONG idx = 0; idx < cpuCnt; ++idx)
-	{
-		KeGetProcessorNumberFromIndex(idx, &processorNum);
-		affinity = {};
-		affinity.Group = processorNum.Group;
-		affinity.Mask = 1ULL << processorNum.Number;
-		KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
-
-		regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
-		regs[1] = 0;
-		regs[2] = CHANGE_PAGE_SIZE_CPUID_SUBFUNCTION;
-		regs[3] = (PTR_TYPE)&info;
-
-		info.cpuIdx = idx;
-
-		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
-
-		KeRevertToUserGroupAffinityThread(&oldAffinity);
-
-		if (!NT_SUCCESS(regs[1]))
+	auto coreAction = [&](UINT32 idx) -> NTSTATUS
 		{
-			result = (NTSTATUS)regs[1];
-			break;
-		}
-	}
+			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+			regs[1] = 0;
+			regs[2] = CHANGE_PAGE_SIZE_CPUID_SUBFUNCTION;
+			regs[3] = (PTR_TYPE)&info;
 
-	return result;
+			info.cpuIdx = idx;
+
+			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+			return (NTSTATUS)regs[1];
+		};
+
+	return RunOnEachCore(0, cpuCnt, coreAction);
 }
 
 #pragma code_seg("PAGE")
 NTSTATUS NptHookManager::ChangePageTablePermission(PTR_TYPE physicalAddress, PageTableLevel123Entry permission, PageTableType type, UINT32 level)
 {
-	NTSTATUS status = STATUS_SUCCESS;
-	SIZE_TYPE cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
-
 	PTR_TYPE regs[4] = {};
 	ChangePageTablePermissionInfo info = {};
 
@@ -643,90 +607,53 @@ NTSTATUS NptHookManager::ChangePageTablePermission(PTR_TYPE physicalAddress, Pag
 	info.level = level;
 	info.type = type;
 
-	PROCESSOR_NUMBER processorNum = {};
-	GROUP_AFFINITY affinity = {}, oldAffinity = {};
-
-	for (ULONG idx = 0; idx < cpuCnt; ++idx)
-	{
-		KeGetProcessorNumberFromIndex(idx, &processorNum);
-		affinity = {};
-		affinity.Group = processorNum.Group;
-		affinity.Mask = 1ULL << processorNum.Number;
-		KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
-
-		regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
-		regs[1] = 0;
-		regs[2] = CHANGE_PAGE_TABLE_PERMISSION_CPUID_SUBFUNCTION;
-		regs[3] = (PTR_TYPE)&info;
-
-		info.cpuIdx = idx;
-
-		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
-
-		KeRevertToUserGroupAffinityThread(&oldAffinity);
-
-		if (!NT_SUCCESS(regs[1]))
+	auto coreAction = [&](UINT32 idx) -> NTSTATUS
 		{
-			status = (NTSTATUS)regs[1];
-			break;
-		}
-	}
+			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+			regs[1] = 0;
+			regs[2] = CHANGE_PAGE_TABLE_PERMISSION_CPUID_SUBFUNCTION;
+			regs[3] = (PTR_TYPE)&info;
 
-	return status;
+			info.cpuIdx = idx;
+
+			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+			return (NTSTATUS)regs[1];
+		};
+
+	return RunOnEachCore(0, cpuCnt, coreAction);
 }
 
 #pragma code_seg("PAGE")
 NTSTATUS NptHookManager::SwapSmallPagePpn(PTR_TYPE physicalAddrees1, PTR_TYPE physicalAddress2, PageTableType type)
 {
-	NTSTATUS status = STATUS_SUCCESS;
-	SIZE_TYPE cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
-
 	PTR_TYPE regs[4] = {};
-
-	PROCESSOR_NUMBER processorNum = {};
-	GROUP_AFFINITY affinity = {}, oldAffinity = {};
-
 	SwapSmallPagePpnInfo info = {};
 
 	info.physicalAddress1 = physicalAddrees1;
 	info.physicalAddress2 = physicalAddress2;
 	info.type = type;
 
-	for (ULONG idx = 0; idx < cpuCnt; ++idx)
-	{
-		KeGetProcessorNumberFromIndex(idx, &processorNum);
-		affinity = {};
-		affinity.Group = processorNum.Group;
-		affinity.Mask = 1ULL << processorNum.Number;
-		KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
-
-		regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
-		regs[1] = 0;
-		regs[2] = SWAP_SMALL_PAGE_PPN_CPUID_SUBFUNCTION;
-		regs[3] = (PTR_TYPE)&info;
-
-		info.cpuIdx = idx;
-
-		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
-
-		KeRevertToUserGroupAffinityThread(&oldAffinity);
-
-		if (!NT_SUCCESS(regs[1]))
+	auto coreAction = [&](UINT32 idx) -> NTSTATUS
 		{
-			status = (NTSTATUS)regs[1];
-			break;
-		}
-	}
+			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+			regs[1] = 0;
+			regs[2] = SWAP_SMALL_PAGE_PPN_CPUID_SUBFUNCTION;
+			regs[3] = (PTR_TYPE)&info;
 
-	return status;
+			info.cpuIdx = idx;
+
+			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+			return (NTSTATUS)regs[1];
+		};
+	
+	return RunOnEachCore(0, cpuCnt, coreAction);
 }
 
 #pragma code_seg("PAGE")
 NTSTATUS NptHookManager::CancelHookOperation(const SwapPageRefCnt& swapPageInfo)
 {
-	NTSTATUS status = STATUS_SUCCESS;
-	SIZE_TYPE cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
-
 	PTR_TYPE regs[4] = {};
 
 	PROCESSOR_NUMBER processorNum = {};
@@ -764,95 +691,83 @@ NTSTATUS NptHookManager::CancelHookOperation(const SwapPageRefCnt& swapPageInfo)
 	info2.physicalAddress2 = regs[1];
 	info2.type = PageTableType::InternalPageTable;
 
-	for (ULONG idx = 0; idx < cpuCnt; ++idx)
-	{
-		KeGetProcessorNumberFromIndex(idx, &processorNum);
-		affinity = {};
-		affinity.Group = processorNum.Group;
-		affinity.Mask = 1ULL << processorNum.Number;
-		KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
-
-		do
+	auto coreAction = [&](UINT32 idx) -> NTSTATUS
 		{
-			//还原物理页面交换
-			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
-			regs[1] = 0;
-			regs[2] = SWAP_SMALL_PAGE_PPN_CPUID_SUBFUNCTION;
-			regs[3] = (PTR_TYPE)&info2;
+			NTSTATUS status = STATUS_SUCCESS;
 
-			info2.cpuIdx = idx;
-
-			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
-
-			if (!NT_SUCCESS(regs[1]))
+			do
 			{
-				status = (NTSTATUS)regs[1];
-				break;
-			}
-			//内部NPT页表恢复执行禁止
-			permission.fields.executionDisabled = true;
+				//还原物理页面交换
+				regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+				regs[1] = 0;
+				regs[2] = SWAP_SMALL_PAGE_PPN_CPUID_SUBFUNCTION;
+				regs[3] = (PTR_TYPE)&info2;
 
-			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
-			regs[1] = 0;
-			regs[2] = CHANGE_PAGE_TABLE_PERMISSION_CPUID_SUBFUNCTION;
-			regs[3] = (PTR_TYPE)&info;
+				info2.cpuIdx = idx;
 
-			info.type = PageTableType::InternalPageTable;
-			info.cpuIdx = idx;
+				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 
-			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+				if (!NT_SUCCESS(regs[1]))
+				{
+					status = (NTSTATUS)regs[1];
+					break;
+				}
+				//内部NPT页表恢复执行禁止
+				permission.fields.executionDisabled = true;
 
-			if (!NT_SUCCESS(regs[1]))
-			{
-				status = (NTSTATUS)regs[1];
-				break;
-			}
-			//外部NPT页表恢复可执行
-			permission.fields.executionDisabled = false;
+				regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+				regs[1] = 0;
+				regs[2] = CHANGE_PAGE_TABLE_PERMISSION_CPUID_SUBFUNCTION;
+				regs[3] = (PTR_TYPE)&info;
 
-			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
-			regs[1] = 0;
-			regs[2] = CHANGE_PAGE_TABLE_PERMISSION_CPUID_SUBFUNCTION;
-			regs[3] = (PTR_TYPE)&info;
+				info.type = PageTableType::InternalPageTable;
+				info.cpuIdx = idx;
 
-			info.type = PageTableType::ExternalPageTable;
-			info.cpuIdx = idx;
+				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 
-			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+				if (!NT_SUCCESS(regs[1]))
+				{
+					status = (NTSTATUS)regs[1];
+					break;
+				}
+				//外部NPT页表恢复可执行
+				permission.fields.executionDisabled = false;
 
-			if (!NT_SUCCESS(regs[1]))
-			{
-				status = (NTSTATUS)regs[1];
-				break;
-			}
-			//NCR3切换到外部NPT页表
-			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
-			regs[1] = NULL;
-			regs[2] = RESTORE_CR3_CPUID_SUBFUNCTION;
-			regs[3] = idx;
+				regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+				regs[1] = 0;
+				regs[2] = CHANGE_PAGE_TABLE_PERMISSION_CPUID_SUBFUNCTION;
+				regs[3] = (PTR_TYPE)&info;
 
-			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+				info.type = PageTableType::ExternalPageTable;
+				info.cpuIdx = idx;
 
-		} while (false);
+				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 
-		KeRevertToUserGroupAffinityThread(&oldAffinity);
+				if (!NT_SUCCESS(regs[1]))
+				{
+					status = (NTSTATUS)regs[1];
+					break;
+				}
+				//NCR3切换到外部NPT页表
+				regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+				regs[1] = NULL;
+				regs[2] = RESTORE_CR3_CPUID_SUBFUNCTION;
+				regs[3] = idx;
 
-		if (!NT_SUCCESS(status))
-			break;
-	}
+				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 
-	return status;
+			} while (false);
+
+			return status;
+		};
+
+	return RunOnEachCore(0, cpuCnt, coreAction);
 }
 
 #pragma code_seg("PAGE")
 void NptHookManager::SyncSharedData()
 {
 	PTR_TYPE  regs[4] = {};
-
-	SIZE_TYPE cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
-
-	PROCESSOR_NUMBER processorNum = {};
-	GROUP_AFFINITY affinity = {}, oldAffinity = {};
 
 	//拷贝共享数据
 	regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
@@ -867,18 +782,13 @@ void NptHookManager::SyncSharedData()
 		KeBugCheck(MEMORY_MANAGEMENT);
 
 	//同步数据
-	for (ULONG idx = 0; idx < cpuCnt; ++idx)
-	{
-		KeGetProcessorNumberFromIndex(idx, &processorNum);
-		affinity = {};
-		affinity.Group = processorNum.Group;
-		affinity.Mask = 1ULL << processorNum.Number;
-		KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
+	auto coreAction = [&](UINT32 idx) -> NTSTATUS
+		{
+			pCoreNptHookStatus[idx].pSharedData = (NptHookSharedData*)regs[1];
+			return STATUS_SUCCESS;
+		};
 
-		pCoreNptHookStatus[idx].pSharedData = (NptHookSharedData*)regs[1];
-
-		KeRevertToUserGroupAffinityThread(&oldAffinity);
-	}
+	RunOnEachCore(0,cpuCnt,coreAction);
 
 	//释放旧数据
 	if (pSharedDataCopy != NULL)
@@ -1545,7 +1455,7 @@ NTSTATUS NptHookManager::RemoveHook(PVOID pHookOriginVirtAddr)
 #pragma code_seg("PAGE")
 NTSTATUS NptHookManager::Init()
 {
-	UINT32 cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
+	cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
 
 	//为每个核心分配NPT HOOK 状态，分配的内存是一个数组，索引是核心号
 	pCoreNptHookStatus = (CoreNptHookStatus*)AllocNonPagedMem(sizeof(CoreNptHookStatus) * cpuCnt, PT_TAG);
@@ -1587,11 +1497,6 @@ NTSTATUS NptHookManager::Init()
 #pragma code_seg("PAGE")
 void NptHookManager::Deinit()
 {
-	SIZE_TYPE cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
-
-	PROCESSOR_NUMBER processorNum = {};
-	GROUP_AFFINITY affinity = {}, oldAffinity = {};
-
 	PTR_TYPE regs[4] = {};
 
 	//释放NPT HOOK 状态内存
@@ -1610,24 +1515,24 @@ void NptHookManager::Deinit()
 		RemoveHook(sharedData.hookRecords[0].pOriginVirtAddr);
 
 	//还原CR3
-	for (ULONG idx = 0; idx < cpuCnt; ++idx)
-	{
-		KeGetProcessorNumberFromIndex(idx, &processorNum);
-		affinity = {};
-		affinity.Group = processorNum.Group;
-		affinity.Mask = 1ULL << processorNum.Number;
-		KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
 
-		regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
-		regs[1] = NULL;
-		regs[2] = RESTORE_CR3_CPUID_SUBFUNCTION;
-		regs[3] = idx;
+	auto restoreCr3Core = [&regs](SIZE_TYPE idx) -> NTSTATUS
+		{
+			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+			regs[1] = NULL;
+			regs[2] = RESTORE_CR3_CPUID_SUBFUNCTION;
+			regs[3] = idx;
 
-		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 
-		KeRevertToUserGroupAffinityThread(&oldAffinity);
-	}
+			return STATUS_SUCCESS;
+		};
+
+	RunOnEachCore(0, cpuCnt, restoreCr3Core);
 
 	//析构内置NPT页表
 	internalPageTableManager.Deinit();
+
+	//清空成员
+	cpuCnt = 0;
 }

@@ -192,7 +192,7 @@ enum SVMStatus
 class SVMManager : public IManager
 {
 	VirtCpuInfo** pVirtCpuInfo;
-	UINT64 cpuCnt;
+	UINT32 cpuCnt;
 	MsrPremissionsMapManager msrPremissionMap;
 	IMsrInterceptPlugin* pMsrInterceptPlugin;
 	ICpuidInterceptPlugin* pCpuIdInterceptPlugin;

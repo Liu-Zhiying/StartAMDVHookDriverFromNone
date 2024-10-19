@@ -51,6 +51,39 @@ void CallDestroyer(T* pObj)
 	delete (0, pObj);
 }
 
+//在每一个CPU核心上都运行一次指定的可执行对象
+#pragma code_seg("PAGE")
+template<typename Func, typename ...Args>
+NTSTATUS RunOnEachCore(UINT32 startCoreIdx, UINT32 endCoreIdx, Func&& func, Args&& ...args)
+{
+	PAGED_CODE();
+	NTSTATUS status = STATUS_SUCCESS;
+	PROCESSOR_NUMBER processorNum = {};
+	GROUP_AFFINITY affinity = {}, oldAffinity = {};
+
+	for (UINT32 cpuIdx = startCoreIdx; cpuIdx < endCoreIdx; ++cpuIdx)
+	{
+		status = KeGetProcessorNumberFromIndex(cpuIdx, &processorNum);
+		if (!NT_SUCCESS(status))
+			break;
+
+		affinity = {};
+		affinity.Group = processorNum.Group;
+		affinity.Mask = 1ULL << processorNum.Number;
+
+		KeSetSystemGroupAffinityThread(&affinity, &oldAffinity);
+
+		status = func(cpuIdx, args...);
+
+		KeRevertToUserGroupAffinityThread(&oldAffinity);
+
+		if (!NT_SUCCESS(status))
+			break;
+	}
+
+	return status;
+}
+
 //对于驱动各个组件的一个抽象
 class IManager
 {
