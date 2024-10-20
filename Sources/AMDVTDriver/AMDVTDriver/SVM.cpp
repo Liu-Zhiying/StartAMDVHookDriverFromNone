@@ -308,18 +308,19 @@ NTSTATUS SVMManager::Init()
 
 		if (pVirtCpuInfo == NULL)
 		{
-			status = STATUS_INSUFFICIENT_RESOURCES;
 			KdPrint(("SVMManager::Init(): Cpu virtualization memory failed!\n"));
 			break;
 		}
 
-		if (!NT_SUCCESS(msrPremissionMap.Init()))
+		status = msrPremissionMap.Init();
+		if (!NT_SUCCESS(status))
 		{
 			KdPrint(("SVMManager::Init(): MSR premission map init failed!\n"));
 			break;
 		}
 
 		status = STATUS_SUCCESS;
+
 		//为每个CPU分配进入虚拟化所需的内存
 		for (idx = 0; idx < cpuCnt; ++idx)
 		{
@@ -339,6 +340,7 @@ NTSTATUS SVMManager::Init()
 			KdPrint(("SVMManager::Init(): CPU Virtualization resource init failed!\n"));
 			break;
 		}
+
 		//进入虚拟化
 		status = EnterVirtualization();
 
