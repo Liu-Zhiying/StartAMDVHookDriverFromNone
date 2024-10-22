@@ -121,6 +121,22 @@ UINT32 GetSegmentLimit2(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 	limit |= descriptor->Fields.LimitLow;
 	limit |= ((UINT64)descriptor->Fields.LimitHigh) << 16;
 
+	/*
+		获取段描述符中的 limit 字段：段描述符中的 limit 字段是 20 位的值，分为高 4 位和低 16 位。
+		检查粒度（G）位：
+			如果 G = 0，limit 的单位是字节，范围是 1B 到 1MB。
+			如果 G = 1，limit 的单位是 4KB，范围是 4KB 到 4GB。
+		计算 limit：
+			当 G = 0 时，limit 的计算公式为： {Limit} = {Low 16 bits} + ({High 4 bits} << 16)
+			当 G = 1 时，limit 的计算公式为： {Limit} = (({Low 16 bits} + ({High 4 bits} << 16))) << 12) + 0xFFF
+	*/
+
+	if (descriptor->Fields.Granularity)
+	{
+		limit <<= 12;
+		limit |= 0xfff;
+	}
+
 	return limit;
 }
 
@@ -364,10 +380,6 @@ void SVMManager::Deinit()
 	PAGED_CODE();
 	if (pVirtCpuInfo != NULL && cpuCnt)
 	{
-		UINT64 idx = 0;
-		PROCESSOR_NUMBER processorNum = {};
-		GROUP_AFFINITY affinity = {}, oldAffinity = {};
-
 		auto coreAction = [this](UINT32 idx) -> NTSTATUS
 			{
 				if (pVirtCpuInfo[idx] != NULL)
@@ -547,7 +559,7 @@ NTSTATUS SVMManager::EnterVirtualization()
 
 				//__svm_vmsave((size_t)MmGetPhysicalAddress(&pVirtCpuInfo[cpuIdx]->guestVmcb).QuadPart);
 				//__svm_vmsave((size_t)MmGetPhysicalAddress(&pVirtCpuInfo[cpuIdx]->hostVmcb).QuadPart);
-
+				
 				_run_svm_vmrun
 				(
 					pVirtCpuInfo[cpuIdx],
