@@ -16,6 +16,6 @@ Windows 11 24H2
 ## 联系（其实就是催更方式）
 邮箱：1103660629@qq.com  
 QQ：1103660629
-## 推荐项目（现在我学习的就这个）WRITE_MSR_CPUID_SUBFUNCTION
+## 推荐项目（现在我学习的就这个）
 https://github.com/tandasat/SimpleSvm  
 https://github.com/tandasat/SimpleSvmHook
