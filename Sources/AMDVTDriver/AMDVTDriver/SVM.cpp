@@ -149,8 +149,24 @@ extern "C" void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGues
 	pGuestRegisters->rax = pVirtCpuInfo->guestVmcb.statusFields.rax;
 	pGuestRegisters->rflags = pVirtCpuInfo->guestVmcb.statusFields.rflags;
 
+	IMsrHookPlugin* pMsrHookPlugin = pVirtCpuInfo->otherInfo.pSvmManager->pMsrHookPlugin;
+
+	//如果 MSR 拦截插件存在，进入VM之后保存Guest和恢复Host的MSR
+	if (pMsrHookPlugin != NULL)
+	{
+		pMsrHookPlugin->SaveGuestMsrForCpu(pVirtCpuInfo->otherInfo.cpuIdx);
+		pMsrHookPlugin->LoadHostMsrForCpu(pVirtCpuInfo->otherInfo.cpuIdx);
+	}
+
 	//转发到SVMManager::VmExitHandler函数
 	pVirtCpuInfo->otherInfo.pSvmManager->VmExitHandler(pVirtCpuInfo, pGuestRegisters, pGuestVmcbPhyAddr, pHostVmcbPhyAddr);
+
+	//如果 MSR 拦截插件存在，退出VM之前恢复Guest和保存Host的MSR
+	if (pMsrHookPlugin != NULL)
+	{
+		pMsrHookPlugin->SaveHostMsrForCpu(pVirtCpuInfo->otherInfo.cpuIdx);
+		pMsrHookPlugin->LoadGuestMsrForCpu(pVirtCpuInfo->otherInfo.cpuIdx);
+	}
 
 	pVirtCpuInfo->guestVmcb.statusFields.rip = pGuestRegisters->rip;
 	pVirtCpuInfo->guestVmcb.statusFields.rsp = pGuestRegisters->rsp;
@@ -559,6 +575,13 @@ NTSTATUS SVMManager::EnterVirtualization()
 
 				//__svm_vmsave((size_t)MmGetPhysicalAddress(&pVirtCpuInfo[cpuIdx]->guestVmcb).QuadPart);
 				//__svm_vmsave((size_t)MmGetPhysicalAddress(&pVirtCpuInfo[cpuIdx]->hostVmcb).QuadPart);
+
+				//如何MSR HOOK插件存在，进入VM之前保存Guest和Host的MSR
+				if (pMsrHookPlugin != NULL)
+				{
+					pMsrHookPlugin->SaveGuestMsrForCpu(cpuIdx);
+					pMsrHookPlugin->SaveHostMsrForCpu(cpuIdx);
+				}
 				
 				_run_svm_vmrun
 				(

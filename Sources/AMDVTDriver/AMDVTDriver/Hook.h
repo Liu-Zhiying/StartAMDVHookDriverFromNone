@@ -11,6 +11,7 @@
 constexpr UINT32 CONFIGURE_MSR_HOOK_CPUID_FUNCTION = 0x400000fe;
 constexpr UINT32 READ_MSR_CPUID_SUBFUNCTION = 0x00000000;
 constexpr UINT32 WRITE_MSR_CPUID_SUBFUNCTION = 0x00000001;
+constexpr UINT32 GET_CPU_IDX_CPUID_SUBFUNCTION = 0x00000002;
 //配置NPT HOOK参数的CPUID的Function
 constexpr UINT32 NPT_HOOK_TOOL_CPUID_FUNCTION = 0x400000fd;
 constexpr UINT32 CHANGE_PAGE_SIZE_CPUID_SUBFUNCTION = 0x00000000;
@@ -47,14 +48,16 @@ extern "C" void SetRegsThenCpuid(PTR_TYPE* rax, PTR_TYPE* rbx, PTR_TYPE* rcx, PT
 //一些调用 VMM CPUID处理功能的参数定义
 struct MsrHookParameter
 {
-	//锁定的MXR真实值
-	PTR_TYPE realValue;
-	//VMM用于欺骗Guest的值
-	PTR_TYPE* pFakeValues;
-	//msr寄存器编号
+	//MSR 编号
 	UINT32 msrNum;
-	//是否启用Hook
-	bool enabled;
+	//是否启用HOOK，索引是核心索引，代表对应的核心是否启用hook
+	bool* coreHookEnabled;
+	//Fake value 值数组的指针，索引是核心索引
+	PTR_TYPE* pFakeValues;
+	//Guest Real value 值数组的指针，索引是核心索引
+	PTR_TYPE* pGuestRealValues;
+	//Host Real value 值数组的指针，索引是核心索引，如果MSR是Virtualized MSR，此值为NULL
+	PTR_TYPE* pHostRealValues;
 };
 
 enum PageTableType
@@ -127,14 +130,52 @@ struct MsrOperationParameter
 {
 	//MSR 编号
 	UINT32 msrNum;
-	//MSR 值数组的指针，索引是核心索引
+	//MSR 值的内存地址
 	PTR_TYPE* pValueInOut;
 };
 
 //MSR HOOK 管理器，msrHookCount代表要Hook的MSR的个数
 template<SIZE_TYPE msrHookCount>
-class MsrHookManager : public IManager, public IMsrInterceptPlugin, public ICpuidInterceptPlugin
+class MsrHookManager : public IManager, public IMsrInterceptPlugin, public ICpuidInterceptPlugin, public IMsrHookPlugin
 {
+private:
+	template<SIZE_TYPE msrCnt>
+	friend void EnableLStrHook(MsrHookManager<msrCnt>* pMsrHookManager, pLStarHookCallback pCallback, PVOID param1, PVOID param2, PVOID param3);
+	//判断MSR是否在VMCB中有字段，支持MSR的虚拟化
+	static bool IsVirtualizedMsr(UINT32 msrNum)
+	{
+		static constexpr UINT32 VIRTUALIZED_MSRS[] =
+		{
+			IA32_MSR_EFER,
+			IA32_MSR_PAT,
+			IA32_MSR_FS_BASE,
+			IA32_MSR_GS_BASE,
+			IA32_MSR_KERNEL_GS_BASE,
+			IA32_MSR_STAR,
+			IA32_MSR_LSTAR,
+			IA32_MSR_CSTAR,
+			IA32_MSR_SF_MASK,
+			IA32_MSR_SYSENTER_CS,
+			IA32_MSR_SYSENTER_ESP,
+			IA32_MSR_SYSENTER_EIP,
+		};
+
+		for (UINT32 virtualizedMsr : VIRTUALIZED_MSRS)
+			if (virtualizedMsr == msrNum)
+				return true;
+
+		return false;
+	}
+
+	//通过MSR编号查找对应的数据
+	MsrHookParameter* FindHookParameter(UINT32 msrNum)
+	{
+		for (MsrHookParameter& param : parameters)
+			if (param.msrNum == msrNum)
+				return &param;
+		return NULL;
+	}
+
 	//MSR HOOK 值备份
 	MsrHookParameter parameters[msrHookCount];
 	//是否已经初始化
@@ -158,10 +199,19 @@ public:
 		UINT32 msrNum) override;
 	virtual bool HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
-	//启用 msr hook，msrNum代表编号，realValue 代表真实值，之后对msr的读写都是在欺骗值的内存中，不会影响真实值
+	//启用 msr hook，msrNum代表编号，realValue 代表真实值，之后对msr的读写都是在欺骗值的内存中，不会影响真实值（只对当前核心有效）
 	void EnableMsrHook(UINT32 msrNum, PTR_TYPE realValue);
-	//禁用 msr hook，writeFakeValueToMsr代表是否将欺骗值写入msr以还原msr
+	//禁用 msr hook，writeFakeValueToMsr代表是否将欺骗值写入msr以还原msr（只对当前核心有效）
 	void DisableMsrHook(UINT32 msrNum, bool writeFakeValueToMsr = true);
+
+	//加载和保存guest的MSR
+	virtual void LoadGuestMsrForCpu(UINT32 cpuIdx);
+	virtual void SaveGuestMsrForCpu(UINT32 cpuIdx);
+
+	//加载和保存host的MSR
+	virtual void LoadHostMsrForCpu(UINT32 cpuIdx);
+	virtual void SaveHostMsrForCpu(UINT32 cpuIdx);
+
 	#pragma code_seg("PAGE")
 	virtual ~MsrHookManager() { PAGED_CODE(); Deinit(); }
 };
@@ -194,6 +244,8 @@ NTSTATUS MsrHookManager<msrHookCount>::Init()
 	NTSTATUS status = STATUS_SUCCESS;
 	if (!inited)
 	{
+		inited = true;
+
 		//获取CPU核心数
 		cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
 		//为每个要hook的msr分配值备份空间
@@ -206,10 +258,41 @@ NTSTATUS MsrHookManager<msrHookCount>::Init()
 				break;
 			}
 			RtlZeroMemory(param.pFakeValues, sizeof * param.pFakeValues * cpuCnt);
+
+			param.coreHookEnabled = (bool*)AllocNonPagedMem(sizeof * param.coreHookEnabled * cpuCnt, HOOK_TAG);
+			if (param.coreHookEnabled == NULL)
+			{
+				status = STATUS_INSUFFICIENT_RESOURCES;
+				break;
+			}
+			RtlZeroMemory(param.coreHookEnabled, sizeof * param.coreHookEnabled * cpuCnt);
+
+			param.pGuestRealValues = (PTR_TYPE*)AllocNonPagedMem(sizeof * param.pGuestRealValues * cpuCnt, HOOK_TAG);
+			if (param.pGuestRealValues == NULL)
+			{
+				status = STATUS_INSUFFICIENT_RESOURCES;
+				break;
+			}
+			RtlZeroMemory(param.pGuestRealValues, sizeof * param.pGuestRealValues * cpuCnt);
+
+			if (!IsVirtualizedMsr(param.msrNum))
+			{
+				param.pHostRealValues = (PTR_TYPE*)AllocNonPagedMem(sizeof * param.pHostRealValues * cpuCnt, HOOK_TAG);
+				if (param.pHostRealValues == NULL)
+				{
+					status = STATUS_INSUFFICIENT_RESOURCES;
+					break;
+				}
+				RtlZeroMemory(param.pHostRealValues, sizeof * param.pHostRealValues * cpuCnt);
+			}
+			else
+			{
+				param.pHostRealValues = NULL;
+			}
 		}
 
-		if (NT_SUCCESS(status))
-			inited = true;
+		if (!NT_SUCCESS(status))
+			Deinit();
 	}
 	return status;
 }
@@ -221,28 +304,28 @@ void MsrHookManager<msrHookCount>::Deinit()
 	PAGED_CODE();
 	if (inited)
 	{
-		auto coreAction = [this](UINT32 coreIndex, SIZE_TYPE idx1) -> NTSTATUS
+		auto coreAction = [this](UINT32 coreIndex) -> NTSTATUS
 			{
 				MsrOperationParameter optParam = {};
+				for (MsrHookParameter& param : parameters)
+				{
+					if (param.coreHookEnabled[coreIndex])
+					{
+						optParam.msrNum = param.msrNum; 
+						optParam.pValueInOut = &param.pFakeValues[coreIndex];
 
-				optParam.msrNum = parameters[idx1].msrNum;
-				optParam.pValueInOut = &parameters[idx1].pFakeValues[coreIndex];
+						PTR_TYPE regs[] = { CONFIGURE_MSR_HOOK_CPUID_FUNCTION, param.msrNum, WRITE_MSR_CPUID_SUBFUNCTION, (PTR_TYPE)&optParam };
+						SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 
-				PTR_TYPE regs[] = { CONFIGURE_MSR_HOOK_CPUID_FUNCTION, parameters[idx1].msrNum, WRITE_MSR_CPUID_SUBFUNCTION, (PTR_TYPE)&optParam };
-				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
-
+						param.coreHookEnabled[coreIndex] = false;
+					}
+				}
 				return STATUS_SUCCESS;
 			};
 
 		//回写欺骗值到每个核心的MSR
-		for (SIZE_TYPE idx = 0; idx < msrHookCount; ++idx)
-		{
-			if (parameters[idx].enabled)
-			{
-				RunOnEachCore(0, cpuCnt, coreAction, idx);
-				parameters[idx].enabled = false;
-			}
-		}
+		RunOnEachCore(0, cpuCnt, coreAction);
+
 		//释放内存
 		for (MsrHookParameter param : parameters)
 		{
@@ -250,6 +333,24 @@ void MsrHookManager<msrHookCount>::Deinit()
 			{
 				FreeNonPagedMem(param.pFakeValues, HOOK_TAG);
 				param.pFakeValues = NULL;
+			}
+
+			if (param.coreHookEnabled != NULL)
+			{
+				FreeNonPagedMem(param.coreHookEnabled, HOOK_TAG);
+				param.coreHookEnabled = NULL;
+			}
+
+			if (param.pHostRealValues != NULL)
+			{
+				FreeNonPagedMem(param.pHostRealValues, HOOK_TAG);
+				param.pHostRealValues = NULL;
+			}
+
+			if (param.pGuestRealValues != NULL)
+			{
+				FreeNonPagedMem(param.pGuestRealValues, HOOK_TAG);
+				param.pGuestRealValues = NULL;
 			}
 		}
 		//清空成员
@@ -304,13 +405,15 @@ inline bool MsrHookManager<msrHookCount>::HandleMsrImterceptRead(VirtCpuInfo* pV
 
 	locker.ReadLock();
 
-	for (SIZE_TYPE idx = 0; idx < msrHookCount; ++idx)
+	UINT32 cpuIdx = pVirtCpuInfo->otherInfo.cpuIdx;
+
+	for (MsrHookParameter& param : parameters)
 	{
 		//MSR Hook启用且MSR编号匹配则返回欺骗值
-		if (parameters[idx].enabled && msrNum == parameters[idx].msrNum)
+		if (msrNum == param.msrNum && param.coreHookEnabled[cpuIdx])
 		{
 			LARGE_INTEGER value = {};
-			value.QuadPart = parameters[idx].pFakeValues[pVirtCpuInfo->otherInfo.cpuIdx];
+			value.QuadPart = param.pFakeValues[cpuIdx];
 			*reinterpret_cast<UINT32*>(&pGuestRegisters->rax) = value.LowPart;
 			*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = value.HighPart;
 			pGuestRegisters->rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
@@ -339,15 +442,17 @@ inline bool MsrHookManager<msrHookCount>::HandleMsrInterceptWrite(VirtCpuInfo* p
 
 	locker.ReadLock();
 
-	for (SIZE_TYPE idx = 0; idx < msrHookCount; ++idx)
+	UINT32 cpuIdx = pVirtCpuInfo->otherInfo.cpuIdx;
+
+	for (MsrHookParameter param : parameters)
 	{
 		//MSR Hook启用且MSR编号匹配则保存新值为欺骗值
-		if (parameters[idx].enabled && msrNum == parameters[idx].msrNum)
+		if (msrNum == param.msrNum && param.coreHookEnabled[cpuIdx])
 		{
 			LARGE_INTEGER value = {};
 			value.LowPart = (UINT32)pGuestRegisters->rax;
 			value.HighPart = (UINT32)pGuestRegisters->rdx;
-			parameters[idx].pFakeValues[pVirtCpuInfo->otherInfo.cpuIdx] = value.QuadPart;
+			param.pFakeValues[cpuIdx] = value.QuadPart;
 			pGuestRegisters->rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
 			handled = true;
 			break;
@@ -373,7 +478,10 @@ inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo,
 		bool handled = false;
 		MsrOperationParameter* pOptParam = (MsrOperationParameter*)pGuestRegisters->rdx;
 
-		if (((int)pGuestRegisters->rcx) == READ_MSR_CPUID_SUBFUNCTION)
+		switch ((int)pGuestRegisters->rcx)
+		{
+		//rdx -> in/out MsrOperationParameter
+		case READ_MSR_CPUID_SUBFUNCTION:
 		{
 			/*
 			IA32_MSR_EFER
@@ -391,6 +499,8 @@ inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo,
 			这些msr寄存器是由VMCB决定，所以从VMCB中读取
 			其他msr则直接读
 			*/
+
+			MsrHookParameter* pHookParameter = FindHookParameter(pOptParam->msrNum);
 
 			switch (pOptParam->msrNum)
 			{
@@ -431,15 +541,21 @@ inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo,
 				*pOptParam->pValueInOut = pVirtCpuInfo->guestVmcb.statusFields.sysenterEip;
 				break;
 			default:
-				*pOptParam->pValueInOut = __readmsr(pOptParam->msrNum);
+				if (pHookParameter != NULL)
+					*pOptParam->pValueInOut = pHookParameter->pGuestRealValues[pVirtCpuInfo->otherInfo.cpuIdx];
+				else
+					KeBugCheck(MANUALLY_INITIATED_CRASH);
 				break;
 			}
 
 			pGuestRegisters->rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
 
 			handled = true;
+
+			break;
 		}
-		else if (((int)pGuestRegisters->rcx) == WRITE_MSR_CPUID_SUBFUNCTION)
+		//rdx -> in/out MsrOperationParameter
+		case WRITE_MSR_CPUID_SUBFUNCTION:
 		{
 			/*
 			IA32_MSR_EFER
@@ -457,6 +573,8 @@ inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo,
 			这些msr寄存器是由VMCB决定，所以直接写入VMCB
 			其他msr则直接写
 			*/
+
+			MsrHookParameter* pHookParameter = FindHookParameter(pOptParam->msrNum);
 
 			switch (pOptParam->msrNum)
 			{
@@ -497,13 +615,31 @@ inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo,
 				pVirtCpuInfo->guestVmcb.statusFields.sysenterEip = *pOptParam->pValueInOut;
 				break;
 			default:
-				__writemsr(pOptParam->msrNum, *pOptParam->pValueInOut);
+				if (pHookParameter != NULL)
+					pHookParameter->pGuestRealValues[pVirtCpuInfo->otherInfo.cpuIdx] = *pOptParam->pValueInOut;
+				else
+					KeBugCheck(MANUALLY_INITIATED_CRASH);
 				break;
 			}
 
 			pGuestRegisters->rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
 
 			handled = true;
+
+			break;
+		}
+		//rbx -> out CpuIdx
+		case GET_CPU_IDX_CPUID_SUBFUNCTION:
+		{
+			//返回当前CPU的索引
+			pGuestRegisters->rbx = pVirtCpuInfo->otherInfo.cpuIdx;
+
+			pGuestRegisters->rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
+
+			handled = true;
+		}
+		default:
+			break;
 		}
 
 		return handled;
@@ -518,43 +654,43 @@ inline void MsrHookManager<msrHookCount>::EnableMsrHook(UINT32 msrNum, PTR_TYPE 
 	PAGED_CODE();
 	locker.WriteLock();
 
-	auto coreAction = [this](UINT32 coreIndex, SIZE_TYPE idx, UINT32 msrNum, PTR_TYPE realValue) -> NTSTATUS
-		{
-			MsrOperationParameter optParam = {};
-			PTR_TYPE regs[4] = {};
+	UINT32 cpuIdx;
+	PTR_TYPE regs[4] = {};
 
-			//读取每一个核心的原值作为欺骗值
-			optParam.msrNum = msrNum;
-			optParam.pValueInOut = &parameters[idx].pFakeValues[coreIndex];
+	regs[0] = CONFIGURE_MSR_HOOK_CPUID_FUNCTION;
+	regs[1] = 0;
+	regs[2] = GET_CPU_IDX_CPUID_SUBFUNCTION;
+	regs[3] = 0;
+
+	SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+	cpuIdx = (UINT32)regs[1];
+
+	MsrOperationParameter optParam = {};
+
+	for (MsrHookParameter& param : parameters)
+	{
+		if (param.msrNum == msrNum && !param.coreHookEnabled[cpuIdx])
+		{
+			optParam.msrNum = param.msrNum;
+
+			optParam.pValueInOut = &param.pFakeValues[cpuIdx];
 
 			regs[0] = CONFIGURE_MSR_HOOK_CPUID_FUNCTION;
-			regs[1] = msrNum;
+			regs[1] = 0;
 			regs[2] = READ_MSR_CPUID_SUBFUNCTION;
 			regs[3] = (PTR_TYPE)&optParam;
-
 			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 
-			//写入真实值到每个核心
-			optParam.msrNum = msrNum;
 			optParam.pValueInOut = &realValue;
 
 			regs[0] = CONFIGURE_MSR_HOOK_CPUID_FUNCTION;
-			regs[1] = msrNum;
+			regs[1] = 0;
 			regs[2] = WRITE_MSR_CPUID_SUBFUNCTION;
 			regs[3] = (PTR_TYPE)&optParam;
-
 			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 
-			return STATUS_SUCCESS;
-		};
-
-	for (SIZE_TYPE idx = 0; idx < msrHookCount; ++idx)
-	{
-		//如果没有启用该msr的hook，而且msr编号匹配
-		if (!parameters[idx].enabled && parameters[idx].msrNum == msrNum)
-		{
-			RunOnEachCore(0, cpuCnt, coreAction, idx, msrNum, realValue);
-			parameters[idx].enabled = true;
+			param.coreHookEnabled[cpuIdx] = true;
 		}
 	}
 
@@ -572,29 +708,81 @@ inline void MsrHookManager<msrHookCount>::DisableMsrHook(UINT32 msrNum, bool wri
 
 	locker.WriteLock();
 
-	auto coreAction = [this](UINT32 coreIndex, SIZE_TYPE idx) -> NTSTATUS
-		{
-			optParam.msrNum = msrNum;
-			optParam.pValueInOut = &parameters[idx].pFakeValues[coreIndex];
+	aUINT32 cpuIdx;
+	PTR_TYPE regs[4] = {};
 
-			SetRegsThenCpuid(CONFIGURE_MSR_HOOK_CPUID_FUNCTION, msrNum, WRITE_MSR_CPUID_SUBFUNCTION, (PTR_TYPE)&optParam);
+	regs[0] = CONFIGURE_MSR_HOOK_CPUID_FUNCTION;
+	regs[1] = 0;
+	regs[2] = GET_CPU_IDX_CPUID_SUBFUNCTION;
+	regs[3] = 0;
 
-			return STATUS_SUCCESS;
-		};
+	SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 
-	for (SIZE_TYPE idx = 0; idx < msrHookCount; ++idx)
+	cpuIdx = (UINT32)regs[1];
+
+	MsrOperationParameter optParam = {};
+
+	for (MsrHookParameter& param : parameters)
 	{
-		//如果已经启用该msr的hook，而且msr编号匹配
-		if (parameters[idx].enabled && parameters[idx].msrNum == msrNum)
+		if (param.msrNum == msrNum && param.coreHookEnabled[cpuIdx])
 		{
-			//回写欺骗值到每个核心的MSR
+			optParam.msrNum = param.msrNum;
+			optParam.pValueInOut = &param.pFakeValues[cpuIdx];
+
 			if (writeFakeValueToMsr)
-				RunOnEachCore(0, cpuCnt, coreAction, coreAction, idx);
-			parameters[idx].enabled = false;
+			{
+				regs[0] = CONFIGURE_MSR_HOOK_CPUID_FUNCTION;
+				regs[1] = 0;
+				regs[2] = WRITE_MSR_CPUID_SUBFUNCTION;
+				regs[3] = (PTR_TYPE)&optParam;
+				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+			}
+			
+			param.coreHookEnabled[cpuIdx] = false;
 		}
 	}
 
 	locker.WriteUnlock();
+}
+
+template<SIZE_TYPE msrHookCount>
+inline void MsrHookManager<msrHookCount>::LoadGuestMsrForCpu(UINT32 cpuIdx)
+{
+	for (MsrHookParameter& param : parameters)
+	{
+		if (param.pGuestRealValues != NULL)
+			__writemsr(param.msrNum, param.pGuestRealValues[cpuIdx]);
+	}
+}
+
+template<SIZE_TYPE msrHookCount>
+inline void MsrHookManager<msrHookCount>::SaveGuestMsrForCpu(UINT32 cpuIdx)
+{
+	for (MsrHookParameter& param : parameters)
+	{
+		if (param.pGuestRealValues != NULL)
+			param.pGuestRealValues[cpuIdx] = __readmsr(param.msrNum);
+	}
+}
+
+template<SIZE_TYPE msrHookCount>
+inline void MsrHookManager<msrHookCount>::LoadHostMsrForCpu(UINT32 cpuIdx)
+{
+	for (MsrHookParameter& param : parameters)
+	{
+		if (param.pHostRealValues != NULL)
+			__writemsr(param.msrNum, param.pHostRealValues[cpuIdx]);
+	}
+}
+
+template<SIZE_TYPE msrHookCount>
+inline void MsrHookManager<msrHookCount>::SaveHostMsrForCpu(UINT32 cpuIdx)
+{
+	for (MsrHookParameter& param : parameters)
+	{
+		if (param.pHostRealValues != NULL)
+			param.pHostRealValues[cpuIdx] = __readmsr(param.msrNum);
+	}
 }
 
 //MSR_LSTAR HOOK 帮助函数，启用HOOK
@@ -617,7 +805,15 @@ void EnableLStrHook(MsrHookManager<msrCnt>* pMsrHookManager, pLStarHookCallback 
 	SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 
 	SetLStrHookEntryParameters((PTR_TYPE)pOldEntry, (PTR_TYPE)pCallback, (PTR_TYPE)param1, (PTR_TYPE)param2, (PTR_TYPE)param3);
-	pMsrHookManager->EnableMsrHook(IA32_MSR_LSTAR, (PTR_TYPE)GetLStarHookEntry());
+
+	auto enableHook = [pMsrHookManager](UINT32 cpuIdx) -> NTSTATUS
+		{
+			UNREFERENCED_PARAMETER(cpuIdx);
+			pMsrHookManager->EnableMsrHook(IA32_MSR_LSTAR, (PTR_TYPE)GetLStarHookEntry());
+			return STATUS_SUCCESS;
+		};
+
+	RunOnEachCore(0, pMsrHookManager->cpuCnt, enableHook);
 }
 
 //MSR_LSTAR HOOK 帮助函数，禁用HOOK

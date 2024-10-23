@@ -48,6 +48,7 @@ void GlobalManager::SetMsrHookParameters()
 	//ºÍSVMManager°ó¶¨
 	svmManager.SetCpuIdInterceptPlugin(&msrHookManager);
 	svmManager.SetMsrInterceptPlugin(&msrHookManager);
+	svmManager.SetMsrHookPlugin(&msrHookManager);
 }
 
 #pragma code_seg("PAGE")

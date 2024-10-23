@@ -81,8 +81,24 @@ public:
 	virtual bool HandleMsrInterceptWrite(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 										 PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr, 
 										 UINT32 msrNum) = 0;
+
 	#pragma code_seg()
 	virtual ~IMsrInterceptPlugin() {}
+};
+
+//MSR Hook插件
+class IMsrHookPlugin
+{
+public:
+	//加载和保存guest的MSR
+	virtual void LoadGuestMsrForCpu(UINT32 cpuIdx) = 0;
+	virtual void SaveGuestMsrForCpu(UINT32 cpuIdx) = 0;
+
+	//加载和保存host的MSR
+	virtual void LoadHostMsrForCpu(UINT32 cpuIdx) = 0;
+	virtual void SaveHostMsrForCpu(UINT32 cpuIdx) = 0;
+
+	virtual ~IMsrHookPlugin() {}
 };
 
 //CPUID拦截插件
@@ -189,12 +205,15 @@ enum SVMStatus
 	SVMS_NPT_ENABLED = 0x10
 };
 
+extern "C" void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr);
+
 class SVMManager : public IManager
 {
 	VirtCpuInfo** pVirtCpuInfo;
 	UINT32 cpuCnt;
 	MsrPremissionsMapManager msrPremissionMap;
 	IMsrInterceptPlugin* pMsrInterceptPlugin;
+	IMsrHookPlugin* pMsrHookPlugin;
 	ICpuidInterceptPlugin* pCpuIdInterceptPlugin;
 	INpfInterceptPlugin* pNpfInterceptPlugin;
 	IBreakprointInterceptPlugin* pBreakpointInterceptPlugin;
@@ -204,12 +223,14 @@ class SVMManager : public IManager
 	bool enableSce;
 	NTSTATUS EnterVirtualization();
 	void LeaveVirtualization();
+
+	friend void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr);
 	
 public:
 	//请勿调用该函数，这个函数由VMM自动调用
 	void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr);
 	#pragma code_seg("PAGE")
-	SVMManager() : pVirtCpuInfo(NULL), cpuCnt(0), pMsrInterceptPlugin(NULL), pCpuIdInterceptPlugin(NULL), pNpfInterceptPlugin(NULL), pNCr3Provider(NULL), pBreakpointInterceptPlugin(NULL), pInvalidOpcodeInterceptPlugin(NULL), pDebugInterceptPlugin(NULL), enableSce(true) { PAGED_CODE(); }
+	SVMManager() : pVirtCpuInfo(NULL), cpuCnt(0), pMsrInterceptPlugin(NULL), pCpuIdInterceptPlugin(NULL), pNpfInterceptPlugin(NULL), pNCr3Provider(NULL), pBreakpointInterceptPlugin(NULL), pInvalidOpcodeInterceptPlugin(NULL), pDebugInterceptPlugin(NULL), enableSce(true), pMsrHookPlugin(NULL) { PAGED_CODE(); }
 	#pragma code_seg("PAGE")
 	void SetMsrInterceptPlugin(IMsrInterceptPlugin* _pMsrInterceptPlugin) { PAGED_CODE(); pMsrInterceptPlugin = _pMsrInterceptPlugin; }
 	#pragma code_seg("PAGE")
@@ -224,6 +245,8 @@ public:
 	void SetINvalidOpcodePlugin(IInvalidOpcodeInterceptPlugin* _pInvalidOpcodeInterceptPlugin) { PAGED_CODE(); pInvalidOpcodeInterceptPlugin = _pInvalidOpcodeInterceptPlugin; }
 	#pragma code_seg("PAGE")
 	void SetDebugInterceptPlugin(IDebugInterceptPlugin* _pDebugInterceptPlugin) { PAGED_CODE(); pDebugInterceptPlugin = _pDebugInterceptPlugin; }
+	#pragma code_seg("PAGE")
+	void SetMsrHookPlugin(IMsrHookPlugin* _pMsrHookPlugin) { PAGED_CODE(); pMsrHookPlugin = _pMsrHookPlugin; }
 	#pragma code_seg("PAGE")
 	void EnanbleSce(bool enable) { PAGED_CODE(); enableSce = enable; }
 	static SVMStatus CheckSVM();	
