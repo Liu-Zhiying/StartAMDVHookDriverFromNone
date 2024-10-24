@@ -822,7 +822,15 @@ template<SIZE_TYPE msrCnt>
 void DisableLStrHook(MsrHookManager<msrCnt>* pMsrHookManager)
 {
 	PAGED_CODE();
-	pMsrHookManager->DisableMsrHook(IA32_MSR_LSTAR);
+
+	auto disableHook = [pMsrHookManager](UINT32 cpuIdx) -> NTSTATUS
+		{
+			UNREFERENCED_PARAMETER(cpuIdx);
+			pMsrHookManager->DisableMsrHook(IA32_MSR_LSTAR);
+			return STATUS_SUCCESS;
+		};
+
+	RunOnEachCore(0, pMsrHookManager->cpuCnt, disableHook);
 }
 
 //页表Level3改小页的记录项，如果计数为0，则可以恢复大页
