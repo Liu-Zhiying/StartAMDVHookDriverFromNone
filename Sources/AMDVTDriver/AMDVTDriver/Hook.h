@@ -708,7 +708,7 @@ inline void MsrHookManager<msrHookCount>::DisableMsrHook(UINT32 msrNum, bool wri
 
 	locker.WriteLock();
 
-	aUINT32 cpuIdx;
+	UINT32 cpuIdx;
 	PTR_TYPE regs[4] = {};
 
 	regs[0] = CONFIGURE_MSR_HOOK_CPUID_FUNCTION;
