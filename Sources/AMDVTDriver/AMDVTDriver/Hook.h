@@ -205,12 +205,12 @@ public:
 	void DisableMsrHook(UINT32 msrNum, bool writeFakeValueToMsr = true);
 
 	//加载和保存guest的MSR
-	virtual void LoadGuestMsrForCpu(UINT32 cpuIdx);
-	virtual void SaveGuestMsrForCpu(UINT32 cpuIdx);
+	virtual void LoadGuestMsrForCpu(UINT32 cpuIdx) override;
+	virtual void SaveGuestMsrForCpu(UINT32 cpuIdx) override;
 
 	//加载和保存host的MSR
-	virtual void LoadHostMsrForCpu(UINT32 cpuIdx);
-	virtual void SaveHostMsrForCpu(UINT32 cpuIdx);
+	virtual void LoadHostMsrForCpu(UINT32 cpuIdx) override;
+	virtual void SaveHostMsrForCpu(UINT32 cpuIdx) override;
 
 	#pragma code_seg("PAGE")
 	virtual ~MsrHookManager() { PAGED_CODE(); Deinit(); }
