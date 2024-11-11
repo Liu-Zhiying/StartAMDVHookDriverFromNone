@@ -19,3 +19,6 @@ QQ：1103660629
 ## 推荐项目（现在我学习的就这个）
 https://github.com/tandasat/SimpleSvm  
 https://github.com/tandasat/SimpleSvmHook
+## 文档
+为了更快的下载代码，本仓库的文档移除，文档转移到另外一个仓库  
+https://github.com/Liu-Zhiying/StartAMDVHookDriverFromNone_Documents

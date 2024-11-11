@@ -1,4 +1,0 @@
-AMD官方指令书册，1~5册合集
-https://www.amd.com/content/dam/amd/en/documents/processor-tech-docs/programmer-references/40332.pdf
-X86-64的页表数据结果（C语言结构体描述）这个比较全，可以参考下（注意国内用户可能需要梯子才能访问）
-https://www.iaik.tugraz.at/teaching/materials/os/tutorials/paging-on-intel-x86-64/
