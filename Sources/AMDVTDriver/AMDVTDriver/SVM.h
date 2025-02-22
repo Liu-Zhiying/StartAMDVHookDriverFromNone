@@ -86,8 +86,8 @@ public:
 	virtual ~IMsrInterceptPlugin() {}
 };
 
-//MSR Hook插件
-class IMsrHookPlugin
+//MSR 备份恢复插件（用于在VMM加载和退出时备份和加载没有在VMCB中存在guest版本的msr）
+class IMsrBackupRestorePlugin
 {
 public:
 	//加载和保存guest的MSR
@@ -98,7 +98,7 @@ public:
 	virtual void LoadHostMsrForCpu(UINT32 cpuIdx) = 0;
 	virtual void SaveHostMsrForCpu(UINT32 cpuIdx) = 0;
 
-	virtual ~IMsrHookPlugin() {}
+	virtual ~IMsrBackupRestorePlugin() {}
 };
 
 //CPUID拦截插件
@@ -213,7 +213,7 @@ class SVMManager : public IManager
 	UINT32 cpuCnt;
 	MsrPremissionsMapManager msrPremissionMap;
 	IMsrInterceptPlugin* pMsrInterceptPlugin;
-	IMsrHookPlugin* pMsrHookPlugin;
+	IMsrBackupRestorePlugin* pMsrHookPlugin;
 	ICpuidInterceptPlugin* pCpuIdInterceptPlugin;
 	INpfInterceptPlugin* pNpfInterceptPlugin;
 	IBreakprointInterceptPlugin* pBreakpointInterceptPlugin;
@@ -246,7 +246,7 @@ public:
 	#pragma code_seg("PAGE")
 	void SetDebugInterceptPlugin(IDebugInterceptPlugin* _pDebugInterceptPlugin) { PAGED_CODE(); pDebugInterceptPlugin = _pDebugInterceptPlugin; }
 	#pragma code_seg("PAGE")
-	void SetMsrHookPlugin(IMsrHookPlugin* _pMsrHookPlugin) { PAGED_CODE(); pMsrHookPlugin = _pMsrHookPlugin; }
+	void SetMsrHookPlugin(IMsrBackupRestorePlugin* _pMsrHookPlugin) { PAGED_CODE(); pMsrHookPlugin = _pMsrHookPlugin; }
 	#pragma code_seg("PAGE")
 	void EnanbleSce(bool enable) { PAGED_CODE(); enableSce = enable; }
 	static SVMStatus CheckSVM();	

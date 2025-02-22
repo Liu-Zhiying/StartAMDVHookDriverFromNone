@@ -29,13 +29,13 @@ PTR_TYPE GetLStarHookEntry()
 }
 
 #pragma code_seg()
-SIZE_TYPE NptHookSharedData::FindHookRecordByOriginVirtAddr(PVOID pOriginAddr) const
+SIZE_TYPE NptHookSharedData::FindHookRecordByOriginVirtAddr(PTR_TYPE pOriginAddr) const
 {
 	SIZE_TYPE result = INVALID_INDEX;
 
 	for (SIZE_TYPE idx = 0; idx < hookRecords.Length(); ++idx)
 	{
-		if (hookRecords[idx].pOriginVirtAddr == pOriginAddr)
+		if (hookRecords[idx].pOriginVirtAddr == (PVOID)pOriginAddr)
 		{
 			result = idx;
 			break;
@@ -80,13 +80,13 @@ SIZE_TYPE NptHookSharedData::FindSwapPageRefCntByOriginPhyAddr(PTR_TYPE phyAddr)
 }
 
 #pragma code_seg()
-SIZE_TYPE NptHookSharedData::FindSwapPageRefCntByOriginVirtAddr(PVOID pOriginAddr) const
+SIZE_TYPE NptHookSharedData::FindSwapPageRefCntByOriginVirtAddr(PTR_TYPE pOriginAddr) const
 {
 	SIZE_TYPE result = INVALID_INDEX;
 
 	for (SIZE_TYPE idx = 0; idx < swapPageRefs.Length(); ++idx)
 	{
-		if (swapPageRefs[idx].pOriginVirtAddr == pOriginAddr)
+		if (swapPageRefs[idx].pOriginVirtAddr == (PVOID)pOriginAddr)
 		{
 			result = idx;
 			break;
@@ -94,6 +94,21 @@ SIZE_TYPE NptHookSharedData::FindSwapPageRefCntByOriginVirtAddr(PVOID pOriginAdd
 	}
 
 	return result;
+}
+
+#pragma code_seg("PAGE")
+void NptHookManager::SetupSVMManager(SVMManager& svmManager)
+{
+	PAGED_CODE();
+
+	//设置初始NPT页表
+	svmManager.SetNCr3Provider(&pageTableManager1);
+	//拦截CPUID
+	svmManager.SetCpuIdInterceptPlugin(this);
+	//拦截NFP
+	svmManager.SetNpfInterceptPlugin(this);
+	//拦截BP
+	svmManager.SetBreakpointPlugin(this);
 }
 
 #pragma code_seg()
@@ -105,12 +120,15 @@ bool NptHookManager::HandleBreakpoint(VirtCpuInfo* pVirtCpuInfo, GenericRegister
 
 	bool result = false;
 
+	if (pCoreNptHookStatus == NULL)
+		return false;
+
 	const NptHookSharedData* pSharedData = pCoreNptHookStatus[pVirtCpuInfo->otherInfo.cpuIdx].pSharedData;
 
 	if (pSharedData != NULL)
 	{
 		//如果匹配到hook，直接跳转
-		SIZE_TYPE hookIdx = pSharedData->FindHookRecordByOriginVirtAddr((PVOID)pGuestRegisters->rip);
+		SIZE_TYPE hookIdx = pSharedData->FindHookRecordByOriginVirtAddr(pGuestRegisters->rip);
 
 		if (hookIdx != INVALID_INDEX)
 		{
@@ -142,8 +160,8 @@ bool NptHookManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGue
 	//理论上不可能缺页
 	if (!exitInfo.fields.present)
 	{
-		result = pPageTableManager->HandleNpf(pVirtCpuInfo, pGuestRegisters, pGuestVmcbPhyAddr, pHostVmcbPhyAddr) && 
-				 internalPageTableManager.HandleNpf(pVirtCpuInfo, pGuestRegisters, pGuestVmcbPhyAddr, pHostVmcbPhyAddr);
+		result = pageTableManager1.HandleNpf(pVirtCpuInfo, pGuestRegisters, pGuestVmcbPhyAddr, pHostVmcbPhyAddr) && 
+				 pageTableManager2.HandleNpf(pVirtCpuInfo, pGuestRegisters, pGuestVmcbPhyAddr, pHostVmcbPhyAddr);
 	}
 	else
 	{
@@ -158,12 +176,15 @@ bool NptHookManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGue
 			//获取CPU IDX
 			UINT32 cpuIdx = pVirtCpuInfo->otherInfo.cpuIdx;
 
+			if (pCoreNptHookStatus == NULL)
+				return result;
+
 			//获取核心NPT HOOK状态
 			CoreNptHookStatus& hookStatus = pCoreNptHookStatus[pVirtCpuInfo->otherInfo.cpuIdx];
 
 			//获取对应的核心页表管理器
-			CoreNptPageTableManager& externalCorePageTableManager = pPageTableManager->GetCoreNptPageTables()[cpuIdx];
-			CoreNptPageTableManager& internalCorePageTableManager = internalPageTableManager.GetCoreNptPageTables()[cpuIdx];
+			CoreNptPageTableManager& externalCorePageTableManager = pageTableManager1.GetCoreNptPageTables()[cpuIdx];
+			CoreNptPageTableManager& internalCorePageTableManager = pageTableManager2.GetCoreNptPageTables()[cpuIdx];
 
 			SIZE_TYPE swapPageIdx = INVALID_INDEX;
 			PageTableLevel123Entry entry = {};
@@ -177,7 +198,7 @@ bool NptHookManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGue
 				if (hookStatus.pLastActiveHookPageVirtAddr != NULL)
 				{
 					//根据虚拟地址查询交换页项目
-					swapPageIdx = pSharedData->FindSwapPageRefCntByOriginVirtAddr((PVOID)hookStatus.pLastActiveHookPageVirtAddr);
+					swapPageIdx = pSharedData->FindSwapPageRefCntByOriginVirtAddr(hookStatus.pLastActiveHookPageVirtAddr);
 
 					if (swapPageIdx != INVALID_INDEX)
 					{
@@ -253,9 +274,9 @@ bool NptHookManager::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 			switch (type)
 			{
 			case ExternalPageTable:
-				return pPageTableManager;
+				return &pageTableManager1;
 			case InternalPageTable:
-				return &internalPageTableManager;
+				return &pageTableManager2;
 			default:
 				KeBugCheck(MANUALLY_INITIATED_CRASH);
 				break;
@@ -368,7 +389,6 @@ bool NptHookManager::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 			//rbx -> out bool (removed or not)
 
 			//if refCnt == 0, remove it, else not
-
 			if (!sharedData.level3Refs[pGuestRegisters->rdx].refCnt)
 			{
 				sharedData.level3Refs.Remove((SIZE_TYPE)pGuestRegisters->rdx);
@@ -396,6 +416,8 @@ bool NptHookManager::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 		{
 			//rdx -> in SIZE_TYPE (index in sharedData.swapPageRefs)
 			//rbx -> out bool (removed or not)
+
+			//if refCnt == 0, remove it, else not
 			if (!sharedData.swapPageRefs[pGuestRegisters->rdx].refCnt)
 			{
 				sharedData.swapPageRefs.Remove((SIZE_TYPE)pGuestRegisters->rdx);
@@ -524,7 +546,17 @@ bool NptHookManager::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 		case RESTORE_CR3_CPUID_SUBFUNCTION:
 		{
 			//rdx -> in SIZE_TYPE (cpu idx)
-			pVirtCpuInfo->guestVmcb.controlFields.nCr3 = MmGetPhysicalAddress((PVOID)pPageTableManager->GetCoreNptPageTables()[pGuestRegisters->rdx].GetNptPageTable()).QuadPart;
+			pVirtCpuInfo->guestVmcb.controlFields.nCr3 = MmGetPhysicalAddress((PVOID)pageTableManager1.GetCoreNptPageTables()[pGuestRegisters->rdx].GetNptPageTable()).QuadPart;
+			break;
+		}
+		case SEARCH_SHARED_DATA_CPUID_SUBFUNCTION:
+		{
+			//rdx -> SearchSharedDataInfo*
+			//rbx -> return value run search fouction (sharedData.*(((SearchSharedDataInfo*)pGuestRegisters->rdx)->pSearchFuncton))(((SearchSharedDataInfo*)pGuestRegisters->rdx)->param)
+
+			SearchSharedDataInfo* pInfo = (SearchSharedDataInfo*)pGuestRegisters->rdx;
+
+			pGuestRegisters->rbx = (sharedData.*pInfo->pSearchFuncton)(pInfo->param);
 			break;
 		}
 		}
@@ -818,22 +850,50 @@ NTSTATUS NptHookManager::AddHook(const NptHookRecord& record)
 	PTR_TYPE swapPagePhyAddr = INVALID_ADDR;
 	bool allocedNewSwapPage = false;
 	bool needChangePagePermission = false;
+	bool hookRecordAdded = false;
+	bool changePageTableInStep2 = false;
+	bool changedPageTableInStep3 = false;
 	PTR_TYPE regs[4] = {};
 	MemoryCopyInfo copyMemInfo = {};
 	OperateRefCountInfo operateRefInfo = {};
 	SwapPageRefCnt swapPageRefCnt = {};
 	PageTableLevel123Entry permission = {};
+	SearchSharedDataInfo searchSharedInfoInfo = {};
 	int stepCnt = 0;
 
 	do
 	{
-		hookIdx = sharedData.FindHookRecordByOriginVirtAddr(record.pOriginVirtAddr);
+		//检查hook条目是否存在
+		regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+		regs[1] = INVALID_INDEX;
+		regs[2] = SEARCH_SHARED_DATA_CPUID_SUBFUNCTION;
+		regs[3] = (PTR_TYPE)&searchSharedInfoInfo;
+
+		searchSharedInfoInfo.pSearchFuncton = &NptHookSharedData::FindHookRecordByOriginVirtAddr;
+		searchSharedInfoInfo.param = (PTR_TYPE)record.pOriginVirtAddr;
+
+		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+		hookIdx = regs[1];
 
 		if (hookIdx != INVALID_INDEX)
 		{
 			status = STATUS_UNSUCCESSFUL;
 			break;
 		}
+
+		//插入到hook条目
+		regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+		regs[1] = NULL;
+		regs[2] = ADD_HOOK_ITEM_CPUID_SUBFUNCTION;
+		regs[3] = (PTR_TYPE)&record;
+
+		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+		//同步共享数据到每个核心
+		SyncSharedData();
+
+		hookRecordAdded = true;
 
 		regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
 		regs[1] = NULL;
@@ -847,8 +907,17 @@ NTSTATUS NptHookManager::AddHook(const NptHookRecord& record)
 		stepCnt = 1;
 
 		//分配交换页
+		regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+		regs[1] = INVALID_INDEX;
+		regs[2] = SEARCH_SHARED_DATA_CPUID_SUBFUNCTION;
+		regs[3] = (PTR_TYPE)&searchSharedInfoInfo;
 
-		swapPageIdx = sharedData.FindSwapPageRefCntByOriginVirtAddr((PVOID)pOriginPageVirtAddr);
+		searchSharedInfoInfo.pSearchFuncton = &NptHookSharedData::FindSwapPageRefCntByOriginVirtAddr;
+		searchSharedInfoInfo.param = (PTR_TYPE)pOriginPageVirtAddr;
+
+		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+		swapPageIdx = regs[1];
 
 		if (swapPageIdx == INVALID_INDEX)
 		{
@@ -919,6 +988,10 @@ NTSTATUS NptHookManager::AddHook(const NptHookRecord& record)
 			regs[2] = COPY_SWAPPAGE_REF_CNT_CPUID_SUBFUNCTION;
 			regs[3] = swapPageIdx;
 
+			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+			swapPageVirtAddr = (UINT8*)swapPageRefCnt.pSwapVirtAddr;
+
 			//增加引用计数
 			operateRefInfo.idx = swapPageIdx;
 			operateRefInfo.objectType = RefCountOperationObjectType::SwapPageRefCntObject;
@@ -935,7 +1008,7 @@ NTSTATUS NptHookManager::AddHook(const NptHookRecord& record)
 			UINT8 hookData = NptHookCode;
 
 			copyMemInfo.pSource = &hookData;
-			copyMemInfo.pDestination = (UINT8*)swapPageRefCnt.pSwapVirtAddr + ((PTR_TYPE)record.pOriginVirtAddr & 0xfff);
+			copyMemInfo.pDestination = (UINT8*)swapPageVirtAddr + ((PTR_TYPE)record.pOriginVirtAddr & 0xfff);
 			copyMemInfo.Length = 1;
 
 			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
@@ -959,7 +1032,17 @@ NTSTATUS NptHookManager::AddHook(const NptHookRecord& record)
 		//设置交换页对应的页表为小页
 		//先查询是否有设置为小页的记录
 
-		level3RefIdx = sharedData.FindSmallPageLevel2RefCntByPhyAddr(swapPagePhyAddr & 0xFFFFFFFFFFE00000);
+		regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+		regs[1] = INVALID_INDEX;
+		regs[2] = SEARCH_SHARED_DATA_CPUID_SUBFUNCTION;
+		regs[3] = (PTR_TYPE)&searchSharedInfoInfo;
+
+		searchSharedInfoInfo.pSearchFuncton = &NptHookSharedData::FindSmallPageLevel2RefCntByPhyAddr;
+		searchSharedInfoInfo.param = (PTR_TYPE)swapPagePhyAddr & 0xFFFFFFFFFFE00000;
+
+		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+		level3RefIdx = regs[1];
 
 		if (level3RefIdx == INVALID_INDEX)
 		{
@@ -991,6 +1074,9 @@ NTSTATUS NptHookManager::AddHook(const NptHookRecord& record)
 			regs[3] = (PTR_TYPE)&newItem;
 
 			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+			//标记在步骤二中修改了页表
+			changePageTableInStep2 = true;
 		}
 		else
 		{
@@ -1012,7 +1098,17 @@ NTSTATUS NptHookManager::AddHook(const NptHookRecord& record)
 		//设置原始页对应的页表为小页
 		//先查询是否有设置为小页的记录
 
-		level3RefIdx = sharedData.FindSmallPageLevel2RefCntByPhyAddr(pOriginPhyAddr & 0xFFFFFFFFFFE00000);
+		regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+		regs[1] = INVALID_INDEX;
+		regs[2] = SEARCH_SHARED_DATA_CPUID_SUBFUNCTION;
+		regs[3] = (PTR_TYPE)&searchSharedInfoInfo;
+
+		searchSharedInfoInfo.pSearchFuncton = &NptHookSharedData::FindSmallPageLevel2RefCntByPhyAddr;
+		searchSharedInfoInfo.param = (PTR_TYPE)pOriginPhyAddr & 0xFFFFFFFFFFE00000;
+
+		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+		level3RefIdx = regs[1];
 
 		if (level3RefIdx == INVALID_INDEX)
 		{
@@ -1046,6 +1142,9 @@ NTSTATUS NptHookManager::AddHook(const NptHookRecord& record)
 			regs[3] = (PTR_TYPE)&newItem;
 
 			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+			//标记在步骤3中修改了页表
+			changedPageTableInStep3 = true;
 		}
 		else
 		{
@@ -1061,18 +1160,6 @@ NTSTATUS NptHookManager::AddHook(const NptHookRecord& record)
 
 			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 		}
-
-		//插入到hook条目
-		regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
-		regs[1] = NULL;
-		regs[2] = ADD_HOOK_ITEM_CPUID_SUBFUNCTION;
-		regs[3] = (PTR_TYPE)&record;
-
-		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
-
-		//同步共享数据到每个核心
-		SyncSharedData();
-
 	} while (false);
 
 	//对新hook执行权限修改
@@ -1097,8 +1184,9 @@ NTSTATUS NptHookManager::AddHook(const NptHookRecord& record)
 		{
 		case 3:
 		{
-			if (level3RefIdx == INVALID_INDEX)
+			if (changedPageTableInStep3)
 			{
+				//还原页表修改
 				ChangeSmallPageToLargePage(pOriginPhyAddr & 0xFFFFFFFFFFE00000, PageTableType::ExternalPageTable);
 				ChangeSmallPageToLargePage(pOriginPhyAddr & 0xFFFFFFFFFFE00000, PageTableType::InternalPageTable);
 
@@ -1108,8 +1196,31 @@ NTSTATUS NptHookManager::AddHook(const NptHookRecord& record)
 
 				ChangePageTablePermission(pOriginPhyAddr & 0xFFFFFFFFFFE00000, permission, PageTableType::InternalPageTable, 2);
 
-				level3RefIdx = sharedData.FindSmallPageLevel2RefCntByPhyAddr(pOriginPhyAddr & 0xFFFFFFFFFFE00000);
+				regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+				regs[1] = INVALID_INDEX;
+				regs[2] = SEARCH_SHARED_DATA_CPUID_SUBFUNCTION;
+				regs[3] = (PTR_TYPE)&searchSharedInfoInfo;
 
+				searchSharedInfoInfo.pSearchFuncton = &NptHookSharedData::FindSmallPageLevel2RefCntByPhyAddr;
+				searchSharedInfoInfo.param = (PTR_TYPE)pOriginPhyAddr & 0xFFFFFFFFFFE00000;
+
+				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+				level3RefIdx = regs[1];
+
+				//递减小页引用计数
+				operateRefInfo.idx = level3RefIdx;
+				operateRefInfo.objectType = RefCountOperationObjectType::Level3RefObject;
+				operateRefInfo.operationType = RefCountOperationType::DecrementCount;
+
+				regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+				regs[1] = NULL;
+				regs[2] = OPERATE_REF_COUNT_CPUID_SUBFUNCTION;
+				regs[3] = (PTR_TYPE)&operateRefInfo;
+
+				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+				//删除0引用的小页计数
 				regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
 				regs[1] = NULL;
 				regs[2] = REMOVE_LEVEL3_REF_ITEM_CPUID_SUBFUNCTION;
@@ -1119,6 +1230,18 @@ NTSTATUS NptHookManager::AddHook(const NptHookRecord& record)
 			}
 			else
 			{
+				regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+				regs[1] = INVALID_INDEX;
+				regs[2] = SEARCH_SHARED_DATA_CPUID_SUBFUNCTION;
+				regs[3] = (PTR_TYPE)&searchSharedInfoInfo;
+
+				searchSharedInfoInfo.pSearchFuncton = &NptHookSharedData::FindSmallPageLevel2RefCntByPhyAddr;
+				searchSharedInfoInfo.param = (PTR_TYPE)pOriginPhyAddr & 0xFFFFFFFFFFE00000;
+
+				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+				level3RefIdx = regs[1];
+
 				//递减小页引用计数
 				operateRefInfo.idx = level3RefIdx;
 				operateRefInfo.objectType = RefCountOperationObjectType::Level3RefObject;
@@ -1131,34 +1254,12 @@ NTSTATUS NptHookManager::AddHook(const NptHookRecord& record)
 
 				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 			}
-			break;
 		}
 		case 2:
 		{
-			level3RefIdx = sharedData.FindSmallPageLevel2RefCntByPhyAddr(swapPagePhyAddr & 0xFFFFFFFFFFE00000);
-
-			//递减小页引用计数
-			operateRefInfo.idx = level3RefIdx;
-			operateRefInfo.objectType = RefCountOperationObjectType::Level3RefObject;
-			operateRefInfo.operationType = RefCountOperationType::DecrementCount;
-
-			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
-			regs[1] = NULL;
-			regs[2] = OPERATE_REF_COUNT_CPUID_SUBFUNCTION;
-			regs[3] = (PTR_TYPE)&operateRefInfo;
-
-			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
-
-			//尝试删除小页和清理
-			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
-			regs[1] = NULL;
-			regs[2] = REMOVE_LEVEL3_REF_ITEM_CPUID_SUBFUNCTION;
-			regs[3] = level3RefIdx;
-
-			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
-
-			if (regs[1])
+			if (changePageTableInStep2)
 			{
+				//还原页表修改
 				ChangeSmallPageToLargePage(swapPagePhyAddr & 0xFFFFFFFFFFE00000, PageTableType::ExternalPageTable);
 				ChangeSmallPageToLargePage(swapPagePhyAddr & 0xFFFFFFFFFFE00000, PageTableType::InternalPageTable);
 
@@ -1167,9 +1268,65 @@ NTSTATUS NptHookManager::AddHook(const NptHookRecord& record)
 				permission.fields.executionDisabled = true;
 
 				ChangePageTablePermission(swapPagePhyAddr & 0xFFFFFFFFFFE00000, permission, PageTableType::InternalPageTable, 2);
-			}
 
-			break;
+				regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+				regs[1] = INVALID_INDEX;
+				regs[2] = SEARCH_SHARED_DATA_CPUID_SUBFUNCTION;
+				regs[3] = (PTR_TYPE)&searchSharedInfoInfo;
+
+				searchSharedInfoInfo.pSearchFuncton = &NptHookSharedData::FindSmallPageLevel2RefCntByPhyAddr;
+				searchSharedInfoInfo.param = (PTR_TYPE)swapPagePhyAddr & 0xFFFFFFFFFFE00000;
+
+				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+				level3RefIdx = regs[1];
+
+				//递减小页引用计数
+				operateRefInfo.idx = level3RefIdx;
+				operateRefInfo.objectType = RefCountOperationObjectType::Level3RefObject;
+				operateRefInfo.operationType = RefCountOperationType::DecrementCount;
+
+				regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+				regs[1] = NULL;
+				regs[2] = OPERATE_REF_COUNT_CPUID_SUBFUNCTION;
+				regs[3] = (PTR_TYPE)&operateRefInfo;
+
+				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+				//删除0引用的小页计数
+				regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+				regs[1] = NULL;
+				regs[2] = REMOVE_LEVEL3_REF_ITEM_CPUID_SUBFUNCTION;
+				regs[3] = (PTR_TYPE)level3RefIdx;
+
+				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+			}
+			else
+			{
+				regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+				regs[1] = INVALID_INDEX;
+				regs[2] = SEARCH_SHARED_DATA_CPUID_SUBFUNCTION;
+				regs[3] = (PTR_TYPE)&searchSharedInfoInfo;
+
+				searchSharedInfoInfo.pSearchFuncton = &NptHookSharedData::FindSmallPageLevel2RefCntByPhyAddr;
+				searchSharedInfoInfo.param = (PTR_TYPE)swapPagePhyAddr & 0xFFFFFFFFFFE00000;
+
+				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+				level3RefIdx = regs[1];
+
+				//递减小页引用计数
+				operateRefInfo.idx = level3RefIdx;
+				operateRefInfo.objectType = RefCountOperationObjectType::Level3RefObject;
+				operateRefInfo.operationType = RefCountOperationType::DecrementCount;
+
+				regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+				regs[1] = NULL;
+				regs[2] = OPERATE_REF_COUNT_CPUID_SUBFUNCTION;
+				regs[3] = (PTR_TYPE)&operateRefInfo;
+
+				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+			}
 		}
 		case 1:
 		{
@@ -1228,9 +1385,31 @@ NTSTATUS NptHookManager::AddHook(const NptHookRecord& record)
 
 				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 			}
-			break;
 		}
 		case 0:
+			if (hookRecordAdded)
+			{
+				regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+				regs[1] = INVALID_INDEX;
+				regs[2] = SEARCH_SHARED_DATA_CPUID_SUBFUNCTION;
+				regs[3] = (PTR_TYPE)&searchSharedInfoInfo;
+
+				searchSharedInfoInfo.pSearchFuncton = &NptHookSharedData::FindHookRecordByOriginVirtAddr;
+				searchSharedInfoInfo.param = (PTR_TYPE)record.pOriginVirtAddr;
+
+				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+				hookIdx = regs[1];
+
+				regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+				regs[1] = NULL;
+				regs[2] = REMOVE_HOOK_ITEM_CPUID_SUBFUNCTION;
+				regs[3] = (PTR_TYPE)hookIdx;
+
+				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+				SyncSharedData();
+			}
 		default:
 			break;
 		}
@@ -1259,12 +1438,24 @@ NTSTATUS NptHookManager::RemoveHook(PVOID pHookOriginVirtAddr)
 
 	bool originPageToLargePage = false;
 	bool swapPageToLargePage = false;
-	bool restoreHookSwap = false;
+
+	SearchSharedDataInfo searchSharedInfoInfo = {};
 
 	do
 	{
 		//查询hook记录是否存在
-		hookIdx = sharedData.FindHookRecordByOriginVirtAddr(pHookOriginVirtAddr);
+		regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+		regs[1] = INVALID_INDEX;
+		regs[2] = SEARCH_SHARED_DATA_CPUID_SUBFUNCTION;
+		regs[3] = (PTR_TYPE)&searchSharedInfoInfo;
+
+		searchSharedInfoInfo.pSearchFuncton = &NptHookSharedData::FindHookRecordByOriginVirtAddr;
+		searchSharedInfoInfo.param = (PTR_TYPE)pHookOriginVirtAddr;
+
+		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+		hookIdx = regs[1];
+
 		if (hookIdx == INVALID_INDEX)
 		{
 			status = STATUS_NOT_FOUND;
@@ -1292,7 +1483,18 @@ NTSTATUS NptHookManager::RemoveHook(PVOID pHookOriginVirtAddr)
 		pOriginPhyAddr = regs[1];
 
 		//根据原始页面的物理地址查询小页引用计数
-		level3RefIdx = sharedData.FindSmallPageLevel2RefCntByPhyAddr(pOriginPhyAddr & 0xFFFFFFFFFFE00000);
+		regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+		regs[1] = INVALID_INDEX;
+		regs[2] = SEARCH_SHARED_DATA_CPUID_SUBFUNCTION;
+		regs[3] = (PTR_TYPE)&searchSharedInfoInfo;
+
+		searchSharedInfoInfo.pSearchFuncton = &NptHookSharedData::FindSmallPageLevel2RefCntByPhyAddr;
+		searchSharedInfoInfo.param = (PTR_TYPE)pOriginPhyAddr & 0xFFFFFFFFFFE00000;
+
+		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+		level3RefIdx = regs[1];
+
 		if (level3RefIdx != INVALID_INDEX)
 		{
 			//递减小页引用计数
@@ -1317,14 +1519,24 @@ NTSTATUS NptHookManager::RemoveHook(PVOID pHookOriginVirtAddr)
 
 			if (regs[1])
 				originPageToLargePage = true;
-
 		}
 
 		//根据hook原始页面大的起始地址查询交换页引用计数
-		swapPageIdx = sharedData.FindSwapPageRefCntByOriginVirtAddr((PVOID)pOriginPageVirtAddr);
+		regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+		regs[1] = INVALID_INDEX;
+		regs[2] = SEARCH_SHARED_DATA_CPUID_SUBFUNCTION;
+		regs[3] = (PTR_TYPE)&searchSharedInfoInfo;
+
+		searchSharedInfoInfo.pSearchFuncton = &NptHookSharedData::FindSwapPageRefCntByOriginVirtAddr;
+		searchSharedInfoInfo.param = (PTR_TYPE)pOriginPageVirtAddr;
+
+		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+		swapPageIdx = regs[1];
+
 		if (swapPageIdx != INVALID_INDEX)
 		{
-			//获取交换页的物理地址
+			//获取交换页信息
 			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
 			regs[1] = (PTR_TYPE)&swapPageRefCnt;
 			regs[2] = COPY_SWAPPAGE_REF_CNT_CPUID_SUBFUNCTION;
@@ -1332,13 +1544,13 @@ NTSTATUS NptHookManager::RemoveHook(PVOID pHookOriginVirtAddr)
 
 			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 
+			//获取交换页的物理地址
 			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
 			regs[1] = NULL;
 			regs[2] = GET_PHYSICAL_ADDRESS_SUBFUNCTION;
 			regs[3] = (PTR_TYPE)swapPageRefCnt.pSwapVirtAddr;
 
 			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
-
 			swapPagePhyAddr = regs[1];
 
 			//还原hook内存
@@ -1375,7 +1587,7 @@ NTSTATUS NptHookManager::RemoveHook(PVOID pHookOriginVirtAddr)
 
 			if (regs[1])
 			{
-				restoreHookSwap = true;
+				CancelHookOperation(swapPageRefCnt);
 
 				regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
 				regs[1] = NULL;
@@ -1385,7 +1597,17 @@ NTSTATUS NptHookManager::RemoveHook(PVOID pHookOriginVirtAddr)
 				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 			}
 
-			level3RefIdx = sharedData.FindSmallPageLevel2RefCntByPhyAddr(swapPagePhyAddr & 0xFFFFFFFFFFE00000);
+			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
+			regs[1] = INVALID_INDEX;
+			regs[2] = SEARCH_SHARED_DATA_CPUID_SUBFUNCTION;
+			regs[3] = (PTR_TYPE)&searchSharedInfoInfo;
+
+			searchSharedInfoInfo.pSearchFuncton = &NptHookSharedData::FindSmallPageLevel2RefCntByPhyAddr;
+			searchSharedInfoInfo.param = (PTR_TYPE)swapPagePhyAddr & 0xFFFFFFFFFFE00000;
+
+			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+			level3RefIdx = regs[1];
 
 			//递减小页引用计数
 			operateRefInfo.idx = level3RefIdx;
@@ -1418,9 +1640,6 @@ NTSTATUS NptHookManager::RemoveHook(PVOID pHookOriginVirtAddr)
 		regs[3] = (PTR_TYPE)hookIdx;
 
 		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
-
-		if (restoreHookSwap)
-			CancelHookOperation(swapPageRefCnt);
 
 		SyncSharedData();
 
@@ -1468,10 +1687,16 @@ NTSTATUS NptHookManager::Init()
 		CallConstructor(pCoreNptHookStatus + idx);
 
 	//构建内置页表
-	NTSTATUS status = internalPageTableManager.Init();
+	NTSTATUS status = pageTableManager1.Init();
 
 	if (!NT_SUCCESS(status))
 		return status;
+
+	status = pageTableManager2.Init();
+
+	if (!NT_SUCCESS(status))
+		return status;
+
 	//内部页表的上层页表是允许执行的
 	//最底层页表不允许执行
 	//这样在切换某页面到可2执行时不会因为上层页表不允许执行而报错
@@ -1481,15 +1706,15 @@ NTSTATUS NptHookManager::Init()
 	permission.fields.executionDisabled = true;
 
 	//最底层页表不允许执行
-	for (SIZE_TYPE idx = 0; idx < internalPageTableManager.GetCoreNptPageTablesCnt(); ++idx)
+	for (SIZE_TYPE idx = 0; idx < pageTableManager2.GetCoreNptPageTablesCnt(); ++idx)
 	{
-		CoreNptPageTableManager& pCoreNptPageTableManager = internalPageTableManager.GetCoreNptPageTables()[idx];
+		CoreNptPageTableManager& pCoreNptPageTableManager = pageTableManager2.GetCoreNptPageTables()[idx];
 
 		pCoreNptPageTableManager.ChangeAllEndLevelPageTablePermession(permission);;
 	}
 
 	//设置新的默认权限为不可执行，因为接下来的修改基本都是最底层页表的修改
-	internalPageTableManager.SetDefaultPermission(permission);
+	pageTableManager2.SetDefaultPermission(permission);
 
 	return STATUS_SUCCESS;
 }
@@ -1497,42 +1722,151 @@ NTSTATUS NptHookManager::Init()
 #pragma code_seg("PAGE")
 void NptHookManager::Deinit()
 {
-	PTR_TYPE regs[4] = {};
+	if (pCoreNptHookStatus != NULL && cpuCnt)
+	{
+		//释放NPT HOOK 内存
+		for (SIZE_TYPE idx = 0; idx < cpuCnt; ++idx)
+			CallDestroyer(pCoreNptHookStatus + idx);
 
-	//释放NPT HOOK 状态内存
-	for (SIZE_TYPE idx = 0; idx < cpuCnt; ++idx)
-		CallDestroyer(pCoreNptHookStatus + idx);
+		FreeNonPagedMem(pCoreNptHookStatus, HOOK_TAG);
 
-	regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
-	regs[1] = NULL;
-	regs[2] = FREE_NONPAGED_MEMORY_CPUID_SUBFUNCTION;
-	regs[3] = (PTR_TYPE)pCoreNptHookStatus;
+		sharedData.hookRecords.Clear();
+		sharedData.level3Refs.Clear();
 
-	SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+		for (SIZE_TYPE idx = 0; idx < sharedData.swapPageRefs.Length(); ++idx)
+			FreeExecutableNonPagedMem(sharedData.swapPageRefs[idx].pSwapVirtAddr, HOOK_TAG);
 
-	//还原hook
-	for (SIZE_TYPE idx = 0; idx < sharedData.hookRecords.Length(); ++idx)
-		RemoveHook(sharedData.hookRecords[0].pOriginVirtAddr);
+		sharedData.swapPageRefs.Clear();
 
-	//还原CR3
+		//置空指针，防止重复调用析构
+		pCoreNptHookStatus = NULL;
 
-	auto restoreCr3Core = [&regs](SIZE_TYPE idx) -> NTSTATUS
+		//析构内置NPT页表
+		pageTableManager1.Deinit();
+
+		pageTableManager2.Deinit();
+
+		//清空成员
+		cpuCnt = 0;
+	}
+}
+
+#pragma code_seg()
+PVOID FunctionCallerManager::AllocFunctionCallerForHook(PVOID pFunction)
+{
+	constexpr unsigned char jmpOpCodeTemplate[] = { 0xff, 0x25, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+	constexpr SIZE_TYPE jmpAddressOffset = 6;
+
+	static bool isXedInited = false;
+
+	//如果xed未初始化，初始化xed
+	if (!isXedInited) {
+		xed_tables_init();
+	}
+
+	//计算旧函数的第一条指令的长度
+	xed_decoded_inst_t xedd;
+	xed_state_t dstate = {};
+
+	dstate.mmode = XED_MACHINE_MODE_LONG_64;
+
+	xed_decoded_inst_zero_set_mode(&xedd, &dstate);
+
+	xed_error_enum_t result = xed_ild_decode(&xedd, (unsigned char*)pFunction, XED_MAX_INSTRUCTION_BYTES);
+
+	if (result != XED_ERROR_NONE)
+		return NULL;
+		
+	unsigned int length = xed_decoded_inst_get_length(&xedd);
+
+	//构造用于hook中调用旧函数的指令块
+	PVOID pFunctionCaller = AllocExecutableNonPagedMem(length + sizeof jmpOpCodeTemplate, HOOK_TAG);
+
+	if (pFunctionCaller == NULL)
+		return NULL;
+
+	RtlCopyMemory(pFunctionCaller, pFunction, length);
+	RtlCopyMemory((PCHAR)pFunctionCaller + length, jmpOpCodeTemplate, sizeof jmpOpCodeTemplate);
+
+	PTR_TYPE* pJmpAddress = (PTR_TYPE*)((PCHAR)pFunctionCaller + length + jmpAddressOffset);
+
+	*pJmpAddress = ((PTR_TYPE)pFunction + length);
+
+	return pFunctionCaller;
+}
+
+#pragma code_seg()
+void FunctionCallerManager::FreeFunctionCallerForHook(PVOID pFunctionCaller)
+{
+	FreeExecutableNonPagedMem(pFunctionCaller, HOOK_TAG);
+}
+
+#pragma code_seg()
+SIZE_TYPE FunctionCallerManager::FindFunctionCallerItemBySourceFunction(PVOID pSourceFunction)
+{
+	SIZE_TYPE callerCnt = functionCallerItems.Length();
+
+	for (SIZE_TYPE idx = 0; idx < callerCnt; ++idx)
+	{
+		if (pSourceFunction == functionCallerItems[idx].pSourceFunction)
+			return idx;
+	}
+
+	return INVALID_INDEX;
+}
+
+#pragma code_seg()
+void FunctionCallerManager::Deinit()
+{
+	SIZE_TYPE callerCnt = functionCallerItems.Length();
+
+	for (SIZE_TYPE idx = 0; idx < callerCnt; ++idx)
+		FreeFunctionCallerForHook(functionCallerItems[idx].pFunctionCaller);
+
+	functionCallerItems.Clear();
+}
+
+#pragma code_seg()
+PVOID FunctionCallerManager::GetFunctionCaller(PVOID pSourceFunction)
+{
+	PVOID result = NULL;
+
+	//查找有没有已经分配的Caller内存块
+	SIZE_TYPE idx = FindFunctionCallerItemBySourceFunction(pSourceFunction);
+
+	//有则返回，无则创建再返回
+	if (idx != INVALID_INDEX)
+	{
+		result = functionCallerItems[idx].pFunctionCaller;
+	}
+	else
+	{
+		PVOID pNewFunctionCaller = AllocFunctionCallerForHook(pSourceFunction);
+
+		if (pNewFunctionCaller != NULL)
 		{
-			regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
-			regs[1] = NULL;
-			regs[2] = RESTORE_CR3_CPUID_SUBFUNCTION;
-			regs[3] = idx;
+			FunctionCallerItem newItem = {};
+			newItem.pFunctionCaller = pNewFunctionCaller;
+			newItem.pSourceFunction = pSourceFunction;
 
-			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+			functionCallerItems.PushBack(newItem);
 
-			return STATUS_SUCCESS;
-		};
+			result = pNewFunctionCaller;
+		}
+	}
 
-	RunOnEachCore(0, cpuCnt, restoreCr3Core);
+	return result;
+}
 
-	//析构内置NPT页表
-	internalPageTableManager.Deinit();
+#pragma code_seg()
+void FunctionCallerManager::RemoveFunctionCaller(PVOID pSourceFunction)
+{
+	//查找有没有已经分配的Caller内存块，有则删除记录并释放内存块
+	SIZE_TYPE idx = FindFunctionCallerItemBySourceFunction(pSourceFunction);
 
-	//清空成员
-	cpuCnt = 0;
+	if (idx != INVALID_INDEX)
+	{
+		FreeFunctionCallerForHook(functionCallerItems[idx].pFunctionCaller);
+		functionCallerItems.Remove(idx);
+	}
 }

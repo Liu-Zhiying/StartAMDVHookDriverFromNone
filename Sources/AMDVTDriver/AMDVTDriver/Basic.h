@@ -9,6 +9,9 @@
 
 //头文件包含，一些基础定义
 #include <ntddk.h>
+extern "C" {
+	#include <xed/xed-interface.h>
+}
 
 //一些类型别名
 typedef unsigned char UINT8;
@@ -207,15 +210,18 @@ inline KernelVector<ElementType, allocTag, memType>::KernelVector() : pData(NULL
 	{
 		pMemAlloc = AllocPagedMem;
 		pMemFree = FreePagedMem;
+		break;
 	}
 	case MemType::ContigousMem:
 	{
 		pMemAlloc = AllocContiguousMem;
 		pMemFree = FreeContigousMem;
+		break;
 	}
 	default:
 	{
 		KeBugCheck(DRIVER_INVALID_CRUNTIME_PARAMETER);
+		break;
 	}
 	}
 }
@@ -414,5 +420,16 @@ inline void KernelVector<ElementType, allocTag, memType>::Clear()
 
 	length = 0;
 }
+
+//方便为类提供非分页的默认拷贝和移动构造函数和运算符
+#define DEFAULT_NONPAGED_COPY_AND_MOVE_FUNCTION_FOR_CLASS(classname)																\
+_Pragma("code_seg()")																												\
+classname(const classname&) = default;																								\
+_Pragma("code_seg()")																												\
+classname(classname&&) = default;																									\
+_Pragma("code_seg()")																												\
+classname& operator=(const classname&) = default;																					\
+_Pragma("code_seg()")																												\
+classname& operator=(classname&&) = default;
 
 #endif // !BASIC_H

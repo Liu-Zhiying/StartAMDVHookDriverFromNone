@@ -1,6 +1,7 @@
 .code
 
 extern VmExitHandler : Proc
+extern FillKTrapFrame: Proc
 
 _mysgdt Proc
 	;执行存储寄存器数据只需要10个字节，这里方便一点
@@ -185,12 +186,14 @@ return:
 	ret
 _save_or_load_regs Endp
 
-_run_svm_vmrun Proc
+_run_svm_vmrun Proc Frame
 ;备份原栈指针
 mov rax, rsp
 
 ;切换栈
 mov rsp, r9
+
+.endprolog
 
 ;把原来的栈指针压到内存中
 ;多一个push是为了rsp对齐到16
@@ -198,9 +201,13 @@ push rax
 push rax
 
 ;备份参数
+;pStack 参数
 push r9
+;pHostVmcbPhyAddr 参数
 push r8
+;pGuestVmcbPhyAddr 参数
 push rdx
+;pVirtCpuInfo 参数
 push rcx
 
 enter_guest:
@@ -276,6 +283,16 @@ movaps xmmword ptr [rsp + 0C0h], xmm12
 movaps xmmword ptr [rsp + 0D0h], xmm13
 movaps xmmword ptr [rsp + 0E0h], xmm14
 movaps xmmword ptr [rsp + 0F0h], xmm15
+
+;调用函数初始化KTRAP_FRAME
+;trapFrame 参数
+;mov rcx, rsp
+;add rcx, 380h
+;guestRegisters 参数
+;mov rdx, rsp
+;virtCpuInfo 参数
+;mov r8, [rsp + 1C0h]
+;call FillKTrapFrame
 
 ;调用exit handler
 ;pVirtCpuInfo 参数

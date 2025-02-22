@@ -295,13 +295,13 @@ public:
 	class EntrySetter
 	{
 	public:
-		PageTableManager* pPageTableManager;
+		PageTableManager* pageTableManager1;
 		#pragma code_seg("PAGE")
-		EntrySetter(PageTableManager* pPageTableManager) : pPageTableManager(pPageTableManager) { PAGED_CODE(); ASSERT(pPageTableManager != NULL); }
+		EntrySetter(PageTableManager* pageTableManager1) : pageTableManager1(pageTableManager1) { PAGED_CODE(); ASSERT(pageTableManager1 != NULL); }
 
 		void operator()(PageTableLevel123Entry* pEntry, PTR_TYPE pfn, bool isLargePage) const {
 			{
-				PageTableLevel123Entry permission = pPageTableManager->defaultPermission;
+				PageTableLevel123Entry permission = pageTableManager1->defaultPermission;
 
 				permission.fields.present = true;
 				permission.fields.size = isLargePage;
@@ -316,7 +316,7 @@ public:
 				UNREFERENCED_PARAMETER(isLargePage);
 
 				PageTableLevel4Entry permission = {};
-				permission.data = pPageTableManager->defaultPermission.data;
+				permission.data = pageTableManager1->defaultPermission.data;
 				permission.fields.ignored2 = 0;
 
 				permission.fields.present = true;

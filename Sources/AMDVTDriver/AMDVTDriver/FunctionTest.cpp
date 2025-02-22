@@ -14,27 +14,35 @@ void TestLStarHookCallback(GenericRegisters* pRegisters, PVOID param1, PVOID par
 	{
 		showMessage = true;
 		KdPrint(("Msr Hook OK!\n"));
-		KdPrint(("rax = %llu, user rsp = %p, param1 = %llu, param2 = %llu, param3 = %llu\n", pRegisters->rax, (PVOID)pRegisters->extraInfo1, param1, param2, param3));
+		KdPrint(("rax = %llu, user rsp = %p, param1 = %llu, param2 = %llu, param3 = %llu\n", pRegisters->rax, (PVOID)pRegisters->extraInfo1, (INT64)param1, (INT64)param2, (INT64)param3));
 	}
 }
 
-PVOID pHookMem = NULL;
+typedef PVOID(*P_ExAllocatePool2)(POOL_FLAGS Flags, SIZE_T NumberOfBytes, ULONG Tag);
+typedef PVOID(*P_ExAllocatePoolWithTag)(POOL_TYPE Flags, SIZE_T NumberOfBytes, ULONG Tag);
+
+#pragma data_seg()
+P_ExAllocatePoolWithTag pFunctionCaller1 = NULL;
+#pragma data_seg()
+P_ExAllocatePool2 pFunctionCaller2 = NULL;
 
 #pragma code_seg()
-PVOID NTAPI ExAllocatePool2Handler(POOL_FLAGS Flags, SIZE_T NumberOfBytes, ULONG Tag)
+PVOID NTAPI ExAllocatePoolWithTagHandler(POOL_TYPE PoolType, SIZE_T NumberOfBytes, ULONG Tag)
 {
-	static bool showMessage = false;
-	if (!showMessage)
-	{
-		showMessage = true;
-		KdPrint(("ExAllocatePool2 hook OK!\n"));
-	}
+	PVOID result = pFunctionCaller1(PoolType, NumberOfBytes, Tag);
 
-	typedef PVOID(*P_ExAllocatePool2)(POOL_FLAGS Flags, SIZE_T NumberOfBytes, ULONG Tag);
-	PVOID result = ((P_ExAllocatePool2)pHookMem)(Flags, NumberOfBytes, Tag);
 	return result;
 }
 
+#pragma code_seg()
+PVOID NTAPI ExAllocatePool2Handler(POOL_FLAGS Flags, SIZE_T NumberOfBytes, ULONG Tag)
+{	
+	PVOID result = pFunctionCaller2(Flags, NumberOfBytes, Tag);
+
+	return result;
+}
+
+#if defined(TEST_MSR_HOOK)
 #pragma code_seg("PAGE")
 void GlobalManager::SetMsrHookParameters()
 {
@@ -50,77 +58,64 @@ void GlobalManager::SetMsrHookParameters()
 	svmManager.SetMsrInterceptPlugin(&msrHookManager);
 	svmManager.SetMsrHookPlugin(&msrHookManager);
 }
+#endif
 
-#pragma code_seg("PAGE")
-void GlobalManager::SetNptHook()
-{
-	PAGED_CODE();
-	//设置NPT HOOK外部页表
-	nptHookManager.SetPageTableManager(&ptManager);
-	//拦截CPUID
-	svmManager.SetCpuIdInterceptPlugin(&nptHookManager);
-	//拦截NFP
-	svmManager.SetNpfInterceptPlugin(&nptHookManager);
-	//拦截BP
-	svmManager.SetBreakpointPlugin(&nptHookManager);
-}
-
-#pragma code_seg("PAGE")
-void GlobalManager::SetNpt()
-{
-	PAGED_CODE();
-	//传递NPT页表
-	KdPrint(("GlobalManager::Init(): Enable NPT\n"));
-	svmManager.SetNCr3Provider(&ptManager);
-}
-
+#if defined(TEST_NPT_HOOK)
 #pragma code_seg("PAGE")
 void GlobalManager::HookApi()
 {
 	PAGED_CODE();
 
-	//获取ExAllocatePool2的虚拟地址
+	//获取ExAllocatePoolWithTag的虚拟地址
 	UNICODE_STRING apiName = {};
+	RtlInitUnicodeString(&apiName, L"ExAllocatePoolWithTag");
+	PVOID apiVirtAddr1 = MmGetSystemRoutineAddress(&apiName);
+
+	KdPrint(("GlobalManager::HookApi(): ExAllocatePoolWithTag virtual address: %llx\n", (INT64)apiVirtAddr1));
+
+	if (apiVirtAddr1 == NULL)
+	{
+		KdPrint(("GlobalManager::HookApi(): ExAllocatePoolWithTag address not found!\n"));
+		return;
+	}
+
+	pFunctionCaller1 = (P_ExAllocatePoolWithTag)functionCallerManager.GetFunctionCaller(apiVirtAddr1);
+	
+	//获取ExAllocatePool2的虚拟地址
 	RtlInitUnicodeString(&apiName, L"ExAllocatePool2");
-	PVOID apiVirtAddr = MmGetSystemRoutineAddress(&apiName);
+	PVOID apiVirtAddr2 = MmGetSystemRoutineAddress(&apiName);
 
-	KdPrint(("GlobalManager::HookApi(): ExAllocatePool2 virtual address: %llx\n", apiVirtAddr));
+	KdPrint(("GlobalManager::HookApi(): ExAllocatePool2 virtual address: %llx\n", (INT64)apiVirtAddr2));
 
-	if (apiVirtAddr == NULL)
+	if (apiVirtAddr2 == NULL)
 	{
 		KdPrint(("GlobalManager::HookApi(): ExAllocatePool2 address not found!\n"));
 		return;
 	}
 
-	//构造hook时返回执行原函数的代码，注意，这里的hook代码只对Windows 11 24h2有效
-	//0x48, 0x89, 0x5c, 0x24, 0x10 
-	//mov qword ptr [rsp+10h], rbx 这条指令是ExAllocatePool2在Windows 11 24h2的第一条指令
-	//0xff, 0x25, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
-	//jmp 0xffffffffffffffff 这里的 0xffffffffffffffff 要替换为 ExAllocatePool2 的第二条指令的虚拟地址
-
-	//如果系统版本不同，请根据实际情况修改
-
-	UINT8 hookCode[] = { 0x48, 0x89, 0x5c, 0x24, 0x10, 0xff, 0x25, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
-
-	*((PVOID*)(hookCode + 0xb)) = ((UINT8*)apiVirtAddr) + 0x5;
-
-	pHookMem = ExAllocatePool2(POOL_FLAG_NON_PAGED_EXECUTE, sizeof(hookCode), 0x22);
-	if (pHookMem == NULL)
-	{
-		KdPrint(("GlobalManager::HookApi(): Allocate hook memory failed!\n"));
-		return;
-	}
-	//把机器码写入可执行内存
-	RtlCopyMemory(pHookMem, hookCode, sizeof(hookCode));
+	pFunctionCaller2 = (P_ExAllocatePool2)functionCallerManager.GetFunctionCaller(apiVirtAddr2);
 
 	//执行hook
 	NptHookRecord record = {};
-	record.pOriginVirtAddr = apiVirtAddr;
+
+	record.pOriginVirtAddr = apiVirtAddr1;
+	record.pGotoVirtAddr = ExAllocatePoolWithTagHandler;
+
+	nptHookManager.AddHook(record);
+
+	record.pOriginVirtAddr = apiVirtAddr2;
 	record.pGotoVirtAddr = ExAllocatePool2Handler;
 
 	nptHookManager.AddHook(record);
-}
 
+#if defined(TEST_NPT_HOOK_REMOVE)
+	nptHookManager.RemoveHook(apiVirtAddr1);
+	nptHookManager.RemoveHook(apiVirtAddr2);
+#endif
+}
+#endif
+
+#if defined(TEST_MSR_HOOK)
 #pragma code_seg("PAGE")
 void GlobalManager::EnableMsrHook()
 {
@@ -129,6 +124,7 @@ void GlobalManager::EnableMsrHook()
 	//HOOK MSR_LSTAR
 	EnableLStrHook<1>(&msrHookManager, TestLStarHookCallback,(PVOID)1, (PVOID)2, (PVOID)3);
 }
+#endif
 
 #pragma code_seg("PAGE")
 NTSTATUS GlobalManager::Init()
@@ -140,19 +136,17 @@ NTSTATUS GlobalManager::Init()
 	{
 #if defined(TEST_NPT_HOOK)
 
-		SetNptHook();
-
 		status = nptHookManager.Init();
 		if (!NT_SUCCESS(status))
 			break;
 
-		status = ptManager.Init();
+		nptHookManager.SetupSVMManager(svmManager);
+
+		status = svmManager.Init();
 		if (!NT_SUCCESS(status))
 			break;
 
-		SetNpt();
-
-		status = svmManager.Init();
+		status = functionCallerManager.Init();
 		if (!NT_SUCCESS(status))
 			break;
 
@@ -188,9 +182,9 @@ void GlobalManager::Deinit()
 	PAGED_CODE();
 
 #if defined(TEST_NPT_HOOK)
-	nptHookManager.Deinit();
 	svmManager.Deinit();
-	ptManager.Deinit();
+	nptHookManager.Deinit();
+	functionCallerManager.Deinit();
 #elif defined(TEST_MSR_HOOK)
 	msrHookManager.Deinit();
 	svmManager.Deinit();
@@ -202,8 +196,4 @@ GlobalManager::~GlobalManager()
 	PAGED_CODE();
 
 	GlobalManager::Deinit();
-#ifdef TEST_NPT_HOOK
-	if (pHookMem != NULL)
-		ExFreePoolWithTag(pHookMem, 0x22);
-#endif // TEST_NPT_HOOK
 }

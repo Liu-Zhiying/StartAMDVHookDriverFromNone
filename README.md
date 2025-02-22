@@ -4,21 +4,27 @@
 github看看，VTX的hook驱动满天飞，AMDV的呢？——没有，作为一个AMD用户能忍
 ## 进度
 VT NPT HOOK 完成
+集成Intel XED库，可以识别函数指令长度方便HOOK
 ## 已知问题
 1. ~~Wow64程序在VT加载时会崩溃~~
 2. ~~NPT页表和N卡驱动不兼容~~  
+3. 系统运行部分程序（例如QQ NT）缓慢卡死，运行大量程序时蓝屏
 ## 下一步计划
 尝试修复已知问题
+windbg在VMM崩溃时可以查看到客户机调用堆栈
 ## 编译环境
 VS222 + WDK 10
 ## 测试环境
 Windows 11 24H2
+Windows 10 22h2
 ## 联系（其实就是催更方式）
 邮箱：1103660629@qq.com  
 QQ：1103660629
 ## 推荐项目（现在我学习的就这个）
 https://github.com/tandasat/SimpleSvm  
 https://github.com/tandasat/SimpleSvmHook
+## 引用的库
+Intel XED https://github.com/intelxed/xed 修改见 XED Information 文件夹
 ## 文档
 为了更快的下载代码，本仓库的文档移除，文档转移到另外一个仓库  
 https://github.com/Liu-Zhiying/StartAMDVHookDriverFromNone_Documents

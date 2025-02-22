@@ -36,6 +36,7 @@ constexpr UINT32 DESTROY_SHARED_DATA_COPY_CPUID_SUBFUNCTION = 0x00000012;
 constexpr UINT32 RESTORE_CR3_CPUID_SUBFUNCTION = 0x00000013;
 constexpr UINT32 ALLOC_NONPAGED_MEMORY_CPUID_SUBFUNCTION = 0x00000014;
 constexpr UINT32 FREE_NONPAGED_MEMORY_CPUID_SUBFUNCTION = 0x00000015;
+constexpr UINT32 SEARCH_SHARED_DATA_CPUID_SUBFUNCTION = 0x00000016;
 
 constexpr UINT32 HOOK_TAG = MAKE_TAG('h', 'o', 'o', 'k');
 
@@ -98,8 +99,16 @@ struct SwapSmallPagePpnInfo
 	ULONG cpuIdx;
 };
 
-//三个enum和OperateRefCountInfo struct 都是  OPERATE_REF_COUNT_CPUID_SUBFUNCTION 的参数
+class NptHookSharedData;
 
+//SEARCH_SHARED_DATA_CPUID_SUBFUNCTION
+struct SearchSharedDataInfo
+{
+	SIZE_TYPE(NptHookSharedData::* pSearchFuncton)(PTR_TYPE) const;
+	PTR_TYPE param;
+};
+
+//三个enum和OperateRefCountInfo struct 都是  OPERATE_REF_COUNT_CPUID_SUBFUNCTION 的参数
 enum RefCountOperationType
 {
 	IncrementCount,
@@ -136,7 +145,7 @@ struct MsrOperationParameter
 
 //MSR HOOK 管理器，msrHookCount代表要Hook的MSR的个数
 template<SIZE_TYPE msrHookCount>
-class MsrHookManager : public IManager, public IMsrInterceptPlugin, public ICpuidInterceptPlugin, public IMsrHookPlugin
+class MsrHookManager : public IManager, public IMsrInterceptPlugin, public ICpuidInterceptPlugin, public IMsrBackupRestorePlugin
 {
 private:
 	template<SIZE_TYPE msrCnt>
@@ -637,6 +646,7 @@ inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo,
 			pGuestRegisters->rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
 
 			handled = true;
+			break;
 		}
 		default:
 			break;
@@ -841,6 +851,8 @@ struct SmallPageLevel2RefCnt
 	SIZE_TYPE refCnt;
 	#pragma code_seg()
 	SmallPageLevel2RefCnt() : level3PhyAddr(INVALID_ADDR), refCnt(0) {}
+
+	DEFAULT_NONPAGED_COPY_AND_MOVE_FUNCTION_FOR_CLASS(SmallPageLevel2RefCnt)
 };
 
 //交换页的记录
@@ -853,6 +865,8 @@ struct SwapPageRefCnt
 	SIZE_TYPE refCnt;
 	#pragma code_seg()
 	SwapPageRefCnt() : pOriginVirtAddr(NULL), pSwapVirtAddr(NULL), refCnt(0) {}
+
+	DEFAULT_NONPAGED_COPY_AND_MOVE_FUNCTION_FOR_CLASS(SwapPageRefCnt)
 };
 
 //hook条目记录
@@ -864,6 +878,8 @@ struct NptHookRecord
 	PVOID pGotoVirtAddr;
 	#pragma code_seg()
 	NptHookRecord() : pOriginVirtAddr(NULL), pGotoVirtAddr(NULL) {}
+
+	DEFAULT_NONPAGED_COPY_AND_MOVE_FUNCTION_FOR_CLASS(NptHookRecord)
 };
 
 //NPT HOOK 核心间共享的数据，主要是HOOK记录、小页记录、交换页记录
@@ -875,26 +891,18 @@ public:
 	KernelVector<NptHookRecord, HOOK_TAG> hookRecords;
 
 	//通过hook的原始虚拟地址查找记录（HookRecord）
-	SIZE_TYPE FindHookRecordByOriginVirtAddr(PVOID pOriginAddr) const;
+	SIZE_TYPE FindHookRecordByOriginVirtAddr(PTR_TYPE pOriginAddr) const;
 	//通过物理地址（只带有Level 4 3 2三级偏移）查找小页记录（SmallPageLevel3RefCnt）
 	SIZE_TYPE FindSmallPageLevel2RefCntByPhyAddr(PTR_TYPE phyAddr) const;
 	//通过hook源物理地址查找交换页记录（SwapPageRefCnt）
 	SIZE_TYPE FindSwapPageRefCntByOriginPhyAddr(PTR_TYPE phyAddr) const;
 	//通过hook源虚拟地址查找交换页记录（SwapPageRefCnt）
-	SIZE_TYPE FindSwapPageRefCntByOriginVirtAddr(PVOID pOriginAddr) const;
+	SIZE_TYPE FindSwapPageRefCntByOriginVirtAddr(PTR_TYPE pOriginAddr) const;
 
 	NptHookSharedData() = default;
 	~NptHookSharedData() = default;
 
-	//默认拷贝和移动函数
-	#pragma code_seg("PAGE")
-	NptHookSharedData(const NptHookSharedData&) = default;
-	#pragma code_seg("PAGE")
-	NptHookSharedData& operator=(const NptHookSharedData&) = default;
-	#pragma code_seg("PAGE")
-	NptHookSharedData(NptHookSharedData&&) = default;
-	#pragma code_seg("PAGE")
-	NptHookSharedData& operator=(NptHookSharedData&&) = default;
+	DEFAULT_NONPAGED_COPY_AND_MOVE_FUNCTION_FOR_CLASS(NptHookSharedData)
 };
 
 //每个核心的NPT HOOK状态
@@ -929,9 +937,9 @@ class NptHookManager : public IManager, public IBreakprointInterceptPlugin, publ
 	//每个核心的NPT HOOK状态
 	CoreNptHookStatus* pCoreNptHookStatus;
 	//外部页表管理器的指针
-	PageTableManager* pPageTableManager;
+	PageTableManager pageTableManager1;
 	//内部页表管理器，每个核心在内部页表和外部页表之间切换，加快NPT HOOK的速度
-	PageTableManager internalPageTableManager;
+	PageTableManager pageTableManager2;
 
 	//使用大页映射和使用小页映射切换
 	NTSTATUS ChangeLargePageToSmallPage(PTR_TYPE pOriginLevel3PhyAddr, PageTableType type);
@@ -948,8 +956,9 @@ class NptHookManager : public IManager, public IBreakprointInterceptPlugin, publ
 	//上面的成员函数的核心功能都通过CPUID交由VMM处理
 
 public:
+	//配置SVMManager
 	#pragma code_seg("PAGE")
-	void SetPageTableManager(PageTableManager* _pPageTableManager) { PAGED_CODE(); pPageTableManager = _pPageTableManager; }
+	void SetupSVMManager(SVMManager& svmManager);
 	//HOOK 跳转
 	virtual bool HandleBreakpoint(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
@@ -960,7 +969,7 @@ public:
 	virtual bool HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
 	#pragma code_seg("PAGE")
-	NptHookManager() : pPageTableManager(NULL), pSharedDataCopy(NULL), pCoreNptHookStatus(NULL), cpuCnt(0) { PAGED_CODE(); }
+	NptHookManager() : pSharedDataCopy(NULL), pCoreNptHookStatus(NULL), cpuCnt(0) { PAGED_CODE(); }
 	//添加hook
 	NTSTATUS AddHook(const NptHookRecord& record);
 	//删除hook，pHookOriginVirtAddr是hook位置的虚拟地址
@@ -969,6 +978,43 @@ public:
 	virtual void Deinit() override;
 	#pragma code_seg("PAGE")
 	virtual ~NptHookManager() { PAGED_CODE(); Deinit(); }
+};
+
+class FunctionCallerManager : public IManager
+{
+	//为NPT HOOK跳转之后的函数构造一个可以调用原函数功能的指令块
+	static PVOID AllocFunctionCallerForHook(PVOID pFunction);
+	//释放指令块
+	static void FreeFunctionCallerForHook(PVOID pFunctionCaller);
+
+	struct FunctionCallerItem
+	{
+		PVOID pSourceFunction;
+		PVOID pFunctionCaller;
+
+		#pragma code_seg()
+		FunctionCallerItem() : pSourceFunction(NULL), pFunctionCaller(NULL) {}
+
+		DEFAULT_NONPAGED_COPY_AND_MOVE_FUNCTION_FOR_CLASS(FunctionCallerItem)
+	};
+
+	KernelVector<FunctionCallerItem, HOOK_TAG> functionCallerItems;
+
+	//查找有没有已经分配的Caller内存块
+	SIZE_TYPE FindFunctionCallerItemBySourceFunction(PVOID pSourceFunction);
+
+public:
+	#pragma code_seg()
+	FunctionCallerManager() : functionCallerItems() {}
+
+	#pragma code_seg()
+	virtual NTSTATUS Init() override { return STATUS_SUCCESS; }
+	virtual void Deinit() override;
+	#pragma code_seg()
+	virtual ~FunctionCallerManager() { Deinit(); }
+
+	PVOID GetFunctionCaller(PVOID pSourceFunction);
+	void RemoveFunctionCaller(PVOID pSourceFunction);
 };
 
 #endif

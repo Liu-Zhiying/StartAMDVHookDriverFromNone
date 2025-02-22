@@ -44,9 +44,14 @@
   <PropertyGroup />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
+    <PreBuildEventUseInBuild>false</PreBuildEventUseInBuild>
+    <IncludePath>D:\Data\CppCode\StartAMDVHookDriverFromNone\Sources\AMDVTDriver\AMDVTDriver\Librarys\include;$(IncludePath)</IncludePath>
+    <LibraryPath>D:\Data\CppCode\StartAMDVHookDriverFromNone\Sources\AMDVTDriver\AMDVTDriver\Librarys\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
+    <IncludePath>D:\Data\CppCode\StartAMDVHookDriverFromNone\Sources\AMDVTDriver\AMDVTDriver\Librarys\include;$(IncludePath)</IncludePath>
+    <LibraryPath>D:\Data\CppCode\StartAMDVHookDriverFromNone\Sources\AMDVTDriver\AMDVTDriver\Librarys\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <DriverSign>
@@ -55,7 +60,15 @@
     <ClCompile>
       <TreatWarningAsError>false</TreatWarningAsError>
       <LanguageStandard>stdcpp14</LanguageStandard>
+      <LanguageStandard_C>stdc11</LanguageStandard_C>
     </ClCompile>
+    <PreBuildEvent>
+      <Command>
+      </Command>
+    </PreBuildEvent>
+    <Link>
+      <AdditionalDependencies>xed.lib;xed-ild.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <DriverSign>
@@ -64,7 +77,11 @@
     <ClCompile>
       <TreatWarningAsError>false</TreatWarningAsError>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <LanguageStandard_C>stdc11</LanguageStandard_C>
     </ClCompile>
+    <Link>
+      <AdditionalDependencies>xed.lib;xed-ild.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <FilesToPackage Include="$(TargetPath)" />

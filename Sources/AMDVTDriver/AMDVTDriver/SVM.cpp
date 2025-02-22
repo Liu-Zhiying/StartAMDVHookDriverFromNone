@@ -58,7 +58,7 @@ extern "C" UINT16 _ss_selector();
 //用于备份和还原寄存器上下文
 extern "C" void _save_or_load_regs(GenericRegisters* pRegisters);
 //执行vmrun相关操作
-extern "C" void _run_svm_vmrun(VirtCpuInfo* pInfo, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr, PVOID pStack);
+extern "C" void _run_svm_vmrun(VirtCpuInfo* pVirtCpuInfo, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr, PVOID pStack);
 
 //这个函数完全照抄https://github.com/tandasat/SimpleSvm
 //原函数名字是SvGetSegmentAccessRight
@@ -140,6 +140,20 @@ UINT32 GetSegmentLimit2(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 	return limit;
 }
 
+//初始化KTRAP_FRAME结构体
+#pragma code_seg()
+extern "C" void FillKTrapFrame(KTRAP_FRAME& trapFrame, const GenericRegisters& guestRegistars, const VirtCpuInfo& virtCpuInfo)
+{
+	UNREFERENCED_PARAMETER(guestRegistars);
+	trapFrame = {};
+
+	trapFrame.PreviousIrql = KeGetCurrentIrql();
+
+	trapFrame.Rsp = virtCpuInfo.guestVmcb.statusFields.rsp;
+	trapFrame.Rip = virtCpuInfo.guestVmcb.controlFields.nRip;
+	trapFrame.EFlags = (UINT32)virtCpuInfo.guestVmcb.statusFields.rflags;
+}
+
 //#VMEXIT处理函数
 #pragma code_seg()
 extern "C" void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
@@ -149,7 +163,7 @@ extern "C" void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGues
 	pGuestRegisters->rax = pVirtCpuInfo->guestVmcb.statusFields.rax;
 	pGuestRegisters->rflags = pVirtCpuInfo->guestVmcb.statusFields.rflags;
 
-	IMsrHookPlugin* pMsrHookPlugin = pVirtCpuInfo->otherInfo.pSvmManager->pMsrHookPlugin;
+	IMsrBackupRestorePlugin* pMsrHookPlugin = pVirtCpuInfo->otherInfo.pSvmManager->pMsrHookPlugin;
 
 	//如果 MSR 拦截插件存在，进入VM之后保存Guest和恢复Host的MSR
 	if (pMsrHookPlugin != NULL)
@@ -171,6 +185,7 @@ extern "C" void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGues
 	pVirtCpuInfo->guestVmcb.statusFields.rip = pGuestRegisters->rip;
 	pVirtCpuInfo->guestVmcb.statusFields.rsp = pGuestRegisters->rsp;
 	pVirtCpuInfo->guestVmcb.statusFields.rax = pGuestRegisters->rax;
+	pVirtCpuInfo->guestVmcb.statusFields.rflags = pGuestRegisters->rflags;
 	pVirtCpuInfo->guestVmcb.statusFields.rflags = pGuestRegisters->rflags;
 }
 
@@ -281,7 +296,7 @@ SVMStatus SVMManager::CheckSVM()
 
 		__cpuidex((int*)cpuid_result, CPUID_FN_NPT_FEATURE, 0);
 
-		//CPUID Fn 8000_000Ah edx 第 0 位 (0 base 下同) 是否为 1
+		//CPUID Fn 8000_000Ah edx 第 0 位 是否为 1
 		if (!(cpuid_result[3] & (1UL << NPT_ENABLE_OFFSET)))
 			break;
 
@@ -298,6 +313,7 @@ NTSTATUS SVMManager::Init()
 	PAGED_CODE();
 	NTSTATUS status = STATUS_SUCCESS;
 	UINT32 idx = 0;
+
 	do
 	{
 		//检查是否支持AMD-V
