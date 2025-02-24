@@ -66,7 +66,7 @@ PVOID AllocExecutableNonPagedMem(SIZE_TYPE byteCnt, ULONG tag)
 #ifdef _BUILD_WIN_2004
 	return ExAllocatePool2(POOL_FLAG_NON_PAGED_EXECUTE, byteCnt, tag);
 #else
-	return ExAllocatePoolWithTag(POOL_TYPE::NonPagedPoolExecute, byteCnt, ptTag);
+	return ExAllocatePoolWithTag(POOL_TYPE::NonPagedPoolExecute, byteCnt, tag);
 #endif
 }
 

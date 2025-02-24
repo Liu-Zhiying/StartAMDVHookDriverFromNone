@@ -42,6 +42,17 @@ typedef struct _SEGMENT_DESCRIPTOR
 	} OptionalField;
 } SEGMENT_DESCRIPTOR, * PSEGMENT_DESCRIPTOR;
 
+//这个结构见这个网址 https://learn.microsoft.com/en-us/cpp/build/exception-handling-x64?view=msvc-170
+//里面对 MASM .PUSHFRAME 指令的行为分析
+typedef struct _MACHINE_FRAME
+{
+	UINT64 Rip;
+	UINT64 Cs;
+	UINT64 EFlags;
+	UINT64 OldRsp;
+	UINT64 Ss;
+} MACHINE_FRAME, *PMACHINE_FRAME;
+
 //一系列汇编函数
 //源代码在SVM_asm.asm里面
 //主要都是寄存器读取操作
@@ -142,16 +153,16 @@ UINT32 GetSegmentLimit2(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 
 //初始化KTRAP_FRAME结构体
 #pragma code_seg()
-extern "C" void FillKTrapFrame(KTRAP_FRAME& trapFrame, const GenericRegisters& guestRegistars, const VirtCpuInfo& virtCpuInfo)
+extern "C" void FillMachineFrame(MACHINE_FRAME& machineFrame, const GenericRegisters& guestRegistars, const VirtCpuInfo& virtCpuInfo)
 {
 	UNREFERENCED_PARAMETER(guestRegistars);
-	trapFrame = {};
+	machineFrame = {};
 
-	trapFrame.PreviousIrql = KeGetCurrentIrql();
-
-	trapFrame.Rsp = virtCpuInfo.guestVmcb.statusFields.rsp;
-	trapFrame.Rip = virtCpuInfo.guestVmcb.controlFields.nRip;
-	trapFrame.EFlags = (UINT32)virtCpuInfo.guestVmcb.statusFields.rflags;
+	machineFrame.Rip = virtCpuInfo.guestVmcb.controlFields.nRip; 
+	machineFrame.Cs = virtCpuInfo.guestVmcb.statusFields.cs.selector;
+	machineFrame.Ss = virtCpuInfo.guestVmcb.statusFields.ss.selector;
+	machineFrame.OldRsp = virtCpuInfo.guestVmcb.statusFields.rsp;
+	machineFrame.EFlags = (UINT32)virtCpuInfo.guestVmcb.statusFields.rflags;
 }
 
 //#VMEXIT处理函数

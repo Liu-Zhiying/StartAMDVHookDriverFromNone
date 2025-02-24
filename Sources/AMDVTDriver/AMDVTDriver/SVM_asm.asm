@@ -1,7 +1,7 @@
 .code
 
 extern VmExitHandler : Proc
-extern FillKTrapFrame: Proc
+extern FillMachineFrame: Proc
 
 _mysgdt Proc
 	;执行存储寄存器数据只需要10个字节，这里方便一点
@@ -193,7 +193,10 @@ mov rax, rsp
 ;切换栈
 mov rsp, r9
 
-.endprolog
+;MACHINE_FRAME 结构，占用40字节
+sub rsp, 28h
+;多8字节好对齐到16字节
+sub rsp, 8h
 
 ;把原来的栈指针压到内存中
 ;多一个push是为了rsp对齐到16
@@ -242,6 +245,7 @@ vmload rax
 ;还原rax
 pop rax
 
+;为退出虚拟化分支预留的栈空间
 sub rsp, 20h
 
 ;备份guest寄存器
@@ -283,16 +287,37 @@ movaps xmmword ptr [rsp + 0C0h], xmm12
 movaps xmmword ptr [rsp + 0D0h], xmm13
 movaps xmmword ptr [rsp + 0E0h], xmm14
 movaps xmmword ptr [rsp + 0F0h], xmm15
+;从proc frame 到 .endprolog 的内容里面，rsp总共移动了0x220
+;其中 MACHINE_FRAME 占用 40 (0x28) 字节
+;然后是多余的8字节对齐字节
+;然后是两份call本函数切换rsp之前的旧rsp值 16 (0x10) 字节（搞两份是为了16字节对齐）
+;然后是四个参数的备份 32 (0x20) 字节
+;接着有一个临时rax备份，但是运行到这里已经出栈了，不算
+;接着 32 (0x20) 字节预留给本函数的退出分支做临时堆栈
+;接着 GenericRegisters 结构的寄存器备份 160 (0xA0) 字节
+;接着 XMM 寄存器 备份 256 (0x100) 字节
+;除去.pushframe 的 MACHINE_FRAME 占用的空间 其他的 全部计算为 .allocstack 的数值
 
-;调用函数初始化KTRAP_FRAME
-;trapFrame 参数
-;mov rcx, rsp
-;add rcx, 380h
+;接下来是一些个人对.pushframe .allocstack 这类指令的理解
+;windbg分析到 下面的call指令的返回地址之后 先加上 .allocstack 的 0x1f8 （跳过对这部分指令的处理），接着按照 .pushframe 读取 MACHINE_FRAME 结构
+;.pushframe .allocstack 不需要和汇编命令对应
+;windbg 只是倒过来挨个处理这些伪指令
+;所以影响 windbg 对调用栈还原的之后这些指令内容和顺序
+;和这些指令跟在哪些汇编指令之后没有任何关系
+;所以我把这些伪指令集中写在这里并且 .allocstack 的数字 是多步使用栈的和
+.pushframe
+.allocstack 1F8h
+.endprolog
+
+;调用函数初始化MACHINE_FRAME
+;machineFrame 参数
+mov rcx, rsp
+add rcx, 1F8h
 ;guestRegisters 参数
-;mov rdx, rsp
+mov rdx, rsp
 ;virtCpuInfo 参数
-;mov r8, [rsp + 1C0h]
-;call FillKTrapFrame
+mov r8, [rsp + 1C0h]
+call FillMachineFrame
 
 ;调用exit handler
 ;pVirtCpuInfo 参数
