@@ -294,8 +294,7 @@ movaps xmmword ptr [rsp + 0F0h], xmm15
 ;然后是四个参数的备份 32 (0x20) 字节
 ;接着有一个临时rax备份，但是运行到这里已经出栈了，不算
 ;接着 32 (0x20) 字节预留给本函数的退出分支做临时堆栈
-;接着 GenericRegisters 结构的寄存器备份 160 (0xA0) 字节
-;接着 XMM 寄存器 备份 256 (0x100) 字节
+;接着 GenericRegisters 结构的寄存器备份 416 (0x1A0) 字节
 ;除去.pushframe 的 MACHINE_FRAME 占用的空间 其他的 全部计算为 .allocstack 的数值
 
 ;接下来是一些个人对.pushframe .allocstack 这类指令的理解
