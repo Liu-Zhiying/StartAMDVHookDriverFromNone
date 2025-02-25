@@ -1,7 +1,82 @@
-.code
-
 extern VmExitHandler : Proc
 extern FillMachineFrame: Proc
+extern CompareGenericRegisters: Proc
+
+.code
+
+BACKUP_REGISTERS Macro baseAddrReg
+	movaps xmmword ptr [baseAddrReg + 000h], xmm0
+	movaps xmmword ptr [baseAddrReg + 010h], xmm1
+	movaps xmmword ptr [baseAddrReg + 020h], xmm2
+	movaps xmmword ptr [baseAddrReg + 030h], xmm3
+	movaps xmmword ptr [baseAddrReg + 040h], xmm4
+	movaps xmmword ptr [baseAddrReg + 050h], xmm5
+	movaps xmmword ptr [baseAddrReg + 060h], xmm6
+	movaps xmmword ptr [baseAddrReg + 070h], xmm7
+	movaps xmmword ptr [baseAddrReg + 080h], xmm8
+	movaps xmmword ptr [baseAddrReg + 090h], xmm9
+	movaps xmmword ptr [baseAddrReg + 0A0h], xmm10
+	movaps xmmword ptr [baseAddrReg + 0B0h], xmm11
+	movaps xmmword ptr [baseAddrReg + 0C0h], xmm12
+	movaps xmmword ptr [baseAddrReg + 0D0h], xmm13
+	movaps xmmword ptr [baseAddrReg + 0E0h], xmm14
+	movaps xmmword ptr [baseAddrReg + 0F0h], xmm15
+	mov [baseAddrReg + 100h], r15
+	mov [baseAddrReg + 108h], r14
+	mov [baseAddrReg + 110h], r13
+	mov [baseAddrReg + 118h], r12
+	mov [baseAddrReg + 120h], r11
+	mov [baseAddrReg + 128h], r10
+	mov [baseAddrReg + 130h], r9
+	mov [baseAddrReg + 138h], r8
+	mov [baseAddrReg + 140h], rbp
+	mov [baseAddrReg + 148h], rsi
+	mov [baseAddrReg + 150h], rdi
+	mov [baseAddrReg + 158h], rdx
+	mov [baseAddrReg + 160h], rcx
+	mov [baseAddrReg + 168h], rbx
+Endm
+
+RESTORE_REGISTERS Macro baseAddrReg
+	movaps xmm0, xmmword ptr [baseAddrReg + 000h]
+	movaps xmm1, xmmword ptr [baseAddrReg + 010h]
+	movaps xmm2, xmmword ptr [baseAddrReg + 020h]
+	movaps xmm3, xmmword ptr [baseAddrReg + 030h]
+	movaps xmm4, xmmword ptr [baseAddrReg + 040h]
+	movaps xmm5, xmmword ptr [baseAddrReg + 050h]
+	movaps xmm6, xmmword ptr [baseAddrReg + 060h]
+	movaps xmm7, xmmword ptr [baseAddrReg + 070h]
+	movaps xmm8, xmmword ptr [baseAddrReg + 080h]
+	movaps xmm9, xmmword ptr [baseAddrReg + 090h]
+	movaps xmm10, xmmword ptr [baseAddrReg + 0A0h]
+	movaps xmm11, xmmword ptr [baseAddrReg + 0B0h] 
+	movaps xmm12, xmmword ptr [baseAddrReg + 0C0h] 
+	movaps xmm13, xmmword ptr [baseAddrReg + 0D0h]
+	movaps xmm14, xmmword ptr [baseAddrReg + 0E0h]
+	movaps xmm15, xmmword ptr [baseAddrReg + 0F0h]
+	mov r15, [baseAddrReg + 100h]
+	mov r14, [baseAddrReg + 108h]
+	mov r13, [baseAddrReg + 110h]
+	mov r12, [baseAddrReg + 118h]
+	mov r11, [baseAddrReg + 120h]
+	mov r10, [baseAddrReg + 128h]
+	mov r9, [baseAddrReg + 130h] 
+	mov r8, [baseAddrReg + 138h]
+	mov rbp, [baseAddrReg + 140h]
+	mov rsi, [baseAddrReg + 148h] 
+	mov rdi, [baseAddrReg + 150h]
+	mov rdx, [baseAddrReg + 158h]
+	mov rcx, [baseAddrReg + 160h]
+	mov rbx, [baseAddrReg + 168h]
+Endm
+
+ALLOC_STACK_AND_CALL Macro functionName, stackSize
+
+sub rsp, stackSize
+call functionName
+add rsp, stackSize
+
+Endm
 
 _mysgdt Proc
 	;执行存储寄存器数据只需要10个字节，这里方便一点
@@ -76,37 +151,7 @@ _ss_selector Proc
 _ss_selector Endp
 
 _save_or_load_regs Proc	
-	movaps xmmword ptr [rcx + 000h], xmm0
-	movaps xmmword ptr [rcx + 010h], xmm1
-	movaps xmmword ptr [rcx + 020h], xmm2
-	movaps xmmword ptr [rcx + 030h], xmm3
-	movaps xmmword ptr [rcx + 040h], xmm4
-	movaps xmmword ptr [rcx + 050h], xmm5
-	movaps xmmword ptr [rcx + 060h], xmm6
-	movaps xmmword ptr [rcx + 070h], xmm7
-	movaps xmmword ptr [rcx + 080h], xmm8
-	movaps xmmword ptr [rcx + 090h], xmm9
-	movaps xmmword ptr [rcx + 0A0h], xmm10
-	movaps xmmword ptr [rcx + 0B0h], xmm11
-	movaps xmmword ptr [rcx + 0C0h], xmm12
-	movaps xmmword ptr [rcx + 0D0h], xmm13
-	movaps xmmword ptr [rcx + 0E0h], xmm14
-	movaps xmmword ptr [rcx + 0F0h], xmm15
-	mov [rcx + 100h], r15
-	mov [rcx + 108h], r14
-	mov [rcx + 110h], r13
-	mov [rcx + 118h], r12
-	mov [rcx + 120h], r11
-	mov [rcx + 128h], r10
-	mov [rcx + 130h], r9
-	mov [rcx + 138h], r8
-	mov [rcx + 140h], rbp
-	mov [rcx + 148h], rsi
-	mov [rcx + 150h], rdi
-	mov [rcx + 158h], rdx
-	mov [rcx + 160h], rcx
-	mov [rcx + 168h], rbx
-	mov [rcx + 170h], rax
+	BACKUP_REGISTERS rcx
 	
 	;取当前Rflags
 	pushfq
@@ -139,38 +184,11 @@ if_load_regs:
 	test rax, rax
 	jz return
 
-	movaps xmm0, xmmword ptr [rax + 000h]
-	movaps xmm1, xmmword ptr [rax + 010h]
-	movaps xmm2, xmmword ptr [rax + 020h]
-	movaps xmm3, xmmword ptr [rax + 030h]
-	movaps xmm4, xmmword ptr [rax + 040h]
-	movaps xmm5, xmmword ptr [rax + 050h]
-	movaps xmm6, xmmword ptr [rax + 060h]
-	movaps xmm7, xmmword ptr [rax + 070h]
-	movaps xmm8, xmmword ptr [rax + 080h]
-	movaps xmm9, xmmword ptr [rax + 090h]
-	movaps xmm10, xmmword ptr [rax + 0A0h]
-	movaps xmm11, xmmword ptr [rax + 0B0h] 
-	movaps xmm12, xmmword ptr [rax + 0C0h] 
-	movaps xmm13, xmmword ptr [rax + 0D0h]
-	movaps xmm14, xmmword ptr [rax + 0E0h]
-	movaps xmm15, xmmword ptr [rax + 0F0h]
-	mov r15, [rax + 100h]
-	mov r14, [rax + 108h]
-	mov r13, [rax + 110h]
-	mov r12, [rax + 118h]
-	mov r11, [rax + 120h]
-	mov r10, [rax + 128h]
-	mov r9, [rax + 130h] 
-	mov r8, [rax + 138h]
-	mov rbp, [rax + 140h]
-	mov rsi, [rax + 148h] 
-	mov rdi, [rax + 150h]
-	mov rdx, [rax + 158h]
-	mov rcx, [rax + 160h]
-	mov rbx, [rax + 168h]
+	RESTORE_REGISTERS rax
+
 	;rax 不还原
 	;mov rax, [rcx + 170h]
+
 	;还原rflags
 	push qword ptr [rcx + 178h]
 	popfq
@@ -213,19 +231,61 @@ push rdx
 ;pVirtCpuInfo 参数
 push rcx
 
+;从proc frame 到 .endprolog 的内容里面，rsp总共移动了0x60
+;其中 MACHINE_FRAME 占用 40 (0x28) 字节
+;然后是多余的 8(0x8) 字节 对齐字节
+;然后是两份call本函数切换rsp之前的旧rsp值 16 (0x10) 字节（搞两份是为了16字节对齐）
+;然后是四个参数的备份 32 (0x20) 字节
+;接着 32 (0x20) 字节预留给本函数的退出分支做临时堆栈
+;除去.pushframe 的 MACHINE_FRAME 占用的空间 其他的 全部计算为 .allocstack 的数值
+;接下来是一些个人对.pushframe .allocstack 这类指令的理解
+;windbg分析到 下面的call指令的返回地址之后 先加上 .allocstack 的 0x1f8 （跳过对这部分指令的处理），接着按照 .pushframe 读取 MACHINE_FRAME 结构
+;.pushframe .allocstack 不需要和汇编命令对应
+;windbg 只是倒过来挨个处理这些伪指令
+;所以影响 windbg 对调用栈还原的之后这些指令内容和顺序
+;和这些指令跟在哪些汇编指令之后没有任何关系
+;所以我把这些伪指令集中写在这里并且 .allocstack 的数字 是多步使用栈的和
+
+.pushframe
+.allocstack 38h
+.endprolog
+
 enter_guest:
+
 ;载入guest状态
 mov rax, [rsp + 8h]
 vmload rax
-;进入guest模式
-vmrun rax
 
-;备份rax
-push rax
+;为了调用寄存器检查函数备份寄存器
+push rcx
+push rdx
+
+;把当前寄存器数据载入pVirtCpuInfo->regsBackup.genericRegisters2
+mov rax, [rsp + 10h]
+add rax, 61A0h
+BACKUP_REGISTERS rax
+
+;CompareGenericRegisters 的两个参数
+;rcx = &pVirtCpuInfo->regsBackup.genericRegisters2
+;rdx = &pVirtCpuInfo->regsBackup.genericRegisters1
+mov rcx, rax
+mov rdx, rcx
+sub rdx, 1A0h
+
+;检查寄存器
+ALLOC_STACK_AND_CALL CompareGenericRegisters, 28h
+
+;调用完成，还原寄存器
+pop rdx
+pop rcx
+
+;进入guest模式
+mov rax, [rsp + 8h]
+vmrun rax
 
 ;检查exitcode是否是 VMEXIT_INVALID(-1) VMEXIT_BUSY(-2) VMEXIT_IDLE_REQUIRED(-3)
 ;如果是，转到return标号，这个标号会负责切换会原栈指针并返回，返回之后直接蓝屏（见EnterVirtualization中调用RunVM之后的代码）
-mov rax, [rsp + 8h]
+mov rax, [rsp]
 mov rax, [rax + 70h]
 cmp rax, -1
 je return
@@ -235,192 +295,85 @@ cmp rax, -3
 je return
 
 ;保存guest状态
-mov rax, [rsp + 10h]
+mov rax, [rsp + 8h]
 vmsave rax
 
 ;载入host状态
-mov rax, [rsp + 18h]
+mov rax, [rsp + 10h]
 vmload rax
 
-;还原rax
-pop rax
-
-;为退出虚拟化分支预留的栈空间
-sub rsp, 20h
-
+;载入pVirtCpuInfo->regsBackup.genericRegisters1的地址
+mov rax, [rsp]
+add rax, 6000h
 ;备份guest寄存器
-;rax在VMCB中有保存，这里不保存
-push 0
-push 0
-push 0
-push 0
-push 0
-push 0
-push rbx
-push rcx
-push rdx
-push rdi
-push rsi
-push rbp
-push r8
-push r9
-push r10
-push r11
-push r12
-push r13
-push r14
-push r15
-sub rsp, 100h
-movaps xmmword ptr [rsp + 000h], xmm0
-movaps xmmword ptr [rsp + 010h], xmm1
-movaps xmmword ptr [rsp + 020h], xmm2
-movaps xmmword ptr [rsp + 030h], xmm3
-movaps xmmword ptr [rsp + 040h], xmm4
-movaps xmmword ptr [rsp + 050h], xmm5
-movaps xmmword ptr [rsp + 060h], xmm6
-movaps xmmword ptr [rsp + 070h], xmm7
-movaps xmmword ptr [rsp + 080h], xmm8
-movaps xmmword ptr [rsp + 090h], xmm9
-movaps xmmword ptr [rsp + 0A0h], xmm10
-movaps xmmword ptr [rsp + 0B0h], xmm11
-movaps xmmword ptr [rsp + 0C0h], xmm12
-movaps xmmword ptr [rsp + 0D0h], xmm13
-movaps xmmword ptr [rsp + 0E0h], xmm14
-movaps xmmword ptr [rsp + 0F0h], xmm15
-;从proc frame 到 .endprolog 的内容里面，rsp总共移动了0x220
-;其中 MACHINE_FRAME 占用 40 (0x28) 字节
-;然后是多余的8字节对齐字节
-;然后是两份call本函数切换rsp之前的旧rsp值 16 (0x10) 字节（搞两份是为了16字节对齐）
-;然后是四个参数的备份 32 (0x20) 字节
-;接着有一个临时rax备份，但是运行到这里已经出栈了，不算
-;接着 32 (0x20) 字节预留给本函数的退出分支做临时堆栈
-;接着 GenericRegisters 结构的寄存器备份 416 (0x1A0) 字节
-;除去.pushframe 的 MACHINE_FRAME 占用的空间 其他的 全部计算为 .allocstack 的数值
+BACKUP_REGISTERS rax
 
-;接下来是一些个人对.pushframe .allocstack 这类指令的理解
-;windbg分析到 下面的call指令的返回地址之后 先加上 .allocstack 的 0x1f8 （跳过对这部分指令的处理），接着按照 .pushframe 读取 MACHINE_FRAME 结构
-;.pushframe .allocstack 不需要和汇编命令对应
-;windbg 只是倒过来挨个处理这些伪指令
-;所以影响 windbg 对调用栈还原的之后这些指令内容和顺序
-;和这些指令跟在哪些汇编指令之后没有任何关系
-;所以我把这些伪指令集中写在这里并且 .allocstack 的数字 是多步使用栈的和
-.pushframe
-.allocstack 1F8h
-.endprolog
 
-;调用函数初始化MACHINE_FRAME
 ;machineFrame 参数
 mov rcx, rsp
-add rcx, 1F8h
+add rcx, 38h
 ;guestRegisters 参数
-mov rdx, rsp
+mov rdx, [rsp]
+add rdx, 6000h
 ;virtCpuInfo 参数
-mov r8, [rsp + 1C0h]
-call FillMachineFrame
+mov r8, [rsp]
+;调用函数初始化MACHINE_FRAME
+ALLOC_STACK_AND_CALL FillMachineFrame, 28h
 
 ;调用exit handler
 ;pVirtCpuInfo 参数
-mov rcx, [rsp + 1C0h]
+mov rcx, [rsp]
 ;pGuestRegisters 参数
-mov rdx, rsp
+mov rdx, rcx
+add rdx, 6000h
 ;pGuestVmcbPhyAddr 参数
-mov r8, [rsp + 1C8h]
+mov r8, [rsp + 8h]
 ;pHostVmcbPhyAddr 参数
-mov r9, [rsp + 1D0h]
+mov r9, [rsp + 10h]
 
-call VmExitHandler
+;进入Handler处理函数
+ALLOC_STACK_AND_CALL VmExitHandler, 28h
+
+;载入pVirtCpuInfo->regsBackup.genericRegisters1的地址
+mov rax, [rsp]
+add rax, 6000h
 
 ;恢复guest寄存器
-movaps xmm0, xmmword ptr [rsp + 000h]
-movaps xmm1, xmmword ptr [rsp + 010h]
-movaps xmm2, xmmword ptr [rsp + 020h]
-movaps xmm3, xmmword ptr [rsp + 030h]
-movaps xmm4, xmmword ptr [rsp + 040h]
-movaps xmm5, xmmword ptr [rsp + 050h]
-movaps xmm6, xmmword ptr [rsp + 060h]
-movaps xmm7, xmmword ptr [rsp + 070h]
-movaps xmm8, xmmword ptr [rsp + 080h]
-movaps xmm9, xmmword ptr [rsp + 090h]
-movaps xmm10, xmmword ptr [rsp + 0A0h]
-movaps xmm11, xmmword ptr [rsp + 0B0h]
-movaps xmm12, xmmword ptr [rsp + 0C0h]
-movaps xmm13, xmmword ptr [rsp + 0D0h]
-movaps xmm14, xmmword ptr [rsp + 0E0h]
-movaps xmm15, xmmword ptr [rsp + 0F0h]
-add rsp, 100h
-pop r15
-pop r14
-pop r13
-pop r12
-pop r11
-pop r10
-pop r9
-pop r8
-pop rbp
-pop rsi
-pop rdi
-pop rdx
-pop rcx
-pop rbx
-add rsp, 30h
-
-;备份rax
-mov [rsp], rax
+RESTORE_REGISTERS rax
 
 ;判断是否已经退出虚拟化，需要跳转到guest的下一条指令
-mov rax, [rsp - 8h]
+mov rax, [rax + 190h]
 test rax, rax
+;如果这时候转到退出vmm的分支rax的值仍是&pVMMVirtCpuInfo->regsBackup.genericRegisters1
 jnz exit_virtualization
 
 ;保存host状态
-mov rax, [rsp + 30h]
+mov rax, [rsp + 10h]
 vmsave rax
-
-;还原rax
-mov rax, [rsp]
-
-add rsp, 20h
 
 ;调回去，执行vmrun再次进入guest
 jmp enter_guest
 
 return:
-;检查exitcode的时候push了rax，这里pop保持堆栈平衡
-pop rax
 ;载入原来的栈指针并返回
 mov rax, [rsp + 20h]
 mov rsp, rax
 ret
 
 exit_virtualization:
-;备份rbx
-mov [rsp + 8], rbx
-
-add rsp, 10h
-;获取guest的rsp指针
-mov rax, [rsp - 18h]
-;对guest 的 rsp 减去 20h 这里是把备份的rax rbx rflags 数据拷贝过去
-;已经填写guest返回地址，方便最后切换rsp之后连续push还原寄存器并用ret返回
-sub rax, 20h
-;拷贝guest返回地址
-
-mov rbx, [rsp - 20h]
-mov [rax + 18h], rbx
-;拷贝备份rax
-mov rbx, [rsp - 10h]
-mov [rax + 10h], rbx
-;拷贝备份rbx
-mov rbx, [rsp - 8h]
-mov [rax + 8h], rbx
-;拷贝人flags 
-mov rbx, [rsp - 38h]
-mov [rax], rbx
-;切换栈指针
-mov rsp, rax
-;还原寄存器并跳转到guest继续执行
+;切换到客户机栈
+mov rsp, [rax + 188h]
+;push 客户机nRip
+push [rax + 198h]
+;push 客户机rax
+push [rax + 170h]
+;push 客户机rflags
+push [rax + 178h]
+;还原rflags
 popfq
-pop rbx
+;还原rax
 pop rax
+;返回客户机nRip执行
 ret
 
 _run_svm_vmrun Endp

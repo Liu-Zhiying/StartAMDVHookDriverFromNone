@@ -151,6 +151,51 @@ UINT32 GetSegmentLimit2(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase)
 	return limit;
 }
 
+//检查寄存器
+#pragma code_seg()
+extern "C" void CompareGenericRegisters(const GenericRegisters& genericRegistersNow, GenericRegisters& genericRegistersPrev)
+{
+
+#define ASSERT_REGISTER_IS_EQUAL(regField) \
+	NT_ASSERT(!RtlCompareMemory(&genericRegistersNow.regField, &genericRegistersPrev.regField, sizeof(genericRegistersNow.regField)))
+
+	if (!KdDebuggerNotPresent)
+	{
+		ASSERT_REGISTER_IS_EQUAL(xmm0);
+		ASSERT_REGISTER_IS_EQUAL(xmm1);
+		ASSERT_REGISTER_IS_EQUAL(xmm2);
+		ASSERT_REGISTER_IS_EQUAL(xmm3);
+		ASSERT_REGISTER_IS_EQUAL(xmm4);
+		ASSERT_REGISTER_IS_EQUAL(xmm5);
+		ASSERT_REGISTER_IS_EQUAL(xmm6);
+		ASSERT_REGISTER_IS_EQUAL(xmm7);
+		ASSERT_REGISTER_IS_EQUAL(xmm8);
+		ASSERT_REGISTER_IS_EQUAL(xmm9);
+		ASSERT_REGISTER_IS_EQUAL(xmm10);
+		ASSERT_REGISTER_IS_EQUAL(xmm11);
+		ASSERT_REGISTER_IS_EQUAL(xmm12);
+		ASSERT_REGISTER_IS_EQUAL(xmm13);
+		ASSERT_REGISTER_IS_EQUAL(xmm14);
+		ASSERT_REGISTER_IS_EQUAL(xmm15);
+		ASSERT_REGISTER_IS_EQUAL(r15);
+		ASSERT_REGISTER_IS_EQUAL(r14);
+		ASSERT_REGISTER_IS_EQUAL(r13);
+		ASSERT_REGISTER_IS_EQUAL(r12);
+		ASSERT_REGISTER_IS_EQUAL(r11);
+		ASSERT_REGISTER_IS_EQUAL(r10);
+		ASSERT_REGISTER_IS_EQUAL(r9);
+		ASSERT_REGISTER_IS_EQUAL(r8);
+		ASSERT_REGISTER_IS_EQUAL(rbp);
+		ASSERT_REGISTER_IS_EQUAL(rsi);
+		ASSERT_REGISTER_IS_EQUAL(rdi);
+		ASSERT_REGISTER_IS_EQUAL(rdx);
+		ASSERT_REGISTER_IS_EQUAL(rcx);
+		ASSERT_REGISTER_IS_EQUAL(rbx);
+	}
+
+#undef ASSERT_REGISTER_IS_EQUAL
+}
+
 //初始化KTRAP_FRAME结构体
 #pragma code_seg()
 extern "C" void FillMachineFrame(MACHINE_FRAME& machineFrame, const GenericRegisters& guestRegistars, const VirtCpuInfo& virtCpuInfo)
@@ -196,7 +241,6 @@ extern "C" void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGues
 	pVirtCpuInfo->guestVmcb.statusFields.rip = pGuestRegisters->rip;
 	pVirtCpuInfo->guestVmcb.statusFields.rsp = pGuestRegisters->rsp;
 	pVirtCpuInfo->guestVmcb.statusFields.rax = pGuestRegisters->rax;
-	pVirtCpuInfo->guestVmcb.statusFields.rflags = pGuestRegisters->rflags;
 	pVirtCpuInfo->guestVmcb.statusFields.rflags = pGuestRegisters->rflags;
 }
 
@@ -665,11 +709,16 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 			{
 			case 0:
 			{
-				//设置退出虚拟化之后的指令寄存器和栈寄存器
-				pGuestRegisters->extraInfo1 = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
-				pGuestRegisters->extraInfo2 = pGuestRegisters->rsp;
+				//如果不是从内核模式调用退出则忽略
+				if (!(pVMMVirtCpuInfo->guestVmcb.controlFields.nRip & 0xffff000000000000))
+					return;
 
-				//设置RFlags到pGuestRegisters指向的结构体中（这一步在VmExitHandler全局函数中已经完成）
+				//通过
+				//设置pGuestRegisters->extraInfo1为&pVMMVirtCpuInfo->regsBackup.genericRegisters1 和 
+				//设置pGuestRegisters->extraInfo2为pVMMVirtCpuInfo->guestVmcb.controlFields.nRip
+				//告知_run_svm_vmrun退出vmm
+				pGuestRegisters->extraInfo1 = (UINT64)&pVMMVirtCpuInfo->regsBackup.genericRegisters1;
+				pGuestRegisters->extraInfo2 = (UINT64)pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
 
 				//在gif打开但是没有退出VMM这一段时间禁用中断
 				_disable();

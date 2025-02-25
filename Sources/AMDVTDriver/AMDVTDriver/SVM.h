@@ -57,15 +57,21 @@ struct VirtCpuInfo
 	DECLSPEC_ALIGN(PAGE_SIZE) VMCB guestVmcb;
 	DECLSPEC_ALIGN(PAGE_SIZE) VMCB hostVmcb;
 	DECLSPEC_ALIGN(PAGE_SIZE) UINT8 hostStatus[PAGE_SIZE];
-	DECLSPEC_ALIGN(PAGE_SIZE) UINT8 stack[KERNEL_STACK_SIZE];
-	DECLSPEC_ALIGN(PAGE_SIZE) struct
+	DECLSPEC_ALIGN(PAGE_SIZE) UINT8 stack[2 * PAGE_SIZE];
+	DECLSPEC_ALIGN(PAGE_SIZE) struct 
 	{
 		UINT32 isInVirtualizaion;
 		SVMManager* pSvmManager;
 		ULONG cpuIdx;
 		PVOID pNptPageTablePa;
 	} otherInfo;
+	DECLSPEC_ALIGN(PAGE_SIZE) struct
+	{
+		GenericRegisters genericRegisters1;
+		GenericRegisters genericRegisters2;
+	} regsBackup;
 };
+
 
 //MSRÀ¹½Ø²å¼þ
 class IMsrInterceptPlugin
