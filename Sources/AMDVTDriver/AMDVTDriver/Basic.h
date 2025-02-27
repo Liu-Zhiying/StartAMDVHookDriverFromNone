@@ -5,7 +5,7 @@
 #define WINDOWS_X64
 //控制内存分配函数的使用
 //具体见https://learn.microsoft.com/zh-cn/windows-hardware/drivers/ddi/wdm/nf-wdm-exallocatepoolwithtag
-#define _BUILD_WIN_2004
+//#define _BUILD_WIN_2004
 
 #ifndef _BUILD_WIN_2004
 #pragma warning(disable : 4996)

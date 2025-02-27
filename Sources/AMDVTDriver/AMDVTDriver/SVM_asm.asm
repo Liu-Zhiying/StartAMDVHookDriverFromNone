@@ -273,7 +273,7 @@ mov rdx, rcx
 sub rdx, 1A0h
 
 ;检查寄存器
-ALLOC_STACK_AND_CALL CompareGenericRegisters, 28h
+ALLOC_STACK_AND_CALL CompareGenericRegisters, 30h
 
 ;调用完成，还原寄存器
 pop rdx
@@ -318,7 +318,7 @@ add rdx, 6000h
 ;virtCpuInfo 参数
 mov r8, [rsp]
 ;调用函数初始化MACHINE_FRAME
-ALLOC_STACK_AND_CALL FillMachineFrame, 28h
+ALLOC_STACK_AND_CALL FillMachineFrame, 30h
 
 ;调用exit handler
 ;pVirtCpuInfo 参数
@@ -332,7 +332,7 @@ mov r8, [rsp + 8h]
 mov r9, [rsp + 10h]
 
 ;进入Handler处理函数
-ALLOC_STACK_AND_CALL VmExitHandler, 28h
+ALLOC_STACK_AND_CALL VmExitHandler, 30h
 
 ;载入pVirtCpuInfo->regsBackup.genericRegisters1的地址
 mov rax, [rsp]

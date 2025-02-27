@@ -71,42 +71,42 @@ void GlobalManager::HookApi()
 	RtlInitUnicodeString(&apiName, L"ExAllocatePoolWithTag");
 	PVOID apiVirtAddr1 = MmGetSystemRoutineAddress(&apiName);
 
-	KdPrint(("GlobalManager::HookApi(): ExAllocatePoolWithTag virtual address: %llx\n", (INT64)apiVirtAddr1));
-
 	if (apiVirtAddr1 == NULL)
-	{
 		KdPrint(("GlobalManager::HookApi(): ExAllocatePoolWithTag address not found!\n"));
-		return;
-	}
-
-	pFunctionCaller1 = (P_ExAllocatePoolWithTag)functionCallerManager.GetFunctionCaller(apiVirtAddr1);
+	else
+		KdPrint(("GlobalManager::HookApi(): ExAllocatePoolWithTag virtual address: %llx\n", (INT64)apiVirtAddr1));
 	
 	//获取ExAllocatePool2的虚拟地址
 	RtlInitUnicodeString(&apiName, L"ExAllocatePool2");
 	PVOID apiVirtAddr2 = MmGetSystemRoutineAddress(&apiName);
 
-	KdPrint(("GlobalManager::HookApi(): ExAllocatePool2 virtual address: %llx\n", (INT64)apiVirtAddr2));
-
 	if (apiVirtAddr2 == NULL)
-	{
 		KdPrint(("GlobalManager::HookApi(): ExAllocatePool2 address not found!\n"));
-		return;
-	}
-
-	pFunctionCaller2 = (P_ExAllocatePool2)functionCallerManager.GetFunctionCaller(apiVirtAddr2);
+	else
+		KdPrint(("GlobalManager::HookApi(): ExAllocatePool2 virtual address: %llx\n", (INT64)apiVirtAddr2));
 
 	//执行hook
 	NptHookRecord record = {};
 
-	record.pOriginVirtAddr = apiVirtAddr1;
-	record.pGotoVirtAddr = ExAllocatePoolWithTagHandler;
+	if (apiVirtAddr1 != NULL)
+	{
+		pFunctionCaller1 = (P_ExAllocatePoolWithTag)functionCallerManager.GetFunctionCaller(apiVirtAddr1);
 
-	nptHookManager.AddHook(record);
+		record.pOriginVirtAddr = apiVirtAddr1;
+		record.pGotoVirtAddr = ExAllocatePoolWithTagHandler;
 
-	record.pOriginVirtAddr = apiVirtAddr2;
-	record.pGotoVirtAddr = ExAllocatePool2Handler;
+		nptHookManager.AddHook(record);
+	}
 
-	nptHookManager.AddHook(record);
+	if (apiVirtAddr2 != NULL)
+	{
+		pFunctionCaller2 = (P_ExAllocatePool2)functionCallerManager.GetFunctionCaller(apiVirtAddr2);
+
+		record.pOriginVirtAddr = apiVirtAddr2;
+		record.pGotoVirtAddr = ExAllocatePool2Handler;
+
+		nptHookManager.AddHook(record);
+	}
 
 #if defined(TEST_NPT_HOOK_REMOVE)
 	nptHookManager.RemoveHook(apiVirtAddr1);
@@ -114,7 +114,7 @@ void GlobalManager::HookApi()
 #endif
 }
 #endif
-
+ 
 #if defined(TEST_MSR_HOOK)
 #pragma code_seg("PAGE")
 void GlobalManager::EnableMsrHook()

@@ -45,13 +45,13 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
     <PreBuildEventUseInBuild>false</PreBuildEventUseInBuild>
-    <IncludePath>D:\Data\CppCode\StartAMDVHookDriverFromNone\Sources\AMDVTDriver\AMDVTDriver\Librarys\include;$(IncludePath)</IncludePath>
-    <LibraryPath>D:\Data\CppCode\StartAMDVHookDriverFromNone\Sources\AMDVTDriver\AMDVTDriver\Librarys\lib;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(ProjectDir)Librarys\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(ProjectDir)Librarys\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
-    <IncludePath>D:\Data\CppCode\StartAMDVHookDriverFromNone\Sources\AMDVTDriver\AMDVTDriver\Librarys\include;$(IncludePath)</IncludePath>
-    <LibraryPath>D:\Data\CppCode\StartAMDVHookDriverFromNone\Sources\AMDVTDriver\AMDVTDriver\Librarys\lib;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(ProjectDir)Librarys\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(ProjectDir)Librarys\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <DriverSign>
