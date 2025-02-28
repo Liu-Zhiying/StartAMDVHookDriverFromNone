@@ -159,8 +159,6 @@ NTSTATUS GlobalManager::Init()
 		if (!NT_SUCCESS(status))
 			break;
 
-		
-
 #elif defined(TEST_MSR_HOOK)
 
 		SetMsrHookParameters();

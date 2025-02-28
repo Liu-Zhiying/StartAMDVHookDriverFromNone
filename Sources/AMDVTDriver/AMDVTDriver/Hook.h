@@ -891,9 +891,9 @@ public:
 	#pragma code_seg("PAGE")
 	NptHookManager() : cpuCnt(0) { PAGED_CODE(); }
 	//添加hook
-	NTSTATUS AddHook(const NptHookRecord& record, bool isInVirtualization);
+	NTSTATUS AddHook(const NptHookRecord& record, bool isInVirtualization = false);
 	//删除hook，pHookOriginVirtAddr是hook位置的虚拟地址
-	NTSTATUS RemoveHook(PVOID pHookOriginVirtAddr, bool isInVirtualization);
+	NTSTATUS RemoveHook(PVOID pHookOriginVirtAddr, bool isInVirtualization = false);
 	virtual NTSTATUS Init() override;
 	virtual void Deinit() override;
 	#pragma code_seg("PAGE")

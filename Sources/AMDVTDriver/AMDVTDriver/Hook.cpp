@@ -601,7 +601,7 @@ static NTSTATUS CallRemoveHookInSignleCoreInVirtualization(UINT32 cpuIdx, PVOID 
 }
 
 #pragma code_seg("PAGE")
-NTSTATUS NptHookManager::AddHook(const NptHookRecord& record, bool isInVirtualization = false)
+NTSTATUS NptHookManager::AddHook(const NptHookRecord& record, bool isInVirtualization)
 {
 	PAGED_CODE();
 
