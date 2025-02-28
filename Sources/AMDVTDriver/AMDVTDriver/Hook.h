@@ -858,7 +858,7 @@ public:
 	DEFAULT_NONPAGED_COPY_AND_MOVE_FUNCTION_FOR_CLASS(NptHookData)
 };
 
-class NptHookManager : public IManager, public IBreakprointInterceptPlugin, public INpfInterceptPlugin, public ICpuidInterceptPlugin
+class NptHookManager : public IManager, public IBreakprointInterceptPlugin, public INpfInterceptPlugin
 {
 	//CPU核心数
 	ULONG cpuCnt;
@@ -885,15 +885,12 @@ public:
 	//HOOK页表权限修改
 	virtual bool HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
-	//提供修改HOOK使用的必须功能
-	virtual bool HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
-		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
 	#pragma code_seg("PAGE")
 	NptHookManager() : cpuCnt(0) { PAGED_CODE(); }
 	//添加hook
-	NTSTATUS AddHook(const NptHookRecord& record, bool isInVirtualization = false);
+	NTSTATUS AddHook(const NptHookRecord& record);
 	//删除hook，pHookOriginVirtAddr是hook位置的虚拟地址
-	NTSTATUS RemoveHook(PVOID pHookOriginVirtAddr, bool isInVirtualization = false);
+	NTSTATUS RemoveHook(PVOID pHookOriginVirtAddr);
 	virtual NTSTATUS Init() override;
 	virtual void Deinit() override;
 	#pragma code_seg("PAGE")

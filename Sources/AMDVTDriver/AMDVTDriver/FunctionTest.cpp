@@ -153,11 +153,11 @@ NTSTATUS GlobalManager::Init()
 
 		nptHookManager.SetupSVMManager(svmManager);
 
-		HookApi();
-
 		status = svmManager.Init();
 		if (!NT_SUCCESS(status))
 			break;
+
+		HookApi();
 
 #elif defined(TEST_MSR_HOOK)
 
@@ -189,6 +189,7 @@ void GlobalManager::Deinit()
 	PAGED_CODE();
 
 #if defined(TEST_NPT_HOOK)
+
 	svmManager.Deinit();
 	nptHookManager.Deinit();
 	functionCallerManager.Deinit();

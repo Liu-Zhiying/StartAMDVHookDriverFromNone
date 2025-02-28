@@ -121,8 +121,6 @@ void NptHookManager::SetupSVMManager(SVMManager& svmManager)
 
 	//设置初始NPT页表
 	svmManager.SetNCr3Provider(&pageTableManager1);
-	//拦截CPUID
-	svmManager.SetCpuIdInterceptPlugin(this);
 	//拦截NFP
 	svmManager.SetNpfInterceptPlugin(this);
 	//拦截BP
@@ -254,37 +252,6 @@ bool NptHookManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGue
 	}
 
 	return result;
-}
-
-#pragma code_seg()
-bool NptHookManager::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
-{
-	UNREFERENCED_PARAMETER(pGuestVmcbPhyAddr);
-	UNREFERENCED_PARAMETER(pHostVmcbPhyAddr);
-
-	//eax为配置NPT HOOK的CPUID编号
-
-	switch (((int)pGuestRegisters->rax))
-	{
-	case NPT_HOOK_TOOL_CPUID_FUNCTION:
-	{
-		switch (((int)pGuestRegisters->rcx))
-		{
-		case ADD_NPT_HOOK_SUBFUNCTION:
-			pGuestRegisters->rdx = AddHookInSignleCore(*((NptHookRecord*)pGuestRegisters->rbx), pVirtCpuInfo->otherInfo.cpuIdx);
-			break;
-		case DEL_NPT_HOOK_CPUID_SUBFUNCTION:
-			pGuestRegisters->rdx = RemoveHookInSignleCore((PVOID)pGuestRegisters->rbx, pVirtCpuInfo->otherInfo.cpuIdx);
-			break;
-		default:
-			return false;
-		}
-		return true;
-	}
-	default:
-		break;
-	}
-	return false;
 }
 
 #pragma code_seg()
@@ -491,8 +458,6 @@ NTSTATUS NptHookManager::RemoveHookInSignleCore(PVOID pHookOriginVirtAddr, UINT3
 			break;
 		}
 
-		hookData[idx].hookRecords.Remove(hookIdx);
-
 		swapPageIdx = hookData[idx].FindSwapPageRefCntByOriginVirtAddr(pOriginPageVirtAddr);
 
 		if (swapPageIdx != INVALID_INDEX)
@@ -502,7 +467,7 @@ NTSTATUS NptHookManager::RemoveHookInSignleCore(PVOID pHookOriginVirtAddr, UINT3
 			swapPageVirtAddr = (UINT8*)record.pSwapVirtAddr;
 
 			//还原HOOK
-			swapPageVirtAddr[(PTR_TYPE)record.pOriginVirtAddr & 0xfff] = *((UINT8*)record.pOriginPhyAddr);
+			swapPageVirtAddr[(PTR_TYPE)record.pOriginVirtAddr & 0xfff] = *((UINT8*)record.pOriginVirtAddr);
 
 			if (!(--record.refCnt))
 			{
@@ -514,10 +479,6 @@ NTSTATUS NptHookManager::RemoveHookInSignleCore(PVOID pHookOriginVirtAddr, UINT3
 				//删除记录项
 				hookData[idx].swapPageRecord.Remove(swapPageIdx);
 			}
-		}
-		else
-		{
-			return STATUS_SUCCESS;
 		}
 
 		//获取交换页的物理地址
@@ -551,103 +512,43 @@ NTSTATUS NptHookManager::RemoveHookInSignleCore(PVOID pHookOriginVirtAddr, UINT3
 			}
 		}
 
+		hookData[idx].hookRecords.Remove(hookIdx);
+
 	} while (false);
 
 	return status;
 }
 
-#pragma code_seg()
-static NTSTATUS CallAddHookInSignleCoreInVirtualization(UINT32 cpuIdx, const NptHookRecord& record)
-{
-	KIRQL oldIrql = {};
-
-	KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
-
-	UNREFERENCED_PARAMETER(cpuIdx);
-
-	PTR_TYPE regs[4] = {};
-
-	regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
-	regs[1] = (PTR_TYPE)&record;
-	regs[2] = ADD_NPT_HOOK_SUBFUNCTION;
-	regs[3] = 0;
-
-	SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
-
-	KeLowerIrql(oldIrql);
-
-	return (NTSTATUS)regs[3];
-}
-
-#pragma code_seg()
-static NTSTATUS CallRemoveHookInSignleCoreInVirtualization(UINT32 cpuIdx, PVOID pOriginVirtAddr)
-{
-	KIRQL oldIrql = {};
-
-	KeRaiseIrql(DISPATCH_LEVEL, &oldIrql);
-
-	UNREFERENCED_PARAMETER(cpuIdx);
-
-	PTR_TYPE regs[4] = {};
-
-	regs[0] = NPT_HOOK_TOOL_CPUID_FUNCTION;
-	regs[1] = (PTR_TYPE)pOriginVirtAddr;
-	regs[2] = DEL_NPT_HOOK_CPUID_SUBFUNCTION;
-	regs[3] = 0;
-
-	SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
-
-	return (NTSTATUS)regs[3];
-}
-
 #pragma code_seg("PAGE")
-NTSTATUS NptHookManager::AddHook(const NptHookRecord& record, bool isInVirtualization)
+NTSTATUS NptHookManager::AddHook(const NptHookRecord& record)
 {
 	PAGED_CODE();
 
-	if (isInVirtualization)
-	{
-		NTSTATUS status = RunOnEachCore(0, KeQueryMaximumProcessorCountEx(ALL_PROCESSOR_GROUPS), CallAddHookInSignleCoreInVirtualization, record);
+	auto processor = [&record, this](UINT32 cpuIdx) -> NTSTATUS {
+		return AddHookInSignleCore(record, cpuIdx);
+	};
 
-		if (NT_SUCCESS(status)) return status;
+	auto rollbacker = [&record, this](UINT32 cpuIdx) -> NTSTATUS {
+		return RemoveHookInSignleCore(record.pOriginVirtAddr, cpuIdx);
+	};
 
-		return RunOnEachCore(0, KeQueryMaximumProcessorCountEx(ALL_PROCESSOR_GROUPS), CallRemoveHookInSignleCoreInVirtualization, record.pOriginVirtAddr);
-	}
-	else
-	{
-		auto processor = [&record, this](UINT32 cpuIdx) -> NTSTATUS {
-			return AddHookInSignleCore(record, cpuIdx);
-			};
+	NTSTATUS status = RunOnEachCore(0, KeQueryMaximumProcessorCountEx(ALL_PROCESSOR_GROUPS), processor);
 
-		auto rollbacker = [&record, this](UINT32 cpuIdx) -> NTSTATUS {
-			return RemoveHookInSignleCore(record.pOriginVirtAddr, cpuIdx);
-			};
+	if (NT_SUCCESS(status)) return status;
 
-		NTSTATUS status = RunOnEachCore(0, KeQueryMaximumProcessorCountEx(ALL_PROCESSOR_GROUPS), processor);
-
-		if (NT_SUCCESS(status)) return status;
-
-		return RunOnEachCore(0, KeQueryMaximumProcessorCountEx(ALL_PROCESSOR_GROUPS), rollbacker);
-	}
+	return RunOnEachCore(0, KeQueryMaximumProcessorCountEx(ALL_PROCESSOR_GROUPS), rollbacker);
 }
 
 #pragma code_seg("PAGE")
-NTSTATUS NptHookManager::RemoveHook(PVOID pHookOriginVirtAddr, bool isInVirtualization)
+NTSTATUS NptHookManager::RemoveHook(PVOID pHookOriginVirtAddr)
 {
 	PAGED_CODE();
 
-	if (isInVirtualization)
-	{
-		return RunOnEachCore(0, KeQueryMaximumProcessorCountEx(ALL_PROCESSOR_GROUPS), CallRemoveHookInSignleCoreInVirtualization, pHookOriginVirtAddr);
-	}
-	else
-	{
-		auto processor = [pHookOriginVirtAddr, this](UINT32 cpuIdx) -> NTSTATUS {
-			return RemoveHookInSignleCore(pHookOriginVirtAddr, cpuIdx);
-		};
+	auto processor = [pHookOriginVirtAddr, this](UINT32 cpuIdx) -> NTSTATUS {
+		return RemoveHookInSignleCore(pHookOriginVirtAddr, cpuIdx);
+	};
 
-		return RunOnEachCore(0, KeQueryMaximumProcessorCountEx(ALL_PROCESSOR_GROUPS), processor);
-	}
+	return RunOnEachCore(0, KeQueryMaximumProcessorCountEx(ALL_PROCESSOR_GROUPS), processor);
 }
 
 #pragma code_seg("PAGE")
