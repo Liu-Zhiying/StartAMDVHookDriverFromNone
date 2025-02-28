@@ -241,7 +241,10 @@ public:
 			cnt += bucket.Length();
 		}
 		if (pBucket == NULL)
+		{
+			__debugbreak();
 			KeBugCheck(MEMORY_MANAGEMENT);
+		}
 		return (*pBucket)[idx - cnt];
 	}
 	//通过索引获取条目（读写）
@@ -262,7 +265,10 @@ public:
 			cnt += bucket.Length();
 		}
 		if (pBucket == NULL)
+		{
+			__debugbreak();
 			KeBugCheck(MEMORY_MANAGEMENT);
+		}
 		return (*pBucket)[idx - cnt];
 	}
 	//通过物理地址删除条目
@@ -283,7 +289,9 @@ public:
 	}
 };
 
-using PageTableRecords = PageTableRecordBacket<0x20>;
+using PageTableRecords3 = PageTableRecordBacket<0x1>;
+using PageTableRecords2 = PageTableRecordBacket<0x10>;
+using PageTableRecords1 = PageTableRecordBacket<0x40>;
 
 class CoreNptPageTableManager;
 
@@ -294,14 +302,18 @@ public:
 	//页表条目设置器，这里这样写只是不好写lambda表达式，这个类就类似于一个lambda表达式
 	class EntrySetter
 	{
+		PageTableManager* pageTableManager;
 	public:
-		PageTableManager* pageTableManager1;
-		#pragma code_seg("PAGE")
-		EntrySetter(PageTableManager* pageTableManager1) : pageTableManager1(pageTableManager1) { PAGED_CODE(); ASSERT(pageTableManager1 != NULL); }
-
-		void operator()(PageTableLevel123Entry* pEntry, PTR_TYPE pfn, bool isLargePage) const {
+		#pragma code_seg()
+		EntrySetter(PageTableManager* _pageTableManager) : pageTableManager(_pageTableManager) { PAGED_CODE(); NT_ASSERT(pageTableManager != NULL); }
+		#pragma code_seg()
+		void operator()(PageTableLevel123Entry* pEntry, PTR_TYPE pfn, bool isLargePage, UINT32 level) const {
 			{
-				PageTableLevel123Entry permission = pageTableManager1->defaultPermission;
+				//level 为 1 2 3
+				NT_ASSERT(level < 4 && level > 0);
+
+				PageTableLevel123Entry permission = {};
+				permission.data = pageTableManager->GetDefaultPermission(level);
 
 				permission.fields.present = true;
 				permission.fields.size = isLargePage;
@@ -310,13 +322,16 @@ public:
 				*pEntry = permission;
 			}
 		}
-
-		void operator()(PageTableLevel4Entry* pEntry, PTR_TYPE pfn, bool isLargePage) const {
+		#pragma code_seg()
+		void operator()(PageTableLevel4Entry* pEntry, PTR_TYPE pfn, bool isLargePage, UINT32 level) const {
 			{
 				UNREFERENCED_PARAMETER(isLargePage);
 
+				//level 为 4
+				NT_ASSERT(level == 4);
+
 				PageTableLevel4Entry permission = {};
-				permission.data = pageTableManager1->defaultPermission.data;
+				permission.data = pageTableManager->GetDefaultPermission(level);
 				permission.fields.ignored2 = 0;
 
 				permission.fields.present = true;
@@ -330,7 +345,10 @@ private:
 	PTR_TYPE pSystemPxe;
 	CoreNptPageTableManager* corePageTables;
 	SIZE_TYPE pageTableCnt;
-	PageTableLevel123Entry defaultPermission;
+	PageTableLevel4Entry defaultPermissionLeve4;
+	PageTableLevel123Entry defaultPermissionLevel3;
+	PageTableLevel123Entry defaultPermissionLevel2;
+	PageTableLevel123Entry defaultPermissionLevel1;
 	EntrySetter entrySetter;
 public:
 	#pragma code_seg("PAGE")
@@ -339,12 +357,18 @@ public:
 		PAGED_CODE();
 
 		//设置默认权限
-		defaultPermission = {};
-		defaultPermission.fields.writeable = true;
-		defaultPermission.fields.userAccess = true;
+		defaultPermissionLevel3 = {};
+		defaultPermissionLevel3.fields.writeable = true;
+		defaultPermissionLevel3.fields.userAccess = true;
+
+		defaultPermissionLevel1 = defaultPermissionLevel2 = defaultPermissionLevel3;
+
+		defaultPermissionLeve4 = {};
+		defaultPermissionLeve4.fields.writeable = true;
+		defaultPermissionLeve4.fields.userAccess = true;
 	}
-	#pragma code_seg("PAGE")
-	void SetDefaultPermission(PageTableLevel123Entry permission) { defaultPermission = permission; }
+	void SetDefaultPermission(UINT64 permission, UINT32 level);
+	UINT64 GetDefaultPermission(UINT32 level) const;
 	virtual bool HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
 	virtual PVOID GetNCr3ForCore(UINT32 cpuIdx) override;
@@ -354,7 +378,7 @@ public:
 	CoreNptPageTableManager* GetCoreNptPageTables() { return corePageTables; }
 	SIZE_TYPE GetCoreNptPageTablesCnt() const { return pageTableCnt; }
 	#pragma code_seg("PAGE")
-	virtual ~PageTableManager() { Deinit(); }
+	virtual ~PageTableManager() { PAGED_CODE(); Deinit(); }
 };
 
 
@@ -363,20 +387,20 @@ public:
 //每个核心的NPT页表管理器
 class CoreNptPageTableManager
 {
-	PTR_TYPE pNptPageTable;
-	PageTableRecords level3Records;
-	PageTableRecords level2Records;
-	PageTableRecords level1Records;
+	//顶层页表的物理地址
+	PTR_TYPE pNptPageTableVa;
+	//顶层页表的虚拟地址
+	PTR_TYPE pNptPageTablePa;
+	PageTableRecords3 level3Records;
+	PageTableRecords2 level2Records;
+	PageTableRecords1 level1Records;
 	PageTableManager::EntrySetter* pEntrySetter;
-
-	//level代表页表的级数
-	PVOID FindPageTableForByAddr(PTR_TYPE pa, UINT32 level) const;
 
 public:
 	//删除默认构造
 	CoreNptPageTableManager() = delete;
 	//使用PageTableManager::EntrySetter构造，PageTableManager::EntrySetter决定构造页表的默认权限
-	CoreNptPageTableManager(PageTableManager::EntrySetter* _pEntrySetter) : pNptPageTable(INVALID_ADDR), pEntrySetter(_pEntrySetter) {}
+	CoreNptPageTableManager(PageTableManager::EntrySetter* _pEntrySetter) : pNptPageTableVa(INVALID_ADDR), pEntrySetter(_pEntrySetter), pNptPageTablePa(INVALID_ADDR) {}
 	//移动构造
 	#pragma code_seg()
 	CoreNptPageTableManager(CoreNptPageTableManager&& other)
@@ -390,16 +414,16 @@ public:
 		if (&other != this)
 		{
 			pEntrySetter = other.pEntrySetter;
-			pNptPageTable = other.pNptPageTable;
-			level3Records = static_cast<PageTableRecords&&>(other.level3Records);
-			level2Records = static_cast<PageTableRecords&&>(other.level2Records);
-			level1Records = static_cast<PageTableRecords&&>(other.level1Records);
-			other.pNptPageTable = INVALID_ADDR;
+			pNptPageTableVa = other.pNptPageTableVa;
+			level3Records = static_cast<PageTableRecords3&&>(other.level3Records);
+			level2Records = static_cast<PageTableRecords2&&>(other.level2Records);
+			level1Records = static_cast<PageTableRecords1&&>(other.level1Records);
+			other.pNptPageTableVa = INVALID_ADDR;
 		}
 		return *this;
 	}
 	#pragma code_seg("PAGE")
-	~CoreNptPageTableManager() { Deinit(); }
+	~CoreNptPageTableManager() { PAGED_CODE(); Deinit(); }
 	//映射缺页函数
 	NTSTATUS FixPageFault(PTR_TYPE startAddr, PTR_TYPE endAddr, bool usingLargePage);
 	//isUsing 为 false 代表还原大页
@@ -407,17 +431,20 @@ public:
 	//小页映射函数，等同于FixPageFault(begPhyAddr, endPhyAddr, false)
 	NTSTATUS MapSmallPageByPhyAddr(PTR_TYPE begPhyAddr, PTR_TYPE endPhyAddr);
 	//交换小页的最终物理地址
-	NTSTATUS SwapSmallPagePpn(PTR_TYPE phyAddr1, PTR_TYPE phyAddr2);
+	NTSTATUS SwapSmallPagePpn(PTR_TYPE phyAddr1, PTR_TYPE phyAddr2, UINT32 level);
 	//获取指定虚拟地址对应的NPT页表的最终PPN对应的物理地址
 	NTSTATUS GetNptFinalAddrForPhyAddr(PTR_TYPE phyAddr, PTR_TYPE& pNptFinalAddr, PTR_TYPE& level);
 	//修改所有最底层页表的权限
 	void ChangeAllEndLevelPageTablePermession(PageTableLevel123Entry entry);
 	//修改特定页表的值
-	NTSTATUS ChangePageTablePermession(PTR_TYPE pa, PageTableLevel123Entry entry, UINT32 level);
+	NTSTATUS ChangePageTableEntryPermession(PTR_TYPE pa, PageTableLevel123Entry entry, UINT32 level);
 	void Deinit();
 	NTSTATUS BuildNptPageTable();
 	#pragma code_seg()
-	PTR_TYPE GetNptPageTable() const { return pNptPageTable; }
+	PTR_TYPE GetNptPageTableVa() const { return pNptPageTableVa; }
+	PTR_TYPE GetNptPageTablePa() const { return pNptPageTablePa; }
+	//通过物理地址也页表级速寻找页表项虚拟地址
+	PVOID FindPageTableByPhyAddr(PTR_TYPE pa, UINT32 level) const;
 };
 
 //查询当前CR3（顶层页表）的虚拟地址

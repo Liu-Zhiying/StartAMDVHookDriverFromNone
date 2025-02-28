@@ -88,6 +88,9 @@ void GlobalManager::HookApi()
 	//执行hook
 	NptHookRecord record = {};
 
+	//请在进入SVM之前或者卸载SVM之后修改HOOK
+	//在SVM运行时修改HOOK 有非常大概率 出现DPC 超时
+
 	if (apiVirtAddr1 != NULL)
 	{
 		pFunctionCaller1 = (P_ExAllocatePoolWithTag)functionCallerManager.GetFunctionCaller(apiVirtAddr1);
@@ -96,6 +99,8 @@ void GlobalManager::HookApi()
 		record.pGotoVirtAddr = ExAllocatePoolWithTagHandler;
 
 		nptHookManager.AddHook(record);
+
+		KdPrint(("Hook ExAllocatePoolWithTag OK!\n"));
 	}
 
 	if (apiVirtAddr2 != NULL)
@@ -106,8 +111,10 @@ void GlobalManager::HookApi()
 		record.pGotoVirtAddr = ExAllocatePool2Handler;
 
 		nptHookManager.AddHook(record);
-	}
 
+		KdPrint(("Hook ExAllocatePool2 OK!\n"));
+	}
+	
 #if defined(TEST_NPT_HOOK_REMOVE)
 	nptHookManager.RemoveHook(apiVirtAddr1);
 	nptHookManager.RemoveHook(apiVirtAddr2);
@@ -140,17 +147,19 @@ NTSTATUS GlobalManager::Init()
 		if (!NT_SUCCESS(status))
 			break;
 
+		status = functionCallerManager.Init();
+		if (!NT_SUCCESS(status))
+			break;
+
 		nptHookManager.SetupSVMManager(svmManager);
+
+		HookApi();
 
 		status = svmManager.Init();
 		if (!NT_SUCCESS(status))
 			break;
 
-		status = functionCallerManager.Init();
-		if (!NT_SUCCESS(status))
-			break;
-
-		HookApi();
+		
 
 #elif defined(TEST_MSR_HOOK)
 

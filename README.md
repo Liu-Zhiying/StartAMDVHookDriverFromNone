@@ -10,7 +10,7 @@ VT NPT HOOK 完成
 1. ~~Wow64程序在VT加载时会崩溃~~
 2. ~~NPT页表和N卡驱动不兼容~~  
 3. ~~系统运行部分程序（例如QQ NT）缓慢卡死，运行大量程序时蓝屏~~
-4. 在 Release 模式 或者 使用 ExAllocatePoolWithTag 时会DPC超时
+4. ~~在 Release 模式 或者 使用 ExAllocatePoolWithTag 时会DPC超时~~ (请在SVM虚拟化之前或者卸载之后重新修改HOOK)
 ## 下一步计划
 尝试修复已知问题  
 ~~windbg在VMM崩溃时可以查看到客户机调用堆栈~~

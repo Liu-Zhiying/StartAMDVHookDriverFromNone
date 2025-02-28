@@ -14,29 +14,8 @@ constexpr UINT32 WRITE_MSR_CPUID_SUBFUNCTION = 0x00000001;
 constexpr UINT32 GET_CPU_IDX_CPUID_SUBFUNCTION = 0x00000002;
 //配置NPT HOOK参数的CPUID的Function
 constexpr UINT32 NPT_HOOK_TOOL_CPUID_FUNCTION = 0x400000fd;
-constexpr UINT32 CHANGE_PAGE_SIZE_CPUID_SUBFUNCTION = 0x00000000;
-constexpr UINT32 COPY_MEMORY_CPUID_SUBFUNCTION = 0x00000001;
-constexpr UINT32 GET_PHYSICAL_ADDRESS_SUBFUNCTION = 0x00000002;
-constexpr UINT32 CHANGE_PAGE_TABLE_PERMISSION_CPUID_SUBFUNCTION = 0x00000003;
-constexpr UINT32 SWAP_SMALL_PAGE_PPN_CPUID_SUBFUNCTION = 0x00000004;
-constexpr UINT32 ADD_HOOK_ITEM_CPUID_SUBFUNCTION = 0x00000005;
-constexpr UINT32 REMOVE_HOOK_ITEM_CPUID_SUBFUNCTION = 0x00000006;
-constexpr UINT32 ADD_LEVEL3_REF_ITEM_CPUID_SUBFUNCTION = 0x00000007;
-constexpr UINT32 REMOVE_LEVEL3_REF_ITEM_CPUID_SUBFUNCTION = 0x00000008;
-constexpr UINT32 ADD_SWAPPAGE_REF_CNT_CPUID_SUBFUNCTION = 0x00000009;
-constexpr UINT32 REMOVE_SWAPPAGE_REF_CNT_CPUID_SUBFUNCTION = 0x0000000A;
-constexpr UINT32 ALLOC_NONPAGED_EXECUTEABLE_MEMORY_CPUID_SUBFUNCTION = 0x0000000B;
-constexpr UINT32 FREE_NONPAGED_EXECUTEABLE_MEMORY_CPUID_SUBFUNCTION = 0x0000000C;
-constexpr UINT32 OPERATE_REF_COUNT_CPUID_SUBFUNCTION = 0x0000000D;
-constexpr UINT32 COPY_SWAPPAGE_REF_CNT_CPUID_SUBFUNCTION = 0x0000000E;
-constexpr UINT32 COPY_LEVEL3_REF_ITEM_CPUID_SUBFUNCTION = 0x0000000F;
-constexpr UINT32 COPY_HOOKRECORD_CPUID_SUBFUNCTION = 0x00000010;
-constexpr UINT32 COPY_SHARED_DATA_CPUID_SUBFUNCTION = 0x00000011;
-constexpr UINT32 DESTROY_SHARED_DATA_COPY_CPUID_SUBFUNCTION = 0x00000012;
-constexpr UINT32 RESTORE_CR3_CPUID_SUBFUNCTION = 0x00000013;
-constexpr UINT32 ALLOC_NONPAGED_MEMORY_CPUID_SUBFUNCTION = 0x00000014;
-constexpr UINT32 FREE_NONPAGED_MEMORY_CPUID_SUBFUNCTION = 0x00000015;
-constexpr UINT32 SEARCH_SHARED_DATA_CPUID_SUBFUNCTION = 0x00000016;
+constexpr UINT32 ADD_NPT_HOOK_SUBFUNCTION = 0x00000000;
+constexpr UINT32 DEL_NPT_HOOK_CPUID_SUBFUNCTION = 0x00000001;
 
 constexpr UINT32 HOOK_TAG = MAKE_TAG('h', 'o', 'o', 'k');
 
@@ -59,73 +38,6 @@ struct MsrHookParameter
 	PTR_TYPE* pGuestRealValues;
 	//Host Real value 值数组的指针，索引是核心索引，如果MSR是Virtualized MSR，此值为NULL
 	PTR_TYPE* pHostRealValues;
-};
-
-enum PageTableType
-{
-	ExternalPageTable,
-	InternalPageTable
-};
-//COPY_MEMORY_CPUID_SUBFUNCTION 
-struct MemoryCopyInfo
-{
-	PVOID pSource;
-	PVOID pDestination;
-	SIZE_TYPE Length;
-};
-//CHANGE_PAGE_SIZE_CPUID_SUBFUNCTION
-struct ChangePageSizeInfo
-{
-	PTR_TYPE pLevel3PhyAddr;
-	ULONG cpuIdx;
-	PageTableType type;
-	bool beLarge;
-};
-//CHANGE_PAGE_TABLE_PERMISSION_CPUID_SUBFUNCTION
-struct ChangePageTablePermissionInfo
-{
-	PageTableLevel123Entry permission;
-	PTR_TYPE physicalAddress;
-	PageTableType type;
-	ULONG cpuIdx;
-	UINT32 level;
-};
-//SWAP_SMALL_PAGE_PPN_CPUID_SUBFUNCTION
-struct SwapSmallPagePpnInfo
-{
-	PTR_TYPE physicalAddress1;
-	PTR_TYPE physicalAddress2;
-	PageTableType type;
-	ULONG cpuIdx;
-};
-
-class NptHookSharedData;
-
-//SEARCH_SHARED_DATA_CPUID_SUBFUNCTION
-struct SearchSharedDataInfo
-{
-	SIZE_TYPE(NptHookSharedData::* pSearchFuncton)(PTR_TYPE) const;
-	PTR_TYPE param;
-};
-
-//三个enum和OperateRefCountInfo struct 都是  OPERATE_REF_COUNT_CPUID_SUBFUNCTION 的参数
-enum RefCountOperationType
-{
-	IncrementCount,
-	DecrementCount
-};
-
-enum RefCountOperationObjectType
-{
-	SwapPageRefCntObject,
-	Level3RefObject
-};
-
-struct OperateRefCountInfo
-{
-	SIZE_TYPE idx;
-	RefCountOperationType operationType;
-	RefCountOperationObjectType objectType;
 };
 
 //无效MSR编号常量
@@ -550,10 +462,17 @@ inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo,
 				*pOptParam->pValueInOut = pVirtCpuInfo->guestVmcb.statusFields.sysenterEip;
 				break;
 			default:
+				//如果是登录hook的msr，则从guest msr记录里面取出
 				if (pHookParameter != NULL)
+				{
 					*pOptParam->pValueInOut = pHookParameter->pGuestRealValues[pVirtCpuInfo->otherInfo.cpuIdx];
+				}
+				//如果MSR编号没有登记HOOK，直接蓝屏
 				else
+				{
+					__debugbreak();
 					KeBugCheck(MANUALLY_INITIATED_CRASH);
+				}
 				break;
 			}
 
@@ -624,10 +543,17 @@ inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo,
 				pVirtCpuInfo->guestVmcb.statusFields.sysenterEip = *pOptParam->pValueInOut;
 				break;
 			default:
+				//如果是登录hook的msr，则写入guest msr记录里面，在vmm返回时生效
 				if (pHookParameter != NULL)
+				{
 					pHookParameter->pGuestRealValues[pVirtCpuInfo->otherInfo.cpuIdx] = *pOptParam->pValueInOut;
+				}
+				//如果MSR编号没有登记HOOK，直接蓝屏
 				else
+				{
+					__debugbreak();
 					KeBugCheck(MANUALLY_INITIATED_CRASH);
+				}
 				break;
 			}
 
@@ -844,29 +770,34 @@ void DisableLStrHook(MsrHookManager<msrCnt>* pMsrHookManager)
 }
 
 //页表Level3改小页的记录项，如果计数为0，则可以恢复大页
-struct SmallPageLevel2RefCnt
+struct SmallPageRecord
 {
 	//包含level 1 2 3偏移的的物理地址
 	PTR_TYPE level3PhyAddr;
-	SIZE_TYPE refCnt;
+	PTR_TYPE refCnt;
 	#pragma code_seg()
-	SmallPageLevel2RefCnt() : level3PhyAddr(INVALID_ADDR), refCnt(0) {}
+	SmallPageRecord() : level3PhyAddr(INVALID_ADDR), refCnt(0) {}
 
-	DEFAULT_NONPAGED_COPY_AND_MOVE_FUNCTION_FOR_CLASS(SmallPageLevel2RefCnt)
+	DEFAULT_NONPAGED_COPY_AND_MOVE_FUNCTION_FOR_CLASS(SmallPageRecord)
 };
 
 //交换页的记录
-struct SwapPageRefCnt
+struct SwapPageRecord
 {
 	//原始页面的虚拟地址
 	PVOID pOriginVirtAddr;
+	//原始页面的物理地址，添加这个字段是为了加速NPF的处理
+	PTR_TYPE pOriginPhyAddr;
 	//替换页面的虚拟地址
 	PVOID pSwapVirtAddr;
-	SIZE_TYPE refCnt;
+	//替换页面的物理地址
+	PTR_TYPE pSwapPhyAddr;
+	//使用计数
+	PTR_TYPE refCnt = 0;
 	#pragma code_seg()
-	SwapPageRefCnt() : pOriginVirtAddr(NULL), pSwapVirtAddr(NULL), refCnt(0) {}
+	SwapPageRecord() : pOriginVirtAddr(NULL), pOriginPhyAddr(INVALID_ADDR), pSwapVirtAddr(NULL), pSwapPhyAddr(INVALID_ADDR), refCnt(0) {}
 
-	DEFAULT_NONPAGED_COPY_AND_MOVE_FUNCTION_FOR_CLASS(SwapPageRefCnt)
+	DEFAULT_NONPAGED_COPY_AND_MOVE_FUNCTION_FOR_CLASS(SwapPageRecord)
 };
 
 //hook条目记录
@@ -882,31 +813,8 @@ struct NptHookRecord
 	DEFAULT_NONPAGED_COPY_AND_MOVE_FUNCTION_FOR_CLASS(NptHookRecord)
 };
 
-//NPT HOOK 核心间共享的数据，主要是HOOK记录、小页记录、交换页记录
-class NptHookSharedData
-{
-public:
-	KernelVector<SmallPageLevel2RefCnt, HOOK_TAG> level3Refs;
-	KernelVector<SwapPageRefCnt, HOOK_TAG> swapPageRefs;
-	KernelVector<NptHookRecord, HOOK_TAG> hookRecords;
-
-	//通过hook的原始虚拟地址查找记录（HookRecord）
-	SIZE_TYPE FindHookRecordByOriginVirtAddr(PTR_TYPE pOriginAddr) const;
-	//通过物理地址（只带有Level 4 3 2三级偏移）查找小页记录（SmallPageLevel3RefCnt）
-	SIZE_TYPE FindSmallPageLevel2RefCntByPhyAddr(PTR_TYPE phyAddr) const;
-	//通过hook源物理地址查找交换页记录（SwapPageRefCnt）
-	SIZE_TYPE FindSwapPageRefCntByOriginPhyAddr(PTR_TYPE phyAddr) const;
-	//通过hook源虚拟地址查找交换页记录（SwapPageRefCnt）
-	SIZE_TYPE FindSwapPageRefCntByOriginVirtAddr(PTR_TYPE pOriginAddr) const;
-
-	NptHookSharedData() = default;
-	~NptHookSharedData() = default;
-
-	DEFAULT_NONPAGED_COPY_AND_MOVE_FUNCTION_FOR_CLASS(NptHookSharedData)
-};
-
 //每个核心的NPT HOOK状态
-struct CoreNptHookStatus
+struct NptHookStatus
 {
 	enum PremissionStatus
 	{
@@ -919,11 +827,35 @@ struct CoreNptHookStatus
 
 	//核心间共享的数据会有两份，一份在NptHookManager中，另一份则由这个指针指向
 	//修改HOOK时，先更新NptHookManager中的数据，再拷贝一份NptHookManager中，并将拷贝的指针更新到这个指针中，最后销毁这个指针旧值指向的数据
-
-	const NptHookSharedData* pSharedData;
 public:
-	#pragma code_seg()
-	CoreNptHookStatus() : premissionStatus(HookPageNotExecuted), pLastActiveHookPageVirtAddr(NULL), pSharedData(NULL) {}
+#pragma code_seg()
+	NptHookStatus() : premissionStatus(HookPageNotExecuted), pLastActiveHookPageVirtAddr(NULL) {}
+};
+
+//NPT HOOK 核心间共享的数据，主要是HOOK记录、小页记录、交换页记录
+class NptHookData
+{
+public:
+	KernelVector<SmallPageRecord, HOOK_TAG> smallPageRecord;
+	KernelVector<SwapPageRecord, HOOK_TAG> swapPageRecord;
+	KernelVector<NptHookRecord, HOOK_TAG> hookRecords;
+	NptHookStatus hookStatus;
+
+	//通过hook的原始虚拟地址查找记录（HookRecord）
+	SIZE_TYPE FindHookRecordByOriginVirtAddr(PTR_TYPE pOriginAddr) const;
+	//通过物理地址（只带有Level 4 3 2三级偏移）查找小页记录（SmallPageLevel3RefCnt）
+	SIZE_TYPE FindSmallPageLevel2RefCntByPhyAddr(PTR_TYPE phyAddr) const;
+	//通过hook源物理地址查找交换页记录（SwapPageRefCnt）
+	SIZE_TYPE FindSwapPageRefCntByOriginPhyAddr(PTR_TYPE phyAddr) const;
+	//通过hook源虚拟地址查找交换页记录（SwapPageRefCnt）
+	SIZE_TYPE FindSwapPageRefCntByOriginVirtAddr(PTR_TYPE pOriginAddr) const;
+	//通过交换页的虚拟地址查找交换记录（SwapPageRefCnt）
+	SIZE_TYPE FindSwapPageRefCntBySwapVirtAddr(PTR_TYPE pSwapAddr) const;
+
+	NptHookData() = default;
+	~NptHookData() = default;
+
+	DEFAULT_NONPAGED_COPY_AND_MOVE_FUNCTION_FOR_CLASS(NptHookData)
 };
 
 class NptHookManager : public IManager, public IBreakprointInterceptPlugin, public INpfInterceptPlugin, public ICpuidInterceptPlugin
@@ -931,33 +863,21 @@ class NptHookManager : public IManager, public IBreakprointInterceptPlugin, publ
 	//CPU核心数
 	ULONG cpuCnt;
 	//核心间共享数据
-	NptHookSharedData sharedData;
-	//核心间共享数据拷贝的指针
-	NptHookSharedData* pSharedDataCopy;
-	//每个核心的NPT HOOK状态
-	CoreNptHookStatus* pCoreNptHookStatus;
+	KernelVector<NptHookData, HOOK_TAG> hookData;
 	//外部页表管理器的指针
 	PageTableManager pageTableManager1;
 	//内部页表管理器，每个核心在内部页表和外部页表之间切换，加快NPT HOOK的速度
 	PageTableManager pageTableManager2;
 
-	//使用大页映射和使用小页映射切换
-	NTSTATUS ChangeLargePageToSmallPage(PTR_TYPE pOriginLevel3PhyAddr, PageTableType type);
-	NTSTATUS ChangeSmallPageToLargePage(PTR_TYPE pOriginLevel3PhyAddr, PageTableType type);
-	//修改页表的权限
-	NTSTATUS ChangePageTablePermission(PTR_TYPE physicalAddress, PageTableLevel123Entry permission, PageTableType type, UINT32 level);
-	//交换小页的PPN
-	NTSTATUS SwapSmallPagePpn(PTR_TYPE physicalAddrees1, PTR_TYPE physicalAddress2, PageTableType type);
-	//取消hook对页表的操作
-	NTSTATUS CancelHookOperation(const SwapPageRefCnt& swapPageInfo);
-	//同步共享数据
-	void SyncSharedData();
+	//添加hook
+	NTSTATUS AddHookInSignleCore(const NptHookRecord& record, UINT32 idx);
+	//删除hook，pHookOriginVirtAddr是hook位置的虚拟地址
+	NTSTATUS RemoveHookInSignleCore(PVOID pHookOriginVirtAddr, UINT32 idx);
 
-	//上面的成员函数的核心功能都通过CPUID交由VMM处理
+	friend class GlobalManager;
 
 public:
 	//配置SVMManager
-	#pragma code_seg("PAGE")
 	void SetupSVMManager(SVMManager& svmManager);
 	//HOOK 跳转
 	virtual bool HandleBreakpoint(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
@@ -969,11 +889,11 @@ public:
 	virtual bool HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
 	#pragma code_seg("PAGE")
-	NptHookManager() : pSharedDataCopy(NULL), pCoreNptHookStatus(NULL), cpuCnt(0) { PAGED_CODE(); }
+	NptHookManager() : cpuCnt(0) { PAGED_CODE(); }
 	//添加hook
-	NTSTATUS AddHook(const NptHookRecord& record);
+	NTSTATUS AddHook(const NptHookRecord& record, bool isInVirtualization);
 	//删除hook，pHookOriginVirtAddr是hook位置的虚拟地址
-	NTSTATUS RemoveHook(PVOID pHookOriginVirtAddr);
+	NTSTATUS RemoveHook(PVOID pHookOriginVirtAddr, bool isInVirtualization);
 	virtual NTSTATUS Init() override;
 	virtual void Deinit() override;
 	#pragma code_seg("PAGE")

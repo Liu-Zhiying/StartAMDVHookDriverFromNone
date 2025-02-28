@@ -224,6 +224,7 @@ inline KernelVector<ElementType, allocTag, memType>::KernelVector() : pData(NULL
 	}
 	default:
 	{
+		__debugbreak();
 		KeBugCheck(DRIVER_INVALID_CRUNTIME_PARAMETER);
 		break;
 	}
@@ -327,9 +328,14 @@ template<typename ElementType, UINT32 allocTag, MemType memType>
 inline const ElementType& KernelVector<ElementType, allocTag, memType>::operator[](SIZE_TYPE idx) const
 {
 	if (idx < Length())
+	{
 		return pData[idx];
+	}
 	else
+	{
+		__debugbreak();
 		KeBugCheck(MEMORY_MANAGEMENT);
+	}
 }
 
 #pragma code_seg()
@@ -337,9 +343,14 @@ template<typename ElementType, UINT32 allocTag, MemType memType>
 inline ElementType& KernelVector<ElementType, allocTag, memType>::operator[](SIZE_TYPE idx)
 {
 	if (idx < Length())
+	{
 		return pData[idx];
+	}
 	else
+	{
+		__debugbreak();
 		KeBugCheck(MEMORY_MANAGEMENT);
+	}
 }
 
 #pragma code_seg()
@@ -347,7 +358,10 @@ template<typename ElementType, UINT32 allocTag, MemType memType>
 inline void KernelVector<ElementType, allocTag, memType>::Insert(ElementType e, SIZE_TYPE idx)
 {
 	if (idx >= Length())
+	{
+		__debugbreak();
 		KeBugCheck(MEMORY_MANAGEMENT);
+	}
 
 	if (length == capacity)
 		SetCapacity(length + 50);
@@ -365,7 +379,10 @@ template<typename ElementType, UINT32 allocTag, MemType memType>
 inline void KernelVector<ElementType, allocTag, memType>::Remove(SIZE_TYPE idx)
 {
 	if (idx >= Length())
+	{
+		__debugbreak();
 		KeBugCheck(MEMORY_MANAGEMENT);
+	}
 
 	for (SIZE_TYPE idx2 = idx; idx2 < Length() - 1; ++idx2)
 		pData[idx2] = static_cast<ElementType&&>(pData[idx2 + 1]);
@@ -396,7 +413,10 @@ inline void KernelVector<ElementType, allocTag, memType>::SetCapacity(SIZE_TYPE 
 	ElementType* pNewData = (ElementType*)pMemAlloc(newCapacity * sizeof(ElementType), allocTag);
 
 	if (pNewData == NULL)
+	{
+		__debugbreak();
 		KeBugCheck(MEMORY_MANAGEMENT);
+	}
 
 	for (SIZE_TYPE idx = 0; idx < copyLength; ++idx)
 		pNewData[idx] = static_cast<ElementType&&>(pData[idx]);

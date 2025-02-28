@@ -78,6 +78,7 @@
       <TreatWarningAsError>false</TreatWarningAsError>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <LanguageStandard_C>stdc11</LanguageStandard_C>
+      <PreprocessorDefinitions>DBG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
       <AdditionalDependencies>xed.lib;xed-ild.lib;%(AdditionalDependencies)</AdditionalDependencies>

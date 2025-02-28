@@ -63,14 +63,14 @@ extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject,
 			break;
 		initStep = 1;
 
-		//使用设备扩展初始化GlobalManager
-		pGlobalManager = ((GlobalManager*)fdo->DeviceExtension);
-		CallConstructor(pGlobalManager);
-
 		status = IoCreateSymbolicLink(&symLinkName, &devName);
 		if (!NT_SUCCESS(status))
 			break;
 		initStep = 2;
+
+		//使用设备扩展初始化GlobalManager
+		pGlobalManager = ((GlobalManager*)fdo->DeviceExtension);
+		CallConstructor(pGlobalManager);
 
 		//进入VM
 		status = pGlobalManager->Init();

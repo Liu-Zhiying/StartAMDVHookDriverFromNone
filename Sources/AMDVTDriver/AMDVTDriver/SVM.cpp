@@ -665,7 +665,7 @@ NTSTATUS SVMManager::EnterVirtualization()
 				//不应该返回
 				//如果返回代表vmrun失败
 				//直接 BugCheck
-
+				__debugbreak();
 				KeBugCheck(MANUALLY_INITIATED_CRASH);
 			}
 
@@ -775,7 +775,10 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 			//不允许客户机设置 EFER MSR 的 SVME 位 和 VM_CR MSR 的 SVMDIS 位
 			if (msrNum == IA32_MSR_EFER && !(value.LowPart & (1UL << EFER_SVME_OFFSET)) ||
 				msrNum == IA32_MSR_VM_CR && !(value.LowPart & (1ULL << VM_CR_SVMDIS_OFFSET)))
+			{
+				__debugbreak();
 				KeBugCheck(MANUALLY_INITIATED_CRASH);
+			}
 
 			__writemsr(msrNum, value.QuadPart);
 		}
@@ -862,6 +865,7 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 	}
 	default:
 	{
+		__debugbreak();
 		KeBugCheck(MANUALLY_INITIATED_CRASH);
 		break;
 	}

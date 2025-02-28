@@ -244,7 +244,7 @@ public:
 	#pragma code_seg("PAGE")
 	void SetNpfInterceptPlugin(INpfInterceptPlugin* _pNpfInterrceptPlugin) { PAGED_CODE(); pNpfInterceptPlugin = _pNpfInterrceptPlugin; }
 	#pragma code_seg("PAGE")
-	void SetNCr3Provider(INCr3Provider* _provider) { pNCr3Provider = _provider; }
+	void SetNCr3Provider(INCr3Provider* _provider) { PAGED_CODE(); pNCr3Provider = _provider; }
 	#pragma code_seg("PAGE")
 	void SetBreakpointPlugin(IBreakprointInterceptPlugin* _pBreakpointInterceptPlugin) { PAGED_CODE(); pBreakpointInterceptPlugin = _pBreakpointInterceptPlugin; }
 	#pragma code_seg("PAGE")

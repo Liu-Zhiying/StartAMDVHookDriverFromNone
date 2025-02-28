@@ -81,7 +81,7 @@ void GetSysPXEVirtAddr(PTR_TYPE* pPxeOut)
 
 //分配新的子页表并和当前页表项关联
 #pragma code_seg()
-template<typename EntryType, typename TableType, typename EntrySetter>
+template<typename EntryType, typename TableType, typename EntrySetter, typename PageTableRecords, PTR_TYPE level>
 NTSTATUS AllocNewPageTable(EntryType* fatherEntry, PageTableRecords& records, PTR_TYPE& va, EntrySetter entrySetter)
 {
 	NTSTATUS status = STATUS_SUCCESS;
@@ -102,7 +102,7 @@ NTSTATUS AllocNewPageTable(EntryType* fatherEntry, PageTableRecords& records, PT
 		//添加到页表记录
 		records.PushBack(PageTableRecord((PTR_TYPE)pSubTable, pa));
 		//设置父页表项
-		entrySetter(fatherEntry, GET_PFN_FROM_PHYADDR(pa), false);
+		entrySetter(fatherEntry, GET_PFN_FROM_PHYADDR(pa), false, level);
 		//清空子页表
 		RtlZeroMemory(pSubTable, sizeof * pSubTable);
 
@@ -117,7 +117,7 @@ NTSTATUS AllocNewPageTable(EntryType* fatherEntry, PageTableRecords& records, PT
 //高级别页表构建
 #pragma code_seg()
 template<typename TableType, typename SubTableType, PTR_TYPE level, bool checkLargePage, typename NextStep, NextStep nextStep, typename EntrySetter>
-NTSTATUS ProcessNptPageTableFrontLevelImpl(TableType* pTable, PTR_TYPE startPhyAddr, PTR_TYPE endPhyAddr, PageTableRecords& level34Records, PageTableRecords& level2Records, PageTableRecords& level1Records, EntrySetter entrySetter)
+NTSTATUS ProcessNptPageTableFrontLevelImpl(TableType* pTable, PTR_TYPE startPhyAddr, PTR_TYPE endPhyAddr, PageTableRecords3& level3Records, PageTableRecords2& level2Records, PageTableRecords1& level1Records, EntrySetter entrySetter)
 {
 	NTSTATUS status = STATUS_SUCCESS;
 
@@ -155,11 +155,11 @@ NTSTATUS ProcessNptPageTableFrontLevelImpl(TableType* pTable, PTR_TYPE startPhyA
 			if (!pTable->entries[idx].fields.present)
 			{
 				if constexpr (level == 2)
-					status = AllocNewPageTable<typename TableType::EntryType, SubTableType, EntrySetter>(&pTable->entries[idx], level1Records, va, entrySetter);
+					status = AllocNewPageTable<typename TableType::EntryType, SubTableType, EntrySetter, PageTableRecords1, level>(&pTable->entries[idx], level1Records, va, entrySetter);
 				else if constexpr (level == 3)
-					status = AllocNewPageTable<typename TableType::EntryType, SubTableType, EntrySetter>(&pTable->entries[idx], level2Records, va, entrySetter);
+					status = AllocNewPageTable<typename TableType::EntryType, SubTableType, EntrySetter, PageTableRecords2, level>(&pTable->entries[idx], level2Records, va, entrySetter);
 				else
-					status = AllocNewPageTable<typename TableType::EntryType, SubTableType, EntrySetter>(&pTable->entries[idx], level34Records, va, entrySetter);
+					status = AllocNewPageTable<typename TableType::EntryType, SubTableType, EntrySetter, PageTableRecords3, level>(&pTable->entries[idx], level3Records, va, entrySetter);
 				if (!NT_SUCCESS(status))
 					break;
 			}
@@ -182,7 +182,7 @@ NTSTATUS ProcessNptPageTableFrontLevelImpl(TableType* pTable, PTR_TYPE startPhyA
 				else if constexpr (level == 3)
 					va = level2Records.FindVaFromPa(GET_PHYADDR_FROM_PFN(pTable->entries[idx].fields.pagePpn));
 				else
-					va = level34Records.FindVaFromPa(GET_PHYADDR_FROM_PFN(pTable->entries[idx].fields.pagePpn));
+					va = level3Records.FindVaFromPa(GET_PHYADDR_FROM_PFN(pTable->entries[idx].fields.pagePpn));
 
 				if (va == INVALID_ADDR)
 				{
@@ -201,7 +201,7 @@ NTSTATUS ProcessNptPageTableFrontLevelImpl(TableType* pTable, PTR_TYPE startPhyA
 				newEndPhyAddr = endPhyAddr;
 
 			//调用下一步处理函数处理子页表
-			status = nextStep((SubTableType*)va, newStartPhyAddr, newEndPhyAddr, level34Records, level2Records, level1Records, entrySetter);
+			status = nextStep((SubTableType*)va, newStartPhyAddr, newEndPhyAddr, level3Records, level2Records, level1Records, entrySetter);
 			if (!NT_SUCCESS(status))
 				break;
 		}
@@ -218,11 +218,11 @@ NTSTATUS ProcessNptPageTableFrontLevelImpl(TableType* pTable, PTR_TYPE startPhyA
 //（最低级别页表）的数据填充
 #pragma code_seg()
 template<PTR_TYPE level, bool isLargePage, typename EntrySetter>
-NTSTATUS ProcessNptPageTableeEndLevelImpl(PageTableLevel123* pTable, PTR_TYPE startPhyAddr, PTR_TYPE endPhyAddr, PageTableRecords& level12Records, PageTableRecords & level3Records, PageTableRecords& level4Records, EntrySetter entrySetter)
+NTSTATUS ProcessNptPageTableeEndLevelImpl(PageTableLevel123* pTable, PTR_TYPE startPhyAddr, PTR_TYPE endPhyAddr, PageTableRecords3& level3Records, PageTableRecords2 & level2Records, PageTableRecords1& level1Records, EntrySetter entrySetter)
 {
-	UNREFERENCED_PARAMETER(level12Records);
+	UNREFERENCED_PARAMETER(level1Records);
+	UNREFERENCED_PARAMETER(level2Records);
 	UNREFERENCED_PARAMETER(level3Records);
-	UNREFERENCED_PARAMETER(level4Records);
 
 	constexpr PTR_TYPE rightShift = (level - 1) * 9 + 12;
 	constexpr PTR_TYPE unitMask1 = (static_cast<PTR_TYPE>(-1) << rightShift);
@@ -256,7 +256,7 @@ NTSTATUS ProcessNptPageTableeEndLevelImpl(PageTableLevel123* pTable, PTR_TYPE st
 		for (PTR_TYPE idx = startIdx; idx < endIdx; ++idx)
 		{
 			if (!pTable->entries[idx].fields.present)
-				entrySetter(&pTable->entries[idx], GET_PFN_FROM_PHYADDR(startBase + MUL_UNIT(idx - startIdx, rightShift)), isLargePage);
+				entrySetter(&pTable->entries[idx], GET_PFN_FROM_PHYADDR(startBase + MUL_UNIT(idx - startIdx, rightShift)), isLargePage, level);
 		}
 	} while (false);
 
@@ -265,34 +265,75 @@ NTSTATUS ProcessNptPageTableeEndLevelImpl(PageTableLevel123* pTable, PTR_TYPE st
 
 //*************************************页表构建函数结束*************************************
 
-using NPT_Level123_Processor = NTSTATUS(*)(PageTableLevel123*, PTR_TYPE, PTR_TYPE, PageTableRecords&, PageTableRecords&, PageTableRecords&, PageTableManager::EntrySetter&);
-using NPT_Level4_Processor = NTSTATUS(*)(PageTableLevel4*, PTR_TYPE, PTR_TYPE, PageTableRecords&, PageTableRecords&, PageTableRecords&, PageTableManager::EntrySetter&);
+using NPT_Level123_Processor = NTSTATUS(*)(PageTableLevel123*, PTR_TYPE, PTR_TYPE, PageTableRecords3&, PageTableRecords2&, PageTableRecords1&, PageTableManager::EntrySetter&);
+using NPT_Level4_Processor = NTSTATUS(*)(PageTableLevel4*, PTR_TYPE, PTR_TYPE, PageTableRecords3&, PageTableRecords2&, PageTableRecords1&, PageTableManager::EntrySetter&);
 
 //调用小页面处理函数
-static NTSTATUS CallNptSmallPageProcessor(PageTableLevel4* pTable, PTR_TYPE startPhyAddr, PTR_TYPE endPhyAddr, PageTableRecords& level34Records, PageTableRecords& level2Records, PageTableRecords& level1Records, PageTableManager::EntrySetter& entrySetter)
+#pragma code_seg()
+static NTSTATUS CallNptSmallPageProcessor(PageTableLevel4* pTable, PTR_TYPE startPhyAddr, PTR_TYPE endPhyAddr, PageTableRecords3& level3Records, PageTableRecords2& level2Records, PageTableRecords1& level1Records, PageTableManager::EntrySetter& entrySetter)
 {
 	//嵌套模板函数，用于补全小页面的缺失
 	constexpr NPT_Level123_Processor level1NptProcessor = ProcessNptPageTableeEndLevelImpl<1, false, PageTableManager::EntrySetter&>;
 	constexpr NPT_Level123_Processor level2NptProcessor = ProcessNptPageTableFrontLevelImpl<PageTableLevel123, PageTableLevel123, 2, true, NPT_Level123_Processor, level1NptProcessor, PageTableManager::EntrySetter&>;
 	constexpr NPT_Level123_Processor level3NptProcessor = ProcessNptPageTableFrontLevelImpl<PageTableLevel123, PageTableLevel123, 3, false, NPT_Level123_Processor, level2NptProcessor, PageTableManager::EntrySetter&>;
 	constexpr NPT_Level4_Processor   level4NptProcessor = ProcessNptPageTableFrontLevelImpl<PageTableLevel4, PageTableLevel123, 4, false, NPT_Level123_Processor, level3NptProcessor, PageTableManager::EntrySetter&>;
-	return level4NptProcessor(pTable, startPhyAddr, endPhyAddr, level34Records, level2Records, level1Records, entrySetter);
+	return level4NptProcessor(pTable, startPhyAddr, endPhyAddr, level3Records, level2Records, level1Records, entrySetter);
 }
 
-using NPT_Large_Level23_Processor = NTSTATUS(*)(PageTableLevel123*, PTR_TYPE, PTR_TYPE, PageTableRecords&, PageTableRecords&, PageTableRecords&, PageTableManager::EntrySetter&);
-using NPT_Large_Level4_Processor = NTSTATUS(*)(PageTableLevel4*, PTR_TYPE, PTR_TYPE, PageTableRecords&, PageTableRecords&, PageTableRecords&, PageTableManager::EntrySetter&);
+using NPT_Large_Level23_Processor = NTSTATUS(*)(PageTableLevel123*, PTR_TYPE, PTR_TYPE, PageTableRecords3&, PageTableRecords2&, PageTableRecords1&, PageTableManager::EntrySetter&);
+using NPT_Large_Level4_Processor = NTSTATUS(*)(PageTableLevel4*, PTR_TYPE, PTR_TYPE, PageTableRecords3&, PageTableRecords2&, PageTableRecords1&, PageTableManager::EntrySetter&);
 
 //调用大页面构建函数指针
-static NTSTATUS CallNptLargePageProcessor(PageTableLevel4* pTable, PTR_TYPE startPhyAddr, PTR_TYPE endPhyAddr, PageTableRecords& level34Records, PageTableRecords& level2Records, PageTableRecords& level1Records, PageTableManager::EntrySetter& entrySetter)
+#pragma code_seg()
+static NTSTATUS CallNptLargePageProcessor(PageTableLevel4* pTable, PTR_TYPE startPhyAddr, PTR_TYPE endPhyAddr, PageTableRecords3& level3Records, PageTableRecords2& level2Records, PageTableRecords1& level1Records, PageTableManager::EntrySetter& entrySetter)
 {
 	constexpr NPT_Large_Level23_Processor level2NptProcessor = ProcessNptPageTableeEndLevelImpl<2, true, PageTableManager::EntrySetter&>;
 	constexpr NPT_Large_Level23_Processor level3NptProcessor = ProcessNptPageTableFrontLevelImpl<PageTableLevel123, PageTableLevel123, 3, false, NPT_Large_Level23_Processor, level2NptProcessor, PageTableManager::EntrySetter&>;
 	constexpr NPT_Large_Level4_Processor  level4NptProcessor = ProcessNptPageTableFrontLevelImpl<PageTableLevel4, PageTableLevel123, 4, false, NPT_Large_Level23_Processor, level3NptProcessor, PageTableManager::EntrySetter&>;
-	return level4NptProcessor(pTable, startPhyAddr, endPhyAddr, level34Records, level2Records, level1Records, entrySetter);
+	return level4NptProcessor(pTable, startPhyAddr, endPhyAddr, level3Records, level2Records, level1Records, entrySetter);
 }
 
-//修改所有页表权限
 #pragma code_seg()
+void PageTableManager::SetDefaultPermission(UINT64 permission, UINT32 level)
+{
+	switch (level)
+	{
+	case 4:
+		defaultPermissionLeve4.data = permission;
+		break;
+	case 3:
+		defaultPermissionLevel3.data = permission;
+		break;
+	case 2:
+		defaultPermissionLevel2.data = permission;
+		break;
+	case 1:
+		defaultPermissionLevel1.data = permission;
+		break;
+	default:
+		break;
+	}
+}
+
+#pragma code_seg()
+UINT64 PageTableManager::GetDefaultPermission(UINT32 level) const
+{
+	switch (level)
+	{
+	case 4:
+		return defaultPermissionLeve4.data;
+	case 3:
+		return defaultPermissionLevel3.data;
+	case 2:
+		return defaultPermissionLevel2.data;
+	case 1:
+		return defaultPermissionLevel1.data;
+	default:
+		__debugbreak();
+		KeBugCheck(MANUALLY_INITIATED_CRASH);
+		break;
+	}
+}
 
 //处理NPF
 #pragma code_seg()
@@ -313,8 +354,12 @@ bool PageTableManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pG
 		PTR_TYPE paStart = pa - pa % PAGE_SIZE;
 		PTR_TYPE paEnd = paStart + PAGE_SIZE;
 
+		//逐级生成页表，如果失败则蓝屏
 		if (!NT_SUCCESS(corePageTables[pVirtCpuInfo->otherInfo.cpuIdx].FixPageFault(paStart, paEnd, true)))
+		{
+			__debugbreak();
 			KeBugCheck(MANUALLY_INITIATED_CRASH);
+		}
 
 		result = true;
 	}
@@ -331,31 +376,31 @@ PVOID PageTableManager::GetNCr3ForCore(UINT32 cpuIdx)
 	if (cpuIdx >= cnt)
 		return (PVOID)INVALID_ADDR;
 	else
-		return (PVOID)MmGetPhysicalAddress((PVOID)pageTables[cpuIdx].GetNptPageTable()).QuadPart;
+		return (PVOID)MmGetPhysicalAddress((PVOID)pageTables[cpuIdx].GetNptPageTableVa()).QuadPart;
 }
 
 ///通过物理地址和需要的级数查找页表，失败返回INVALID_ADDR
 #pragma code_seg()
-PVOID CoreNptPageTableManager::FindPageTableForByAddr(PTR_TYPE pa, UINT32 level) const
+PVOID CoreNptPageTableManager::FindPageTableByPhyAddr(PTR_TYPE guestPa, UINT32 level) const
 {
 	PVOID result = (PVOID)INVALID_ADDR;
 	PTR_TYPE tempPa = INVALID_ADDR;
 	PTR_TYPE tempVa = INVALID_ADDR;
-	PTR_TYPE pageTableIdx = ((pa >> 39) & 0x1ff);
+	PTR_TYPE pageTableIdx = ((guestPa >> 39) & 0x1ff);
 	SIZE_T levelIdx = 0;
 
 	do
 	{
 		if (level >= 4)
 		{
-			result = (PVOID)pNptPageTable;
+			result = (PVOID)pNptPageTableVa;
 			break;
 		}
 
-		if (!((PageTableLevel4*)pNptPageTable)->entries[pageTableIdx].fields.present)
+		if (!((PageTableLevel4*)pNptPageTableVa)->entries[pageTableIdx].fields.present)
 			break;
 
-		tempPa = GET_PHYADDR_FROM_PFN(((PageTableLevel4*)pNptPageTable)->entries[pageTableIdx].fields.pagePpn);
+		tempPa = GET_PHYADDR_FROM_PFN(((PageTableLevel4*)pNptPageTableVa)->entries[pageTableIdx].fields.pagePpn);
 		tempVa = level3Records.FindVaFromPa(tempPa);
 
 		if (tempVa == INVALID_ADDR)
@@ -365,7 +410,7 @@ PVOID CoreNptPageTableManager::FindPageTableForByAddr(PTR_TYPE pa, UINT32 level)
 
 		for (levelIdx = 2; levelIdx >= level; --levelIdx)
 		{
-			pageTableIdx = ((pa >> (levelIdx * 9 + 12)) & 0x1ff);
+			pageTableIdx = ((guestPa >> (levelIdx * 9 + 12)) & 0x1ff);
 
 			if (!((PageTableLevel123*)tempVa)->entries[pageTableIdx].fields.present)
 				break;
@@ -399,9 +444,9 @@ PVOID CoreNptPageTableManager::FindPageTableForByAddr(PTR_TYPE pa, UINT32 level)
 NTSTATUS CoreNptPageTableManager::FixPageFault(PTR_TYPE startAddr, PTR_TYPE endAddr, bool usingLargePage)
 {
 	if (usingLargePage)
-		return CallNptLargePageProcessor((PageTableLevel4*)pNptPageTable, startAddr, endAddr, level3Records, level2Records, level1Records, *pEntrySetter);
+		return CallNptLargePageProcessor((PageTableLevel4*)pNptPageTableVa, startAddr, endAddr, level3Records, level2Records, level1Records, *pEntrySetter);
 	else
-		return CallNptSmallPageProcessor((PageTableLevel4*)pNptPageTable, startAddr, endAddr, level3Records, level2Records, level1Records, *pEntrySetter);
+		return CallNptSmallPageProcessor((PageTableLevel4*)pNptPageTableVa, startAddr, endAddr, level3Records, level2Records, level1Records, *pEntrySetter);
 }
 
 #pragma code_seg()
@@ -420,7 +465,7 @@ NTSTATUS CoreNptPageTableManager::UsingSmallPage(PTR_TYPE phyAddr, bool isUsing)
 			break;
 		}
 		//查找目标页表
-		pTargetPageTable = (PageTableLevel123*)FindPageTableForByAddr(phyAddr, 2);
+		pTargetPageTable = (PageTableLevel123*)FindPageTableByPhyAddr(phyAddr, 2);
 		//找不到目标页表返回失败
 		if (pTargetPageTable == (PageTableLevel123*)INVALID_ADDR)
 		{
@@ -453,8 +498,8 @@ NTSTATUS CoreNptPageTableManager::UsingSmallPage(PTR_TYPE phyAddr, bool isUsing)
 			//删除Leve4页面
 			if (finalVa != INVALID_ADDR)
 			{
-				FreeNonPagedMem((PVOID)finalVa, PT_TAG);
 				level1Records.RemoveByPa(finalPa);
+				FreeNonPagedMem((PVOID)finalVa, PT_TAG);
 			}
 
 			//还原属性值
@@ -475,12 +520,12 @@ NTSTATUS CoreNptPageTableManager::MapSmallPageByPhyAddr(PTR_TYPE begPhyAddr, PTR
 }
 
 #pragma code_seg()
-NTSTATUS CoreNptPageTableManager::SwapSmallPagePpn(PTR_TYPE phyAddr1, PTR_TYPE phyAddr2)
+NTSTATUS CoreNptPageTableManager::SwapSmallPagePpn(PTR_TYPE phyAddr1, PTR_TYPE phyAddr2, UINT32 level)
 {
 	PTR_TYPE pageTableIdx1 = ((phyAddr1 >> 12) & 0x1ff);
 	PTR_TYPE pageTableIdx2 = ((phyAddr2 >> 12) & 0x1ff);
-	PageTableLevel123* pageTable1 = (PageTableLevel123*)FindPageTableForByAddr(phyAddr1, 1);
-	PageTableLevel123* pageTable2 = (PageTableLevel123*)FindPageTableForByAddr(phyAddr2, 1);
+	PageTableLevel123* pageTable1 = (PageTableLevel123*)FindPageTableByPhyAddr(phyAddr1, level);
+	PageTableLevel123* pageTable2 = (PageTableLevel123*)FindPageTableByPhyAddr(phyAddr2, level);
 	PageTableLevel123Entry swapEntry = {};
 
 	if (pageTable1 == (PageTableLevel123*)INVALID_ADDR || pageTable2 == (PageTableLevel123*)INVALID_ADDR)
@@ -496,8 +541,8 @@ NTSTATUS CoreNptPageTableManager::SwapSmallPagePpn(PTR_TYPE phyAddr1, PTR_TYPE p
 #pragma code_seg()
 NTSTATUS CoreNptPageTableManager::GetNptFinalAddrForPhyAddr(PTR_TYPE phyAddr, PTR_TYPE& pNptFinalAddr, PTR_TYPE& level)
 {
-	PageTableLevel123* pageTable1 = (PageTableLevel123*)FindPageTableForByAddr(phyAddr, 2);
-	PageTableLevel123* pageTable2 = (PageTableLevel123*)FindPageTableForByAddr(phyAddr, 1);
+	PageTableLevel123* pageTable1 = (PageTableLevel123*)FindPageTableByPhyAddr(phyAddr, 2);
+	PageTableLevel123* pageTable2 = (PageTableLevel123*)FindPageTableByPhyAddr(phyAddr, 1);
 
 	if (pageTable1 == (PageTableLevel123*)INVALID_ADDR && pageTable2 == (PageTableLevel123*)INVALID_ADDR)
 		return STATUS_UNSUCCESSFUL;
@@ -517,7 +562,7 @@ NTSTATUS CoreNptPageTableManager::GetNptFinalAddrForPhyAddr(PTR_TYPE phyAddr, PT
 }
 
 #pragma code_seg()
-void ChangeAllEndLevelPageTablePremessionSub(PageTableLevel123* pPageTable, UINT32 level, PageTableRecords& level34Records, PageTableRecords& level2Records, PageTableRecords& level1Records, PageTableLevel123Entry entry)
+void ChangeAllEndLevelPageTablePremessionSub(PageTableLevel123* pPageTable, UINT32 level, PageTableRecords3& level3Records, PageTableRecords2& level2Records, PageTableRecords1& level1Records, PageTableLevel123Entry entry)
 {
 	for (SIZE_TYPE idx = 0; idx < GetArrayElementCnt(pPageTable->entries); ++idx)
 	{
@@ -538,10 +583,10 @@ void ChangeAllEndLevelPageTablePremessionSub(PageTableLevel123* pPageTable, UINT
 			else if (level == 3)
 				pSubPageTable = (PageTableLevel123*)level2Records.FindVaFromPa(GET_PHYADDR_FROM_PFN(pPageTable->entries[idx].fields.pagePpn));
 			else
-				pSubPageTable = (PageTableLevel123*)level34Records.FindVaFromPa(GET_PHYADDR_FROM_PFN(pPageTable->entries[idx].fields.pagePpn));
+				pSubPageTable = (PageTableLevel123*)level3Records.FindVaFromPa(GET_PHYADDR_FROM_PFN(pPageTable->entries[idx].fields.pagePpn));
 
 			if (pSubPageTable != (PageTableLevel123*)INVALID_ADDR)
-				ChangeAllEndLevelPageTablePremessionSub(pSubPageTable, level - 1, level34Records, level2Records, level1Records, entry);
+				ChangeAllEndLevelPageTablePremessionSub(pSubPageTable, level - 1, level3Records, level2Records, level1Records, entry);
 		}
 	}
 }
@@ -551,7 +596,7 @@ void CoreNptPageTableManager::ChangeAllEndLevelPageTablePermession(PageTableLeve
 {
 	entry.fields.present = true;
 
-	PageTableLevel4* pPageTable = (PageTableLevel4*)pNptPageTable;
+	PageTableLevel4* pPageTable = (PageTableLevel4*)pNptPageTableVa;
 
 	for (SIZE_TYPE idx = 0; idx < GetArrayElementCnt(pPageTable->entries); ++idx)
 	{
@@ -562,17 +607,17 @@ void CoreNptPageTableManager::ChangeAllEndLevelPageTablePermession(PageTableLeve
 }
 
 #pragma code_seg()
-NTSTATUS CoreNptPageTableManager::ChangePageTablePermession(PTR_TYPE pa, PageTableLevel123Entry entry, UINT32 level)
+NTSTATUS CoreNptPageTableManager::ChangePageTableEntryPermession(PTR_TYPE guestPa, PageTableLevel123Entry entry, UINT32 level)
 {
 	//找到对应的页表
-	PageTableLevel123* pageTable = (PageTableLevel123*)FindPageTableForByAddr(pa, level);
+	PageTableLevel123* pageTable = (PageTableLevel123*)FindPageTableByPhyAddr(guestPa, level);
 	PageTableLevel123Entry* pTargetEntry = NULL;
 
 	if (pageTable == (PageTableLevel123*)INVALID_ADDR)
 		return STATUS_UNSUCCESSFUL;
 
 	//找到对应的页表项
-	pTargetEntry = &pageTable->entries[(pa >> (12 + (level - 1) * 9)) & 0x1ff];
+	pTargetEntry = &pageTable->entries[(guestPa >> (12 + (level - 1) * 9)) & 0x1ff];
 
 	//先构造修改后的页表项的数据，再整体拷贝到页表项中，这样会快一些
 	entry.fields.pagePpn = pTargetEntry->fields.pagePpn;
@@ -588,7 +633,7 @@ NTSTATUS CoreNptPageTableManager::ChangePageTablePermession(PTR_TYPE pa, PageTab
 void CoreNptPageTableManager::Deinit()
 {
 	PAGED_CODE();
-	if (pNptPageTable != INVALID_ADDR)
+	if (pNptPageTableVa != INVALID_ADDR)
 	{
 		//LEVEL 3 页表释放
 		for (SIZE_TYPE idx = 0; idx < level3Records.Length(); ++idx)
@@ -609,10 +654,11 @@ void CoreNptPageTableManager::Deinit()
 		level1Records.Clear();
 
 		//LEVEL 4 页表释放
-		FreeNonPagedMem((PVOID)pNptPageTable, PT_TAG);
+		FreeNonPagedMem((PVOID)pNptPageTableVa, PT_TAG);
 
 		//置空
-		pNptPageTable = INVALID_ADDR;
+		pNptPageTableVa = INVALID_ADDR;
+		pNptPageTablePa = INVALID_ADDR;
 	}
 }
 
@@ -632,7 +678,7 @@ NTSTATUS CoreNptPageTableManager::BuildNptPageTable()
 			break;
 		}
 
-		pNptPageTable = (PTR_TYPE)pNptLevel4PageTable;
+		pNptPageTableVa = (PTR_TYPE)pNptLevel4PageTable;
 
 		RtlZeroMemory(pNptLevel4PageTable, sizeof(*pNptLevel4PageTable));
 
@@ -640,6 +686,9 @@ NTSTATUS CoreNptPageTableManager::BuildNptPageTable()
 		//初始化时全部使用2MB大页，节约内存同时可以覆盖全部物理地址
 		//需要HOOK时把对应部分改成小页即可
 		status = CallNptLargePageProcessor(pNptLevel4PageTable, 0x0, 0x000000FFFFFFFFFF, level3Records, level2Records, level1Records, *pEntrySetter);
+
+		//获取顶层页表的物理地址
+		pNptPageTablePa = MmGetPhysicalAddress((PVOID)pNptPageTableVa).QuadPart;
 
 	} while (false);
 
@@ -696,10 +745,7 @@ void PageTableManager::Deinit()
 	{
 		//释放CoreNptPageTableManager占用的资源
 		for (SIZE_TYPE idx = 0; idx < pageTableCnt; ++idx)
-		{
-			corePageTables[idx].Deinit();
 			CallDestroyer(&corePageTables[idx]);
-		}
 		//释放CoreNptPageTableManager本省占用的内存
 		FreeNonPagedMem(corePageTables, PT_TAG);
 		//置空成员
