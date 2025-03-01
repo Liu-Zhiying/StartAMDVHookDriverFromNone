@@ -698,6 +698,8 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 	{
 	case VMEXIT_REASON_CPUID:
 	{
+		KdPrint(("aaaa!\n"));
+
 		if (pCpuIdInterceptPlugin != NULL &&
 			pCpuIdInterceptPlugin->HandleCpuid(pVMMVirtCpuInfo, pGuestRegisters,
 				pGuestVmcbPhyAddr, pHostVmcbPhyAddr))
@@ -869,5 +871,22 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 		KeBugCheck(MANUALLY_INITIATED_CRASH);
 		break;
 	}
+	}
+
+	//EFLAGS TF 标志位为 1 则附加DE中断
+
+	//原因见如下网址
+	//https://howtohypervise.blogspot.com/2019/01/a-common-missight-in-most-hypervisors.html
+
+	//你也可以看泄露的VMP源码，里面就使用了这种方法检测虚拟化
+
+	//硬件断电和其他复杂断点的处理我并没有写，需要的话自己加
+
+	if (pGuestRegisters->rflags & 0x100)
+	{
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.data = 0;
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vector = DB_EXCEPTION_VECTOR_INDEX;
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.type = 3;
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vaild = 1;
 	}
 }

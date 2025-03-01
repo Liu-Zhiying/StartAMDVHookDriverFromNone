@@ -6,6 +6,7 @@ github看看，VTX的hook驱动满天飞，AMDV的呢？——没有，作为一
 VT NPT HOOK 完成  
 集成Intel XED库，可以识别函数指令长度方便HOOK  
 修改_run_svm_vmrun函数，在VMM崩溃或中断时可以看到客户机调用栈   
+可以通过VMP3.x检测   
 ## 已知问题
 1. ~~Wow64程序在VT加载时会崩溃~~
 2. ~~NPT页表和N卡驱动不兼容~~  
