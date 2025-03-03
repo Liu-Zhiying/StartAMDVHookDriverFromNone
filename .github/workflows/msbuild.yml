@@ -11,7 +11,7 @@ jobs:
         platform: [x64]
     runs-on: windows-2022
     env:
-      Solution_Path: /Sources/AMDVTDriver/AMDVTDriver.sln
+      Solution_Path: ./Sources/AMDVTDriver/AMDVTDriver.sln
     steps:
       - name: Check out repository code
         uses: actions/checkout@v3
