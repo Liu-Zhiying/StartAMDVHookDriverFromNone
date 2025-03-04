@@ -152,14 +152,14 @@ public:
 };
 
 //DE拦截插件
-class IDebugInterceptPlugin
+class ISignleStepInterceptPlugin
 {
 public:
 	//处理拦截的DE事件，true代表已经处理，false代表未处理
-	virtual bool HandleDebug(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, 
+	virtual bool HandleSignleStep(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, 
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) = 0;
 	#pragma code_seg()
-	virtual ~IDebugInterceptPlugin() {}
+	virtual ~ISignleStepInterceptPlugin() {}
 };
 
 //NPT页表提供接口
@@ -219,11 +219,11 @@ class SVMManager : public IManager
 	UINT32 cpuCnt;
 	MsrPremissionsMapManager msrPremissionMap;
 	IMsrInterceptPlugin* pMsrInterceptPlugin;
-	IMsrBackupRestorePlugin* pMsrHookPlugin;
+	IMsrBackupRestorePlugin* pMsrBackupRestorePlugin;
 	ICpuidInterceptPlugin* pCpuIdInterceptPlugin;
 	INpfInterceptPlugin* pNpfInterceptPlugin;
 	IBreakprointInterceptPlugin* pBreakpointInterceptPlugin;
-	IDebugInterceptPlugin* pDebugInterceptPlugin;
+	ISignleStepInterceptPlugin* pSingleStepInterceptPlugin;
 	INCr3Provider* pNCr3Provider;
 	IInvalidOpcodeInterceptPlugin* pInvalidOpcodeInterceptPlugin;
 	bool enableSce;
@@ -236,25 +236,43 @@ public:
 	//请勿调用该函数，这个函数由VMM自动调用
 	void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr);
 	#pragma code_seg("PAGE")
-	SVMManager() : pVirtCpuInfo(NULL), cpuCnt(0), pMsrInterceptPlugin(NULL), pCpuIdInterceptPlugin(NULL), pNpfInterceptPlugin(NULL), pNCr3Provider(NULL), pBreakpointInterceptPlugin(NULL), pInvalidOpcodeInterceptPlugin(NULL), pDebugInterceptPlugin(NULL), enableSce(true), pMsrHookPlugin(NULL) { PAGED_CODE(); }
+	SVMManager() : pVirtCpuInfo(NULL), cpuCnt(0), pMsrInterceptPlugin(NULL), pCpuIdInterceptPlugin(NULL), pNpfInterceptPlugin(NULL), pNCr3Provider(NULL), pBreakpointInterceptPlugin(NULL), pInvalidOpcodeInterceptPlugin(NULL), pSingleStepInterceptPlugin(NULL), enableSce(true), pMsrBackupRestorePlugin(NULL) { PAGED_CODE(); }
 	#pragma code_seg("PAGE")
 	void SetMsrInterceptPlugin(IMsrInterceptPlugin* _pMsrInterceptPlugin) { PAGED_CODE(); pMsrInterceptPlugin = _pMsrInterceptPlugin; }
 	#pragma code_seg("PAGE")
+	IMsrInterceptPlugin* GetMsrInterceptPlugin() { PAGED_CODE(); return pMsrInterceptPlugin; }
+	#pragma code_seg("PAGE")
 	void SetCpuIdInterceptPlugin(ICpuidInterceptPlugin* _pCpuIdInterceptPlugin) { PAGED_CODE(); pCpuIdInterceptPlugin = _pCpuIdInterceptPlugin; }
+	#pragma code_seg("PAGE")
+	ICpuidInterceptPlugin* GetCpuidInterceptPlugin() { PAGED_CODE(); return pCpuIdInterceptPlugin; }
 	#pragma code_seg("PAGE")
 	void SetNpfInterceptPlugin(INpfInterceptPlugin* _pNpfInterrceptPlugin) { PAGED_CODE(); pNpfInterceptPlugin = _pNpfInterrceptPlugin; }
 	#pragma code_seg("PAGE")
+	INpfInterceptPlugin* GetNpfnterceptPlugin() { PAGED_CODE(); return pNpfInterceptPlugin; }
+	#pragma code_seg("PAGE")
 	void SetNCr3Provider(INCr3Provider* _provider) { PAGED_CODE(); pNCr3Provider = _provider; }
+	#pragma code_seg("PAGE")
+	INCr3Provider* GetCr3Provider() { PAGED_CODE(); return pNCr3Provider; }
 	#pragma code_seg("PAGE")
 	void SetBreakpointPlugin(IBreakprointInterceptPlugin* _pBreakpointInterceptPlugin) { PAGED_CODE(); pBreakpointInterceptPlugin = _pBreakpointInterceptPlugin; }
 	#pragma code_seg("PAGE")
-	void SetINvalidOpcodePlugin(IInvalidOpcodeInterceptPlugin* _pInvalidOpcodeInterceptPlugin) { PAGED_CODE(); pInvalidOpcodeInterceptPlugin = _pInvalidOpcodeInterceptPlugin; }
+	IBreakprointInterceptPlugin* GetBreakpointPlugin() { PAGED_CODE(); return pBreakpointInterceptPlugin; }
 	#pragma code_seg("PAGE")
-	void SetDebugInterceptPlugin(IDebugInterceptPlugin* _pDebugInterceptPlugin) { PAGED_CODE(); pDebugInterceptPlugin = _pDebugInterceptPlugin; }
+	void SetInvalidOpcodePlugin(IInvalidOpcodeInterceptPlugin* _pInvalidOpcodeInterceptPlugin) { PAGED_CODE(); pInvalidOpcodeInterceptPlugin = _pInvalidOpcodeInterceptPlugin; }
 	#pragma code_seg("PAGE")
-	void SetMsrHookPlugin(IMsrBackupRestorePlugin* _pMsrHookPlugin) { PAGED_CODE(); pMsrHookPlugin = _pMsrHookPlugin; }
+	IInvalidOpcodeInterceptPlugin* GetInvalidOpcodePlugin() { PAGED_CODE(); return pInvalidOpcodeInterceptPlugin; }
+	#pragma code_seg("PAGE")
+	void SetSingleStepPlugin(ISignleStepInterceptPlugin* _pDebugInterceptPlugin) { PAGED_CODE(); pSingleStepInterceptPlugin = _pDebugInterceptPlugin; }
+	#pragma code_seg("PAGE")
+	ISignleStepInterceptPlugin* GetSingleStepPlugin() { PAGED_CODE(); return pSingleStepInterceptPlugin; }
+	#pragma code_seg("PAGE")
+	void SetMsrBackupRestorePlugin(IMsrBackupRestorePlugin* _pMsrHookPlugin) { PAGED_CODE(); pMsrBackupRestorePlugin = _pMsrHookPlugin; }
+	#pragma code_seg("PAGE")
+	IMsrBackupRestorePlugin* GetMsrBackupRestorePlugin() { PAGED_CODE(); return pMsrBackupRestorePlugin; }
 	#pragma code_seg("PAGE")
 	void EnanbleSce(bool enable) { PAGED_CODE(); enableSce = enable; }
+	#pragma code_seg("PAGE")
+	bool IsSceEnabled() { PAGED_CODE(); return enableSce; }
 	static SVMStatus CheckSVM();	
 	virtual NTSTATUS Init() override;
 	virtual void Deinit() override;

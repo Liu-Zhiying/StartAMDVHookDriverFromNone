@@ -219,7 +219,7 @@ extern "C" void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGues
 	pGuestRegisters->rax = pVirtCpuInfo->guestVmcb.statusFields.rax;
 	pGuestRegisters->rflags = pVirtCpuInfo->guestVmcb.statusFields.rflags;
 
-	IMsrBackupRestorePlugin* pMsrHookPlugin = pVirtCpuInfo->otherInfo.pSvmManager->pMsrHookPlugin;
+	IMsrBackupRestorePlugin* pMsrHookPlugin = pVirtCpuInfo->otherInfo.pSvmManager->pMsrBackupRestorePlugin;
 
 	//如果 MSR 拦截插件存在，进入VM之后保存Guest和恢复Host的MSR
 	if (pMsrHookPlugin != NULL)
@@ -532,7 +532,7 @@ NTSTATUS SVMManager::EnterVirtualization()
 					pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.interceptExceptionX |= (1UL << UD_EXCEPTION_VECTOR_INDEX);
 
 				//如果DE拦截插件存在，打开DE拦截
-				if (pDebugInterceptPlugin != NULL)
+				if (pSingleStepInterceptPlugin != NULL)
 					pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.interceptExceptionX |= (1LL << DB_EXCEPTION_VECTOR_INDEX);
 
 				pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.msrpmBasePA = msrPremissionMap.GetPhyAddress();
@@ -648,10 +648,10 @@ NTSTATUS SVMManager::EnterVirtualization()
 				//__svm_vmsave((size_t)MmGetPhysicalAddress(&pVirtCpuInfo[cpuIdx]->hostVmcb).QuadPart);
 
 				//如何MSR HOOK插件存在，进入VM之前保存Guest和Host的MSR
-				if (pMsrHookPlugin != NULL)
+				if (pMsrBackupRestorePlugin != NULL)
 				{
-					pMsrHookPlugin->SaveGuestMsrForCpu(cpuIdx);
-					pMsrHookPlugin->SaveHostMsrForCpu(cpuIdx);
+					pMsrBackupRestorePlugin->SaveGuestMsrForCpu(cpuIdx);
+					pMsrBackupRestorePlugin->SaveHostMsrForCpu(cpuIdx);
 				}
 				
 				_run_svm_vmrun
@@ -837,8 +837,8 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 	}
 	case VMEXIT_REASON_EXCEPTION_DB:
 	{
-		if (pDebugInterceptPlugin != NULL &&
-			pDebugInterceptPlugin->HandleDebug(pVMMVirtCpuInfo, pGuestRegisters, pGuestVmcbPhyAddr, pHostVmcbPhyAddr))
+		if (pSingleStepInterceptPlugin != NULL &&
+			pSingleStepInterceptPlugin->HandleSignleStep(pVMMVirtCpuInfo, pGuestRegisters, pGuestVmcbPhyAddr, pHostVmcbPhyAddr))
 			return;
 
 		//注入DB异常由guest处理
