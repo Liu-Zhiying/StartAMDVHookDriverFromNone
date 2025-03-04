@@ -1,4 +1,4 @@
-#include "main.h"
+#include "FunctionInterface.h"
 
 #pragma code_seg("PAGE")
 NTSTATUS DriverIOHandler(IN PDEVICE_OBJECT,
@@ -20,12 +20,12 @@ void UnloadDriver(IN PDRIVER_OBJECT drvObj)
 	{
 		UNICODE_STRING symLinkName;
 		RtlInitUnicodeString(&symLinkName, L"\\DosDevices\\AMDVTDriver");
-		GlobalManager* pGlobalManager = (GlobalManager*)drvObj->DeviceObject->DeviceExtension;
+		FunctionInterface* pFunctionInterface = (FunctionInterface*)drvObj->DeviceObject->DeviceExtension;
 		//如果你在DriverEntry里面调用IoCreateSymbolicLink的话加上这句
 		//因为你在DriverEntry里面使用的常量跟着DriverEntry一起卸载了
 		IoDeleteSymbolicLink(&symLinkName);
 		IoDeleteDevice(devObj);
-		CallDestroyer(pGlobalManager);
+		CallDestroyer(pFunctionInterface);
 	}
 	KdPrint(("AMD-V driver has exited\n"));
 }
@@ -47,7 +47,7 @@ extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject,
 	UINT32 initStep = 0;
 	NTSTATUS status = STATUS_SUCCESS;
 	PDEVICE_OBJECT fdo = NULL;
-	GlobalManager* pGlobalManager = NULL;
+	FunctionInterface* pFunctionInterface = NULL;
 	UNICODE_STRING devName;
 	UNICODE_STRING symLinkName;
 	RtlInitUnicodeString(&devName, L"\\Device\\AMDVTDriver");
@@ -57,7 +57,7 @@ extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject,
 	{
 		KdPrint(("DriverEntry(): Starting AMD-V Driver\n"));
 
-		status = IoCreateDevice(pDriverObject, sizeof(GlobalManager), &devName, FILE_DEVICE_UNKNOWN,
+		status = IoCreateDevice(pDriverObject, sizeof(FunctionInterface), &devName, FILE_DEVICE_UNKNOWN,
 			0, TRUE, &fdo);
 		if (!NT_SUCCESS(status))
 			break;
@@ -69,11 +69,11 @@ extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject,
 		initStep = 2;
 
 		//使用设备扩展初始化GlobalManager
-		pGlobalManager = ((GlobalManager*)fdo->DeviceExtension);
-		CallConstructor(pGlobalManager);
+		pFunctionInterface = ((FunctionInterface*)fdo->DeviceExtension);
+		CallConstructor(pFunctionInterface);
 
 		//进入VM
-		status = pGlobalManager->Init();
+		status = pFunctionInterface->Init();
 		if (!NT_SUCCESS(status))
 			break;
 		initStep = 3;
@@ -90,7 +90,7 @@ extern "C" NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject,
 		switch (initStep)
 		{
 		case 3:
-			CallDestroyer(pGlobalManager);
+			CallDestroyer(pFunctionInterface);
 		case 2:
 			IoDeleteSymbolicLink(&symLinkName);
 		case 1:

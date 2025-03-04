@@ -202,32 +202,26 @@ template<typename ElementType, UINT32 allocTag, MemType memType>
 inline KernelVector<ElementType, allocTag, memType>::KernelVector() : pData(NULL), length(0), capacity(0)
 {
 	//根据内存类型，选择不同的内存分配释放函数
-	switch (memType)
-	{
-	case MemType::NonPaged:
+
+	if constexpr (memType == MemType::NonPaged)
 	{
 		pMemAlloc = AllocNonPagedMem;
 		pMemFree = FreeNonPagedMem;
-		break;
 	}
-	case MemType::Paged:
+	else if constexpr (memType == MemType::Paged)
 	{
 		pMemAlloc = AllocPagedMem;
 		pMemFree = FreePagedMem;
-		break;
 	}
-	case MemType::ContigousMem:
+	else if constexpr (memType = MemType::ContigousMem)
 	{
 		pMemAlloc = AllocContiguousMem;
 		pMemFree = FreeContigousMem;
-		break;
 	}
-	default:
+	else
 	{
 		__debugbreak();
 		KeBugCheck(DRIVER_INVALID_CRUNTIME_PARAMETER);
-		break;
-	}
 	}
 }
 

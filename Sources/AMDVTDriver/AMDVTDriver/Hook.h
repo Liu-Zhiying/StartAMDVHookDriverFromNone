@@ -12,10 +12,6 @@ constexpr UINT32 CONFIGURE_MSR_HOOK_CPUID_FUNCTION = 0x400000fe;
 constexpr UINT32 READ_MSR_CPUID_SUBFUNCTION = 0x00000000;
 constexpr UINT32 WRITE_MSR_CPUID_SUBFUNCTION = 0x00000001;
 constexpr UINT32 GET_CPU_IDX_CPUID_SUBFUNCTION = 0x00000002;
-//配置NPT HOOK参数的CPUID的Function
-constexpr UINT32 NPT_HOOK_TOOL_CPUID_FUNCTION = 0x400000fd;
-constexpr UINT32 ADD_NPT_HOOK_SUBFUNCTION = 0x00000000;
-constexpr UINT32 DEL_NPT_HOOK_CPUID_SUBFUNCTION = 0x00000001;
 
 constexpr UINT32 HOOK_TAG = MAKE_TAG('h', 'o', 'o', 'k');
 
@@ -874,7 +870,7 @@ class NptHookManager : public IManager, public IBreakprointInterceptPlugin, publ
 	//删除hook，pHookOriginVirtAddr是hook位置的虚拟地址
 	NTSTATUS RemoveHookInSignleCore(PVOID pHookOriginVirtAddr, UINT32 idx);
 
-	friend class GlobalManager;
+	friend class FunctionInterface;
 
 public:
 	//配置SVMManager

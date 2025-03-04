@@ -5,6 +5,8 @@ VisualStudioVersion = 17.4.33122.133
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "AMDVTDriver", "AMDVTDriver\AMDVTDriver.vcxproj", "{DDCC4646-4608-44AD-AE1C-A5508261B2B2}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "AMDVDriverKernelTest", "AMDVDriverKernelTest\AMDVDriverKernelTest.vcxproj", "{E4E67121-13D8-F4D1-160C-090F739AEDE8}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -17,6 +19,12 @@ Global
 		{DDCC4646-4608-44AD-AE1C-A5508261B2B2}.Release|x64.ActiveCfg = Release|x64
 		{DDCC4646-4608-44AD-AE1C-A5508261B2B2}.Release|x64.Build.0 = Release|x64
 		{DDCC4646-4608-44AD-AE1C-A5508261B2B2}.Release|x64.Deploy.0 = Release|x64
+		{E4E67121-13D8-F4D1-160C-090F739AEDE8}.Debug|x64.ActiveCfg = Debug|x64
+		{E4E67121-13D8-F4D1-160C-090F739AEDE8}.Debug|x64.Build.0 = Debug|x64
+		{E4E67121-13D8-F4D1-160C-090F739AEDE8}.Debug|x64.Deploy.0 = Debug|x64
+		{E4E67121-13D8-F4D1-160C-090F739AEDE8}.Release|x64.ActiveCfg = Release|x64
+		{E4E67121-13D8-F4D1-160C-090F739AEDE8}.Release|x64.Build.0 = Release|x64
+		{E4E67121-13D8-F4D1-160C-090F739AEDE8}.Release|x64.Deploy.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

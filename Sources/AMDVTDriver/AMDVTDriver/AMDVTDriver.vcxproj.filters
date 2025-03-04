@@ -34,7 +34,7 @@
     <ClCompile Include="Hook.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="FunctionTest.cpp">
+    <ClCompile Include="FunctionInterface.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -57,7 +57,10 @@
     <ClInclude Include="CasLockers.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="main.h">
+    <ClInclude Include="FunctionInterface.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="AMDVDriverSDK.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
@@ -66,6 +69,12 @@
       <Filter>Source Files</Filter>
     </MASM>
     <MASM Include="Hook_asm.asm">
+      <Filter>Source Files</Filter>
+    </MASM>
+    <MASM Include="FunctionInterface_asm.asm">
+      <Filter>Source Files</Filter>
+    </MASM>
+    <MASM Include="common.asm">
       <Filter>Source Files</Filter>
     </MASM>
   </ItemGroup>

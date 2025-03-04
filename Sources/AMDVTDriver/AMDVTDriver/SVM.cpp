@@ -5,6 +5,8 @@
 //AMD SVM 没有专门的VMMCALL指令，只能使用自定义CPUID
 //AMD 手册上给虚拟化预留的CPUID ID 为 0x40000000~0x400000ff
 constexpr UINT32 GUEST_CALL_VMM_CPUID_FUNCTION = 0x400000ff;
+constexpr UINT32 EXIT_SVM_CPUID_SUBFUNCTION = 0x00000000;
+constexpr UINT32 IS_IN_SVM_CPUID_SUBFUNCTION = 0x00000001;
 constexpr UINT32 SVM_TAG = MAKE_TAG('s', 'v', 'm', ' ');
 
 //GDT表项，参考https://wiki.osdev.org/Global_Descriptor_Table#System_Segment_Descriptor
@@ -698,8 +700,6 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 	{
 	case VMEXIT_REASON_CPUID:
 	{
-		KdPrint(("aaaa!\n"));
-
 		if (pCpuIdInterceptPlugin != NULL &&
 			pCpuIdInterceptPlugin->HandleCpuid(pVMMVirtCpuInfo, pGuestRegisters,
 				pGuestVmcbPhyAddr, pHostVmcbPhyAddr))
@@ -709,7 +709,7 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 		{
 			switch (pGuestRegisters->rcx)
 			{
-			case 0:
+			case EXIT_SVM_CPUID_SUBFUNCTION:
 			{
 				//如果不是从内核模式调用退出则忽略
 				if (!(pVMMVirtCpuInfo->guestVmcb.controlFields.nRip & 0xffff000000000000))
@@ -733,6 +733,13 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 				UINT64 eferVal = __readmsr(IA32_MSR_EFER);
 				__writemsr(IA32_MSR_EFER, eferVal & ~(1ULL << EFER_SVME_OFFSET));
 
+				break;
+			}
+			case IS_IN_SVM_CPUID_SUBFUNCTION:
+			{
+				*reinterpret_cast<UINT32*>(&pGuestRegisters->rax) = 'IN';
+				*reinterpret_cast<UINT32*>(&pGuestRegisters->rbx) = 'AMD';
+				*reinterpret_cast<UINT32*>(&pGuestRegisters->rcx) = 'SVM';
 				break;
 			}
 			}
