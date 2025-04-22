@@ -240,14 +240,15 @@ bool FunctionInterface::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters*
 					lstarInfo.pEprocess = NULL;
 					lstarInfo.pCallback = NULL;
 					lstarInfo.param = NULL;
-					return true;
 				}
+				else
+				{
+					const SetLStartCallbackParam& param = *((const SetLStartCallbackParam*)pGuestRegisters->rdx);
 
-				const SetLStartCallbackParam& param = *((const SetLStartCallbackParam*)pGuestRegisters->rdx);
-
-				lstarInfo.pEprocess = NULL;
-				lstarInfo.pCallback = param.callback;
-				lstarInfo.param = param.param;
+					lstarInfo.pEprocess = NULL;
+					lstarInfo.pCallback = param.callback;
+					lstarInfo.param = param.param;
+				}
 			}
 
 			return true;
