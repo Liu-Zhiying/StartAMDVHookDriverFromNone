@@ -19,4 +19,5 @@ mov rcx, r8
 cpuid
 
 DelayProcessEntryInGuest Endp
+
 End

@@ -121,7 +121,7 @@ _mystr Proc
 _mystr Endp
 
 _cs_selector Proc
-	mov ax,cs;
+	mov ax,cs
 	ret
 _cs_selector Endp
 
@@ -307,7 +307,6 @@ mov rax, [rsp]
 add rax, 6000h
 ;备份guest寄存器
 BACKUP_REGISTERS rax
-
 
 ;machineFrame 参数
 mov rcx, rsp

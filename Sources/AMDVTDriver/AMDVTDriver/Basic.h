@@ -171,7 +171,7 @@ class KernelVector
 	SIZE_TYPE length;
 	SIZE_TYPE capacity;
 
-	PVOID(*pMemAlloc)(SIZE_TYPE byteCnt, ULONG tag);
+	PVOID (*pMemAlloc)(SIZE_TYPE byteCnt, ULONG tag);
 	void (*pMemFree)(PVOID pMem, ULONG tag);
 
 public:

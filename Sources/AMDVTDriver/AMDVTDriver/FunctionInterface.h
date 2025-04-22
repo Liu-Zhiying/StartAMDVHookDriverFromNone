@@ -1,6 +1,7 @@
 #ifndef FUNCTION_INTERFACE_H
 #define FUNCTION_INTERFACE_H
 
+#include <ntifs.h>
 #include <ntddk.h>
 #include <wdm.h>
 #include <stdio.h>
@@ -9,6 +10,8 @@
 #include "Hook.h"
 #include "PageTable.h"
 #include "Basic.h"
+#define NOT_DEFINE_PUBLIC_STRCUT
+#include "AMDVDriverSDK.h"
 
 constexpr UINT32 FUNC_TAG = MAKE_TAG('f', 'u', 'n', 'c');
 
@@ -18,13 +21,15 @@ constexpr UINT32 FUNC_TAG = MAKE_TAG('f', 'u', 'n', 'c');
 //VMM调用 DelayProcessInGuestFromVMM::DelayProcess 设置要执行的函数入口，参数，当前的guest寄存器状态
 //这个函数会备份当前寄存器到DelayProcessInGuestFromVMM对象中，并将guest寄存器状态修改好以执行
 //VMM直接返回，执行DelayProcessEntryInGuest，DelayProcessEntryInGuest结尾将调用DelayProcessInGuestFromVMM::CpuidHandler::HandleCpuid
-//DelayProcessInGuestFromVMM::CpuidHandler::HandleCpuid将elayProcessInGuestFromVMM中备份的寄存器值还原并退出
+//DelayProcessInGuestFromVMM::CpuidHandler::HandleCpuid将DelayProcessInGuestFromVMM中备份的寄存器值还原并退出
 //返回原guest处执行
 
 class DelayProcessInGuestFromVMM
 {
 	GenericRegisters originGuestRegs;
-
+	VMCB vmcb;
+	bool needRestoreVmcb;
+	
 	class CpuidHandler : public ICpuidInterceptPlugin
 	{
 		friend class DelayProcessInGuestFromVMM;
@@ -35,23 +40,28 @@ class DelayProcessInGuestFromVMM
 			PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
 	};
 
+public:
+	#pragma code_seg("PGAE")
+	DelayProcessInGuestFromVMM() : originGuestRegs({}), vmcb({}), needRestoreVmcb(false) { PAGED_CODE(); }
+	#pragma code_seg("PGAE")
+	~DelayProcessInGuestFromVMM() { PAGED_CODE(); }
+
 	static UINT8 signleObjMem[sizeof(CpuidHandler)];
 	static bool isSignleObjInited;
 
 	static CpuidHandler& GetCpuidHandler();
 
 	//将寄存器还原以恢复在原guest位置执行
-	void EndDelayProcessInternal(GenericRegisters & guestRegisters);
+	void EndDelayProcessInternal(GenericRegisters& guestRegisters, VirtCpuInfo& virtCpuInfo);
 
 public:
 
 	typedef void(*ProcessorFunction)(PVOID param, DelayProcessInGuestFromVMM& delayProcessor);
 
-	DelayProcessInGuestFromVMM() : originGuestRegs({}) {}
 	static void AppendCpuidHandler(SVMManager& svmManager);
 
 	//设置某个函数在guest中运行
-	void BeginDelayProcess(ProcessorFunction func, PVOID param, GenericRegisters& guestRegisters);
+	void BeginDelayProcess(ProcessorFunction func, PVOID param, GenericRegisters& guestRegisters, VirtCpuInfo* pVirtCpuInfo = NULL);
 
 	#pragma code_seg()
 	GenericRegisters& GetOriginRegs() { return originGuestRegs; }
@@ -70,18 +80,34 @@ struct ParamsStore
 
 class FunctionInterface : public IManager, public ICpuidInterceptPlugin
 {
+	typedef NTSTATUS(NTAPI* PPsLookupProcessByProcessId)(HANDLE ProcessId, PEPROCESS* Process);
+
 	SVMManager svmManager;
 	NptHookManager nptHookManager;
 	FunctionCallerManager functionCallerManager;
 	MsrHookManager<1> msrHookManager;
 	ICpuidInterceptPlugin* pOldCpuidHandler;
-	KernelVector<DelayProcessInGuestFromVMM, FUNC_TAG, MemType::NonPaged> delayProcessors;
-	KernelVector<ParamsStore, FUNC_TAG, MemType::NonPaged> stores;
+	KernelVector<DelayProcessInGuestFromVMM, FUNC_TAG> delayProcessors;
+	KernelVector<ParamsStore, FUNC_TAG> stores;
+	PPsLookupProcessByProcessId pPsLookupProcessByProcessId;
+
+	friend void SetLStarCallbackInR3Processor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor);
+	friend void ResetLStarCallbackProcessor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor);
+
+	struct LStarCallbackInfo
+	{
+	public:
+		LStarCallback pCallback;
+		PEPROCESS pEprocess;
+		PVOID param;
+		LStarCallbackInfo() : pCallback(NULL), pEprocess(NULL), param(NULL) {}
+	} lstarInfo;
 
 	static void NTAPI LStarHookCallback(GenericRegisters* pRegisters, PVOID param1, PVOID param2, PVOID param3);
+
 public:
 	#pragma code_seg("PAGE")
-	FunctionInterface() : pOldCpuidHandler(NULL) {}
+	FunctionInterface() : pOldCpuidHandler(NULL), pPsLookupProcessByProcessId(NULL) {}
 
 	void SetMsrHookParameters();
 	void EnableMsrHook();
@@ -97,4 +123,3 @@ public:
 };
 
 #endif // !FUNCTION_INTERFACE_H
-

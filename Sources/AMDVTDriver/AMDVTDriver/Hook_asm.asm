@@ -15,8 +15,8 @@ LStarHookEntry Proc
 	;允许r0访问r3数据（禁用SMAP）
 	stac
 	;交换RSP
-	mov   qword ptr gs:[10h], rsp
-	mov   rsp,qword ptr gs:[1A8h]
+	mov qword ptr gs:[10h], rsp
+	mov rsp, qword ptr gs:[1A8h]
 
 	push 0
 	push 0
@@ -57,7 +57,7 @@ LStarHookEntry Proc
 	movaps xmmword ptr [rsp + 0F0h], xmm15
 
 	mov rcx, qword ptr gs:[10h]
-	mov [rsp + 190h], rcx
+	mov [rsp + 188h], rcx
 
 	;填充参数并调用hook
 	mov rcx, rsp
@@ -103,7 +103,7 @@ LStarHookEntry Proc
 	popfq
 	add rsp, 20h
 	;还原rsp
-	mov rsp,qword ptr gs:[10h]
+	mov rsp, qword ptr gs:[10h]
 	;禁止r3访问r0数据（启用SMAP）
 	clac
 	;还原用户态gs

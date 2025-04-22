@@ -11,11 +11,10 @@
 //获取当前页表基地址（虚拟地址）
 //适用于Windows 10 1607 之后的页表随机化
 #pragma code_seg()
-void GetSysPXEVirtAddr(PTR_TYPE* pPxeOut)
+void GetSysPXEVirtAddr(PTR_TYPE* pPxeOut, PTR_TYPE pxePhyAddr)
 {
 	//读取Cr3物理地址并使用Windows内核函数转换为虚拟地址
 	//注意：MmGetVirtualForPhysical被微软标记为保留，除了名字外啥也没提
-	PTR_TYPE pxePhyAddr = __readcr3();
 	pxePhyAddr &= 0xFFFFFFFFFFFFF000;
 
 	PTR_TYPE testAddr = NULL;
@@ -27,8 +26,14 @@ void GetSysPXEVirtAddr(PTR_TYPE* pPxeOut)
 	for (index = 0; index < 0x200; index++)
 	{
 		//构造可能的pxe地址
-		testAddr = 0xFFFF000000000000;
+		if (index < 0x100)
+			testAddr = 0x0000000000000000;
+		else
+			testAddr = 0xFFFF000000000000;
+
 		testAddr |= index << 39 | index << 30 | index << 21 | index << 12;
+
+		if (testAddr == NULL) continue;
 
 		//确认可以读
 		if (MmIsAddressValid((PVOID)testAddr))
@@ -51,30 +56,6 @@ void GetSysPXEVirtAddr(PTR_TYPE* pPxeOut)
 	}
 
 	*pPxeOut = testAddr;
-
-	/*
-
-	老版代码，使用了微软的保留API
-
-	PHYSICAL_ADDRESS temp = {};
-	temp.QuadPart = (PTR_TYPE)pxePhyAddr;
-
-	PTR_TYPE* pxeVirtualAddr = (PTR_TYPE*)MmGetVirtualForPhysical(temp);
-	if (pxeVirtualAddr == NULL)
-	{
-		*pPxeOut = NULL;
-		return;
-	}
-
-	*pPxeOut = (PTR_TYPE)pxeVirtualAddr;
-
-	*/
-
-	//显示结果
-	//KdPrint(("GetWinPageTableVirtualAddr(): PXE: 0x%llx\n", *pPxeOut));
-	//KdPrint(("GetWinPageTableVirtualAddr(): PPE: 0x%llx\n", (*pPxeOut) & 0xFFFFFFFFFFE00000));
-	//KdPrint(("GetWinPageTableVirtualAddr(): PDE: 0x%llx\n", (*pPxeOut) & 0xFFFFFFFFC0000000));
-	//KdPrint(("GetWinPageTableVirtualAddr(): PTE: 0x%llx\n", (*pPxeOut) & 0xFFFFFF8000000000));
 
 	return;
 }

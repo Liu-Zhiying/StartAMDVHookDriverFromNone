@@ -1,5 +1,3 @@
-#define NOT_DEFINE_PUBLIC_STRCUT
-#include "AMDVDriverSDK.h"
 #include "FunctionInterface.h"
 
 constexpr UINT32 DELAY_PROCESS_END_CPUID_FUNCTION = 0x400000fd;
@@ -18,6 +16,14 @@ NTSTATUS FunctionInterface::Init()
 {
 	PAGED_CODE();
 
+	UNICODE_STRING unicodeString = {};
+	
+	RtlInitUnicodeString(&unicodeString, L"PsLookupProcessByProcessId");
+
+	pPsLookupProcessByProcessId = (PPsLookupProcessByProcessId)MmGetSystemRoutineAddress(&unicodeString);
+	if (pPsLookupProcessByProcessId == NULL)
+		return STATUS_DRIVER_ENTRYPOINT_NOT_FOUND;
+
 	int cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
 
 	delayProcessors.SetCapacity(cpuCnt);
@@ -28,24 +34,24 @@ NTSTATUS FunctionInterface::Init()
 		delayProcessors.PushBack(DelayProcessInGuestFromVMM());
 		stores.PushBack(ParamsStore());
 	}
-
+	
 	NTSTATUS status = STATUS_SUCCESS;
 	do
 	{
 		SetMsrHookParameters();
 
 		DelayProcessInGuestFromVMM::AppendCpuidHandler(svmManager);
-
+		
 		AppendCpuidHandler();
 
 		status = nptHookManager.Init();
 		if (!NT_SUCCESS(status))
 			break;
-
+		
 		status = msrHookManager.Init();
 		if (!NT_SUCCESS(status))
 			break;
-
+		
 		status = functionCallerManager.Init();
 		if (!NT_SUCCESS(status))
 			break;
@@ -62,7 +68,7 @@ NTSTATUS FunctionInterface::Init()
 
 	if (!NT_SUCCESS(status))
 		Deinit();
-
+	
 	return status;
 }
 
@@ -87,12 +93,10 @@ void FunctionInterface::AppendCpuidHandler()
 }
 
 #pragma code_seg()
-void NewFunctionCallerProcessor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor)
+static void NewFunctionCallerProcessor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor)
 {
 	ParamsStore& store = *((ParamsStore*)param);
 	GenericRegisters& regs = delayProcessor.GetOriginRegs();
-
-	KdPrint(("Run NewFunctionCallerProcessor\n"));
 
 	regs.rbx = (PTR_TYPE)((FunctionCallerManager*)store.pThis)->GetFunctionCaller(store.param1);
 
@@ -100,11 +104,9 @@ void NewFunctionCallerProcessor(PVOID param, DelayProcessInGuestFromVMM& delayPr
 }
 
 #pragma code_seg()
-void DelFunctionCallerProcessor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor)
+static void DelFunctionCallerProcessor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor)
 {
 	ParamsStore& store = *((ParamsStore*)param);
-
-	KdPrint(("Run DelFunctionCallerProcessor\n"));
 
 	((FunctionCallerManager*)store.pThis)->RemoveFunctionCaller(store.param1);
 
@@ -112,22 +114,54 @@ void DelFunctionCallerProcessor(PVOID param, DelayProcessInGuestFromVMM& delayPr
 }
 
 #pragma code_seg()
-void AddNptHookProcessor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor)
+static void AddNptHookProcessor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor)
 {
 	ParamsStore& store = *((ParamsStore*)param);
 	GenericRegisters& regs = delayProcessor.GetOriginRegs();
-
+	
 	regs.rbx = ((NptHookManager*)store.pThis)->AddHook(*((NptHookRecord*)store.param1)) == STATUS_SUCCESS;
 
 	delayProcessor.EndDelayProcess();
 }
 
 #pragma code_seg()
-void DelNptHookProcessor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor)
+static void DelNptHookProcessor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor)
 {
 	ParamsStore& store = *((ParamsStore*)param);
 
 	((NptHookManager*)store.pThis)->RemoveHook(store.param1);
+
+	delayProcessor.EndDelayProcess();
+}
+
+#pragma code_seg()
+void SetLStarCallbackInR3Processor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor)
+{
+	ParamsStore& store = *((ParamsStore*)param);
+
+	const SetLStartCallbackParam& setLstarInfo = *((SetLStartCallbackParam*)store.param1);
+
+	FunctionInterface& functionInterface = *((FunctionInterface*)store.pThis);
+
+	if (functionInterface.pPsLookupProcessByProcessId(PsGetCurrentProcessId(), &functionInterface.lstarInfo.pEprocess) == STATUS_SUCCESS)
+	{
+		functionInterface.lstarInfo.pCallback = setLstarInfo.callback;
+		functionInterface.lstarInfo.param = setLstarInfo.param;
+	}
+	
+	delayProcessor.EndDelayProcess();
+}
+
+#pragma code_seg()
+void ResetLStarCallbackProcessor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor)
+{
+	ParamsStore& store = *((ParamsStore*)param);
+	FunctionInterface& functionInterface = *((FunctionInterface*)store.pThis);
+
+	ObDereferenceObject(functionInterface.lstarInfo.pEprocess);
+ 	functionInterface.lstarInfo.pEprocess = NULL;
+	functionInterface.lstarInfo.pCallback = NULL;
+	functionInterface.lstarInfo.param = NULL;
 
 	delayProcessor.EndDelayProcess();
 }
@@ -139,7 +173,7 @@ bool FunctionInterface::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters*
 	{
 		if (pVirtCpuInfo->guestVmcb.statusFields.cpl != 0)
 			return false;
-
+		
 		int cpuIdx = pVirtCpuInfo->otherInfo.cpuIdx;
 
 		pGuestRegisters->rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
@@ -157,7 +191,7 @@ bool FunctionInterface::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters*
 		{
 			stores[cpuIdx].pThis = &functionCallerManager;
 			stores[cpuIdx].param1 = (PVOID)pGuestRegisters->rdx;
-			delayProcessors[cpuIdx].BeginDelayProcess(NewFunctionCallerProcessor, &stores[cpuIdx], *pGuestRegisters);
+			delayProcessors[cpuIdx].BeginDelayProcess(DelFunctionCallerProcessor, &stores[cpuIdx], *pGuestRegisters);
 			return true;
 		}
 		case ADD_NPT_HOOK_CPUID_SUBFUNCTION:
@@ -174,6 +208,50 @@ bool FunctionInterface::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters*
 			delayProcessors[cpuIdx].BeginDelayProcess(DelNptHookProcessor, &stores[cpuIdx], *pGuestRegisters);
 			return true;
 		}
+		case SET_SYSCALL_HOOK_CALLBACK_CPUID_SUBFUNCION:
+		{
+			if (KeGetCurrentIrql() > PASSIVE_LEVEL)
+			{
+				pGuestRegisters->rbx = 0;
+				return true;
+			}
+
+			if (!(pVirtCpuInfo->guestVmcb.statusFields.rip & 0xffff000000000000))
+			{
+				//释放进程句柄
+				if (pGuestRegisters->rdx == NULL && lstarInfo.pEprocess != NULL)
+				{
+					stores[cpuIdx].pThis = (PVOID)this;
+					delayProcessors[cpuIdx].BeginDelayProcess(ResetLStarCallbackProcessor, 0, *pGuestRegisters, pVirtCpuInfo);
+				}
+				else
+				{
+					stores[cpuIdx].param1 = (PVOID)pGuestRegisters->rdx;
+					stores[cpuIdx].param2 = (PVOID)pVirtCpuInfo;
+					stores[cpuIdx].pThis = (PVOID)this;
+
+					delayProcessors[cpuIdx].BeginDelayProcess(SetLStarCallbackInR3Processor, &stores[cpuIdx], *pGuestRegisters, pVirtCpuInfo);
+				}
+			}
+			else
+			{
+				if (pGuestRegisters->rdx == NULL)
+				{
+					lstarInfo.pEprocess = NULL;
+					lstarInfo.pCallback = NULL;
+					lstarInfo.param = NULL;
+					return true;
+				}
+
+				const SetLStartCallbackParam& param = *((const SetLStartCallbackParam*)pGuestRegisters->rdx);
+
+				lstarInfo.pEprocess = NULL;
+				lstarInfo.pCallback = param.callback;
+				lstarInfo.param = param.param;
+			}
+
+			return true;
+		}
 		default:
 			return false;
 		}
@@ -188,13 +266,39 @@ void FunctionInterface::EnableMsrHook()
 	PAGED_CODE();
 
 	//HOOK MSR_LSTAR
-	EnableLStrHook<1>(&msrHookManager, LStarHookCallback, (PVOID)1, (PVOID)2, (PVOID)3);
+	EnableLStrHook<1>(&msrHookManager, LStarHookCallback, (PVOID)this, (PVOID)0, (PVOID)0);
 }
 
 #pragma code_seg()
 void FunctionInterface::LStarHookCallback(GenericRegisters* pRegisters, PVOID param1, PVOID param2, PVOID param3)
 {
+	UNREFERENCED_PARAMETER(param2);
+	UNREFERENCED_PARAMETER(param3);
 
+	FunctionInterface& functionInterface = *(FunctionInterface*)param1;
+	StackDump* pStackDump = (StackDump*)pRegisters->rsp;
+
+	if (functionInterface.lstarInfo.pCallback != NULL)
+	{
+		if (functionInterface.lstarInfo.pEprocess == NULL)
+		{
+			functionInterface.lstarInfo.pCallback(*pRegisters, *pStackDump, (UINT64)PsGetCurrentProcessId(), functionInterface.lstarInfo.param);
+		}
+		else
+		{
+			PEPROCESS process = NULL;
+			NTSTATUS status = PsLookupProcessByProcessId(PsGetCurrentThreadId(), &process);
+			
+			if (NT_SUCCESS(status))
+			{
+				StackDump stackDumpCopy = {};
+
+				RtlCopyMemory((PVOID)&stackDumpCopy, pStackDump, sizeof(StackDump));
+				
+				functionInterface.lstarInfo.pCallback(*pRegisters, stackDumpCopy, (UINT64)PsGetCurrentProcessId(), functionInterface.lstarInfo.param);
+			}
+		}
+	}
 }
 
 #pragma code_seg("PAGE")
@@ -218,7 +322,7 @@ bool DelayProcessInGuestFromVMM::CpuidHandler::HandleCpuid(VirtCpuInfo* pVirtCpu
 {
 	if (pGuestRegisters->rax == DELAY_PROCESS_END_CPUID_FUNCTION)
 	{
-		((DelayProcessInGuestFromVMM*)pGuestRegisters->rcx)->EndDelayProcessInternal(*pGuestRegisters);
+		((DelayProcessInGuestFromVMM*)pGuestRegisters->rcx)->EndDelayProcessInternal(*pGuestRegisters, *pVirtCpuInfo);
 		return true;
 	}
 
@@ -236,23 +340,31 @@ void DelayProcessInGuestFromVMM::AppendCpuidHandler(SVMManager& svmManager)
 }
 
 #pragma code_seg()
-void DelayProcessInGuestFromVMM::BeginDelayProcess(ProcessorFunction func, PVOID param, GenericRegisters& guestRegisters)
+void DelayProcessInGuestFromVMM::BeginDelayProcess(ProcessorFunction func, PVOID param, GenericRegisters& guestRegisters, VirtCpuInfo* pVirtCpuInfo)
 {
-	originGuestRegs = guestRegisters;
-	GenericRegisters processEnvironment = originGuestRegs;
+	if (pVirtCpuInfo != NULL)
+	{
+		//备份vmcb
+		vmcb = pVirtCpuInfo->guestVmcb;
 
-	//设置新的执行位置
-	processEnvironment.rip = (PTR_TYPE)DelayProcessEntryInGuest;
+		//备份额外寄存器
+		originGuestRegs = guestRegisters;
+		
+		//设置回调执行环境
+		guestRegisters.extraInfo1 = 0;
+		guestRegisters.extraInfo2 = 0;
 
-	//设置参数
-	processEnvironment.rcx = (PTR_TYPE)func;
-	processEnvironment.rdx = (PTR_TYPE)param;
-	processEnvironment.r8 = (PTR_TYPE)this;
+		guestRegisters.rcx = (PTR_TYPE)func;
+		guestRegisters.rdx = (PTR_TYPE)param;
+		guestRegisters.r8 = (PTR_TYPE)this;
+		guestRegisters.rsp = (PTR_TYPE)pVirtCpuInfo->stack + PAGE_SIZE;
 
-	//去掉TF标志位
-	processEnvironment.rflags &= ~0x100;
+		guestRegisters.rip = (PTR_TYPE)DelayProcessEntryInGuest;
 
-	guestRegisters = processEnvironment;
+		pVirtCpuInfo->guestVmcb.controlFields.nRip = guestRegisters.rip;
+
+		needRestoreVmcb = true;
+	}
 }
 
 #pragma code_seg()
@@ -281,7 +393,20 @@ DelayProcessInGuestFromVMM::CpuidHandler& DelayProcessInGuestFromVMM::GetCpuidHa
 }
 
 #pragma code_seg()
-void DelayProcessInGuestFromVMM::EndDelayProcessInternal(GenericRegisters& guestRegisters)
+void DelayProcessInGuestFromVMM::EndDelayProcessInternal(GenericRegisters& guestRegisters, VirtCpuInfo& virtCpuInfo)
 {
-	guestRegisters = originGuestRegs;
+	if (needRestoreVmcb)
+	{
+		virtCpuInfo.guestVmcb = vmcb;
+
+		PTR_TYPE ripBackup = guestRegisters.rip;
+
+		guestRegisters = originGuestRegs;
+
+		virtCpuInfo.guestVmcb.controlFields.nRip = originGuestRegs.rip;
+
+		guestRegisters.rip = ripBackup;
+
+		needRestoreVmcb = false;
+	}
 }

@@ -7,6 +7,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "AMDVTDriver", "AMDVTDriver\
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "AMDVDriverKernelTest", "AMDVDriverKernelTest\AMDVDriverKernelTest.vcxproj", "{E4E67121-13D8-F4D1-160C-090F739AEDE8}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "AMDVDriverUserModeTest", "AMDVDriverUserModeTest\AMDVDriverUserModeTest.vcxproj", "{F79CDAD5-4179-470F-9903-380B72F63112}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -25,6 +27,10 @@ Global
 		{E4E67121-13D8-F4D1-160C-090F739AEDE8}.Release|x64.ActiveCfg = Release|x64
 		{E4E67121-13D8-F4D1-160C-090F739AEDE8}.Release|x64.Build.0 = Release|x64
 		{E4E67121-13D8-F4D1-160C-090F739AEDE8}.Release|x64.Deploy.0 = Release|x64
+		{F79CDAD5-4179-470F-9903-380B72F63112}.Debug|x64.ActiveCfg = Debug|x64
+		{F79CDAD5-4179-470F-9903-380B72F63112}.Debug|x64.Build.0 = Debug|x64
+		{F79CDAD5-4179-470F-9903-380B72F63112}.Release|x64.ActiveCfg = Release|x64
+		{F79CDAD5-4179-470F-9903-380B72F63112}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -15,6 +15,39 @@ pExAllocatePool2Handler pSourceFunction1 = NULL;
 #pragma data_seg()
 pExAllocatePoolWithTagHandler pSourceFunction2 = NULL;
 
+#pragma code_seg()
+void SyscallCallback(GenericRegisters& guestRegisters, StackDump& stackDump, UINT32 pid, PVOID param)
+{
+	UNREFERENCED_PARAMETER(guestRegisters);
+	UNREFERENCED_PARAMETER(stackDump);
+	UNREFERENCED_PARAMETER(param);
+
+	KdPrint(("Syscall interrepted PID = %d\n", pid));
+
+	const SIZE_T lineSize = 16;
+
+	KdPrint(("Stack dump:\n"));
+
+	for (SIZE_T idx1 = 0; idx1 < sizeof stackDump / lineSize; ++idx1)
+		KdPrint(("%2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x", 
+				stackDump[idx1 * lineSize],
+				stackDump[idx1 * lineSize + 1],
+				stackDump[idx1 * lineSize + 2],
+				stackDump[idx1 * lineSize + 3],
+				stackDump[idx1 * lineSize + 4],
+				stackDump[idx1 * lineSize + 5],
+				stackDump[idx1 * lineSize + 6],
+				stackDump[idx1 * lineSize + 7], 
+				stackDump[idx1 * lineSize + 8], 
+				stackDump[idx1 * lineSize + 9], 
+				stackDump[idx1 * lineSize + 10], 
+				stackDump[idx1 * lineSize + 11],
+				stackDump[idx1 * lineSize + 12],
+				stackDump[idx1 * lineSize + 13],
+				stackDump[idx1 * lineSize + 14],
+				stackDump[idx1 * lineSize + 15]));
+}
+
 #pragma code_seg("PAGE")
 void DriverUnload(PDRIVER_OBJECT pDriverObject)
 {
@@ -28,6 +61,10 @@ void DriverUnload(PDRIVER_OBJECT pDriverObject)
 		AMDVDriverInterface::DelFunctionCaller(pSourceFunction2);
 	if (pFunctionCaller1 != NULL)
 		AMDVDriverInterface::DelFunctionCaller(pSourceFunction1);
+
+	SetLStartCallbackParam param = {};
+
+	AMDVDriverInterface::SetSyscallHookCallback(NULL);
 
 	return;
 }
@@ -127,6 +164,15 @@ extern "C" NTSTATUS DriverEntry(PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pR
 				KdPrint(("Hook ExAllocatePool2 Failed!\n"));
 		}
 	}
+
+	SetLStartCallbackParam param = {};
+
+	param.callback = SyscallCallback;
+
+	if (AMDVDriverInterface::SetSyscallHookCallback(&param))
+		KdPrint(("Hook syscall OK!\n"));
+	else
+		KdPrint(("Hook syscall Failed!\n"));
 
 	return STATUS_SUCCESS;
 }

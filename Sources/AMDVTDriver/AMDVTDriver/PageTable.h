@@ -381,9 +381,6 @@ public:
 	virtual ~PageTableManager() { PAGED_CODE(); Deinit(); }
 };
 
-
-
-
 //每个核心的NPT页表管理器
 class CoreNptPageTableManager
 {
@@ -448,6 +445,6 @@ public:
 };
 
 //查询当前CR3（顶层页表）的虚拟地址
-void GetSysPXEVirtAddr(PTR_TYPE* pPxeOut);
+void GetSysPXEVirtAddr(PTR_TYPE* pPxeOut, PTR_TYPE pxePhyAddr);
 
 #endif
