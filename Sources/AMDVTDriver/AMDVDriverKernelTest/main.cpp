@@ -21,6 +21,7 @@ void SyscallCallback(GenericRegisters& guestRegisters, StackDump& stackDump, UIN
 	UNREFERENCED_PARAMETER(guestRegisters);
 	UNREFERENCED_PARAMETER(stackDump);
 	UNREFERENCED_PARAMETER(param);
+	UNREFERENCED_PARAMETER(pid);
 
 	KdPrint(("Syscall interrepted PID = %d\n", pid));
 

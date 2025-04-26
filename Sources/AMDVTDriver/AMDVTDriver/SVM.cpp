@@ -776,7 +776,7 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 
 	//硬件断电和其他复杂断点的处理我并没有写，需要的话自己加
 
-	if (pGuestRegisters->rflags & 0x100)
+	if (pGuestRegisters->rflags & (1ULL << EFLAGS_TF_OFFSET))
 	{
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.data = 0;
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vector = DB_EXCEPTION_VECTOR_INDEX;
