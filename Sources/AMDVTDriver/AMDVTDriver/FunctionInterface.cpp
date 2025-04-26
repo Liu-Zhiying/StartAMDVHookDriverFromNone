@@ -360,8 +360,6 @@ void DelayProcessInGuestFromVMM::BeginDelayProcess(ProcessorFunction func, PVOID
 		guestRegisters.r8 = (PTR_TYPE)this;
 		guestRegisters.rsp = (PTR_TYPE)pVirtCpuInfo->stack + PAGE_SIZE;
 
-		guestRegisters.rip = (PTR_TYPE)DelayProcessEntryInGuest;
-
 		pVirtCpuInfo->guestVmcb.controlFields.nRip = guestRegisters.rip;
 
 		needRestoreVmcb = true;
