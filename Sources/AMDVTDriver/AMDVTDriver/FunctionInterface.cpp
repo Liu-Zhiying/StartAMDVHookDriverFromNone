@@ -128,8 +128,10 @@ static void AddNptHookProcessor(PVOID param, DelayProcessInGuestFromVMM& delayPr
 static void DelNptHookProcessor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor)
 {
 	ParamsStore& store = *((ParamsStore*)param);
+	GenericRegisters& regs = delayProcessor.GetOriginRegs();
 
-	((NptHookManager*)store.pThis)->RemoveHook(store.param1);
+	regs.rdx = ((NptHookManager*)store.pThis)->RemoveHook(store.param1)
+		== STATUS_SUCCESS;
 
 	delayProcessor.EndDelayProcess();
 }
@@ -171,9 +173,6 @@ bool FunctionInterface::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters*
 {
 	if (pGuestRegisters->rax == CALL_FUNCTION_INTERFACE_CPUID_FUNCTION)
 	{
-		if (pVirtCpuInfo->guestVmcb.statusFields.cpl != 0)
-			return false;
-		
 		int cpuIdx = pVirtCpuInfo->otherInfo.cpuIdx;
 
 		pGuestRegisters->rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
@@ -210,12 +209,6 @@ bool FunctionInterface::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters*
 		}
 		case SET_SYSCALL_HOOK_CALLBACK_CPUID_SUBFUNCION:
 		{
-			if (KeGetCurrentIrql() > PASSIVE_LEVEL)
-			{
-				pGuestRegisters->rbx = 0;
-				return true;
-			}
-
 			if (!(pVirtCpuInfo->guestVmcb.statusFields.rip & 0xffff000000000000))
 			{
 				//ÊÍ·Å½ø³Ì¾ä±ú
