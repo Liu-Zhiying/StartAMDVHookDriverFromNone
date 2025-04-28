@@ -130,7 +130,7 @@ static void DelNptHookProcessor(PVOID param, DelayProcessInGuestFromVMM& delayPr
 	ParamsStore& store = *((ParamsStore*)param);
 	GenericRegisters& regs = delayProcessor.GetOriginRegs();
 
-	regs.rdx = ((NptHookManager*)store.pThis)->RemoveHook(store.param1)
+	regs.rbx = ((NptHookManager*)store.pThis)->RemoveHook(store.param1)
 		== STATUS_SUCCESS;
 
 	delayProcessor.EndDelayProcess();
