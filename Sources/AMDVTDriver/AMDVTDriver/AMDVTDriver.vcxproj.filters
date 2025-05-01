@@ -45,9 +45,6 @@
     <ClInclude Include="PageTable.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="VMCB.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="SVM.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -61,6 +58,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="AMDVDriverSDK.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="VMCB.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

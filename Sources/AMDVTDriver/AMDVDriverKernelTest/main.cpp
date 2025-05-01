@@ -30,7 +30,7 @@ void SyscallCallback(GenericRegisters& guestRegisters, StackDump& stackDump, UIN
 	KdPrint(("Stack dump:\n"));
 
 	for (SIZE_T idx1 = 0; idx1 < sizeof stackDump / lineSize; ++idx1)
-		KdPrint(("%2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x", 
+		KdPrint(("%2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x\n", 
 				stackDump[idx1 * lineSize],
 				stackDump[idx1 * lineSize + 1],
 				stackDump[idx1 * lineSize + 2],

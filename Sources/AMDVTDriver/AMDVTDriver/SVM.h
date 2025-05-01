@@ -226,12 +226,12 @@ class SVMManager : public IManager
 	INCr3Provider* pNCr3Provider;
 	IInvalidOpcodeInterceptPlugin* pInvalidOpcodeInterceptPlugin;
 	bool enableSce;
-	NTSTATUS EnterVirtualization();
-	void LeaveVirtualization();
 
 	friend void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr);
 	
 public:
+	NTSTATUS EnterVirtualization();
+	void LeaveVirtualization();
 	//请勿调用该函数，这个函数由VMM自动调用
 	void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr);
 	#pragma code_seg("PAGE")

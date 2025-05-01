@@ -451,21 +451,7 @@ void SVMManager::Deinit()
 	PAGED_CODE();
 	if (pVirtCpuInfo != NULL && cpuCnt)
 	{
-		auto coreAction = [this](UINT32 idx) -> NTSTATUS
-			{
-				if (pVirtCpuInfo[idx] != NULL)
-				{
-					//如果已经进入虚拟化，则按照核心退出虚拟化
-					if (pVirtCpuInfo[idx]->otherInfo.isInVirtualizaion)
-						LeaveVirtualization();
-					FreeContigousMem(pVirtCpuInfo[idx], SVM_TAG);
-					pVirtCpuInfo[idx] = NULL;
-				}
-				return STATUS_SUCCESS;
-			};
-
-		RunOnEachCore(0, cpuCnt, coreAction);
-
+		LeaveVirtualization();
 		FreeNonPagedMem(pVirtCpuInfo, SVM_TAG);
 		pVirtCpuInfo = NULL;
 		cpuCnt = 0;
@@ -568,9 +554,23 @@ NTSTATUS SVMManager::EnterVirtualization()
 void SVMManager::LeaveVirtualization()
 {
 	PAGED_CODE();
-	int result[4] = {};
+
 	//调用CPUID指令通知VMM退出
-	__cpuidex(result, GUEST_CALL_VMM_CPUID_FUNCTION, 0);
+	auto coreAction = [this](UINT32 idx) -> NTSTATUS
+	{
+		int result[4] = {};
+		if (pVirtCpuInfo[idx] != NULL)
+		{
+			//如果已经进入虚拟化，则按照核心退出虚拟化
+			if (pVirtCpuInfo[idx]->otherInfo.isInVirtualizaion)
+				__cpuidex(result, GUEST_CALL_VMM_CPUID_FUNCTION, 0);
+			FreeContigousMem(pVirtCpuInfo[idx], SVM_TAG);
+			pVirtCpuInfo[idx] = NULL;
+		}
+		return STATUS_SUCCESS;
+	};
+
+	RunOnEachCore(0, cpuCnt, coreAction);
 }
 
 #pragma code_seg()

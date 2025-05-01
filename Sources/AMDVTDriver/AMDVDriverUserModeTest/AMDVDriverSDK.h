@@ -116,6 +116,13 @@ public:
 class AMDVDriverInterface
 {
 public:
+	//确认是否为R0地址
+	static constexpr bool IsKernelAddress(PVOID address)
+	{
+		return ((UINT64)address) & 0xffff000000000000;
+	}
+
+	//检测SVM驱动是否加载
 	static bool IsInSVM()
 	{
 		PTR_TYPE regs[4] = { GUEST_CALL_VMM_CPUID_FUNCTION, 0, IS_IN_SVM_CPUID_SUBFUNCTION, 0 };
@@ -127,8 +134,12 @@ public:
 			   *reinterpret_cast<UINT32*>(&regs[2]) == 'SVM';
 	}
 
+	//添加NPT HOOK（目前仅R0）
 	static bool AddNptHook(const NptHookRecord& record)
 	{
+		if (!IsKernelAddress(record.pGotoVirtAddr) || !IsKernelAddress(record.pOriginVirtAddr))
+			return false;
+
 		PTR_TYPE regs[4] = { CALL_FUNCTION_INTERFACE_CPUID_FUNCTION, 0, ADD_NPT_HOOK_CPUID_SUBFUNCTION, (PTR_TYPE)&record };
 
 		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
@@ -136,15 +147,23 @@ public:
 		return regs[1];
 	}
 
+	//删除NPT HOOK（目前仅R0）
 	static void DelNptHook(PVOID pSourceFunction)
 	{
+		if (!IsKernelAddress(pSourceFunction))
+			return;
+
 		PTR_TYPE regs[4] = { CALL_FUNCTION_INTERFACE_CPUID_FUNCTION, 0, DEL_NPT_HOOK_CPUID_SUBFUNCTION, (PTR_TYPE)pSourceFunction };
 
 		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 	}
 
+	//创建函数跳板（目前仅R0）
 	static PVOID AddFunctionCaller(PVOID pOriginFunction)
 	{
+		if (!IsKernelAddress(pOriginFunction))
+			return NULL;
+
 		PTR_TYPE regs[4] = { CALL_FUNCTION_INTERFACE_CPUID_FUNCTION, 0, NEW_FUNCTION_CALLER_CPUID_SUBFUNCTION, (PTR_TYPE)pOriginFunction };
 
 		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
@@ -152,13 +171,18 @@ public:
 		return (PVOID)regs[1];
 	}
 
+	//删除函数跳板（目前仅R0）
 	static void DelFunctionCaller(PVOID pOriginFunction)
 	{
+		if (!IsKernelAddress(pOriginFunction))
+			return;
+
 		PTR_TYPE regs[4] = { CALL_FUNCTION_INTERFACE_CPUID_FUNCTION, 0, DEL_FUNCTION_CALLER_CPUID_SUBFUNCTION, (PTR_TYPE)pOriginFunction };
 
 		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 	}
 
+	//设置Syscall HOOK（目前仅R0，R3版本测试中）
 	static bool SetSyscallHookCallback(SetLStartCallbackParam* param)
 	{
 		PTR_TYPE regs[4] = { CALL_FUNCTION_INTERFACE_CPUID_FUNCTION, 0, SET_SYSCALL_HOOK_CALLBACK_CPUID_SUBFUNCION, (PTR_TYPE)param };

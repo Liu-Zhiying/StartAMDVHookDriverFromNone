@@ -13,9 +13,9 @@ VT NPT HOOK 完成
 3. ~~系统运行部分程序（例如QQ NT）缓慢卡死，运行大量程序时蓝屏~~
 4. ~~在 Release 模式 或者 使用 ExAllocatePoolWithTag 时会DPC超时~~ 
 ## 下一步计划
-尝试修复已知问题  
-~~windbg在VMM崩溃时可以查看到客户机调用堆栈~~  
-支持嵌套虚拟化
+支持嵌套虚拟化  
+将所有CPUID对VMM的调用改为vmmcall对VMM的调用  
+实现64位用户态R3对Syscall hook的回调支持 
 ## 编译环境
 VS222 + WDK 10
 ## 测试环境
@@ -32,3 +32,5 @@ Intel XED https://github.com/intelxed/xed 修改见 XED Information 文件夹
 ## 文档
 为了更快的下载代码，本仓库的文档移除，文档转移到另外一个仓库  
 https://github.com/Liu-Zhiying/StartAMDVHookDriverFromNone_Documents  
+## 如何使用SDK调用驱动功能
+提取项目中的 AMDVDriverSDK.h 和 common.asm 并在生成依赖项里面打开masm并设置common.asm由masm编译和打开C99标准即可使用  

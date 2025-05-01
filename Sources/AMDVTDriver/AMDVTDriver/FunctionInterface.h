@@ -58,14 +58,17 @@ public:
 
 	typedef void(*ProcessorFunction)(PVOID param, DelayProcessInGuestFromVMM& delayProcessor);
 
+	//添加新CPUID处理器
 	static void AppendCpuidHandler(SVMManager& svmManager);
 
 	//设置某个函数在guest中运行
 	void BeginDelayProcess(ProcessorFunction func, PVOID param, GenericRegisters& guestRegisters, VirtCpuInfo* pVirtCpuInfo = NULL);
-
+	
+	//在处理器函数获取备份的寄存器值，用于处理器函数返回值写入
 	#pragma code_seg()
 	GenericRegisters& GetOriginRegs() { return originGuestRegs; }
 
+	//在处理器函数中直接终止处理器函数的执行
 	void EndDelayProcess();
 };
 
@@ -109,8 +112,11 @@ public:
 	#pragma code_seg("PAGE")
 	FunctionInterface() : pOldCpuidHandler(NULL), pPsLookupProcessByProcessId(NULL) {}
 
+	//设置MSR HOOK参数
 	void SetMsrHookParameters();
+	//启用MSR HOOK
 	void EnableMsrHook();
+	//添加新CPUID处理器
 	void AppendCpuidHandler();
 
 	//处理拦截的cpuid指令，true代表已经处理，false代表未处理

@@ -7,6 +7,7 @@ UINT8 DelayProcessInGuestFromVMM::signleObjMem[sizeof(DelayProcessInGuestFromVMM
 #pragma data_seg()
 bool DelayProcessInGuestFromVMM::isSignleObjInited = false;
 
+//这个函数用于DelayProcessInGuestFromVMM跳转处理器函数的入口点
 //请不要在C/C++中直接调用这个函数，请见FunctionInterface_asm.asm中的定义
 //这个函数不会ret，而是在结尾执行cpuid，直接调用将产生灾难性后果
 extern "C" void DelayProcessEntryInGuest(DelayProcessInGuestFromVMM::ProcessorFunction func, PVOID param, DelayProcessInGuestFromVMM* obj);
@@ -26,6 +27,7 @@ NTSTATUS FunctionInterface::Init()
 
 	int cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
 
+	//按照CPU核心初始化延迟调用器和对应的参数
 	delayProcessors.SetCapacity(cpuCnt);
 	stores.SetCapacity(cpuCnt);
 
@@ -38,30 +40,39 @@ NTSTATUS FunctionInterface::Init()
 	NTSTATUS status = STATUS_SUCCESS;
 	do
 	{
+		//设置LSTAR HOOK 参数
 		SetMsrHookParameters();
 
+		//为延迟调用器注册CPUID Handler
 		DelayProcessInGuestFromVMM::AppendCpuidHandler(svmManager);
 		
+		//为本对象注册CPUID Handler
 		AppendCpuidHandler();
 
+		//初始化NPT HOOK
 		status = nptHookManager.Init();
 		if (!NT_SUCCESS(status))
 			break;
 		
+		//初始化MSR HOOK
 		status = msrHookManager.Init();
 		if (!NT_SUCCESS(status))
 			break;
 		
+		//初始化函数HOOK管理器
 		status = functionCallerManager.Init();
 		if (!NT_SUCCESS(status))
 			break;
 
+		//将nptHookManager 和 svmManager 绑定
 		nptHookManager.SetupSVMManager(svmManager);
 
+		//进入虚拟化
 		status = svmManager.Init();
 		if (!NT_SUCCESS(status))
 			break;
 
+		//启用MSR HOOK
 		EnableMsrHook();
 
 	} while (false);
@@ -76,6 +87,7 @@ NTSTATUS FunctionInterface::Init()
 void FunctionInterface::Deinit()
 {
 	PAGED_CODE();
+	//释放资源和退出虚拟化
 	msrHookManager.Deinit();
 	svmManager.Deinit();
 	nptHookManager.Deinit();
@@ -85,10 +97,14 @@ void FunctionInterface::Deinit()
 #pragma code_seg("PAGE")
 void FunctionInterface::AppendCpuidHandler()
 {
+	//防止重复添加
 	if (svmManager.GetCpuidInterceptPlugin() == this)
 		return;
 
+	//记录上一个CPUID处理器，方便链式调用
 	pOldCpuidHandler = svmManager.GetCpuidInterceptPlugin();
+
+	//设置新的CPUID处理器
 	svmManager.SetCpuIdInterceptPlugin(this);
 }
 
@@ -98,6 +114,7 @@ static void NewFunctionCallerProcessor(PVOID param, DelayProcessInGuestFromVMM& 
 	ParamsStore& store = *((ParamsStore*)param);
 	GenericRegisters& regs = delayProcessor.GetOriginRegs();
 
+	//调用FunctionCallerManager生成HOOK函数调用原函数的跳板机器码，并写入返回值
 	regs.rbx = (PTR_TYPE)((FunctionCallerManager*)store.pThis)->GetFunctionCaller(store.param1);
 
 	delayProcessor.EndDelayProcess();
@@ -108,6 +125,7 @@ static void DelFunctionCallerProcessor(PVOID param, DelayProcessInGuestFromVMM& 
 {
 	ParamsStore& store = *((ParamsStore*)param);
 
+	//调用FunctionCallerManager删除跳板代码
 	((FunctionCallerManager*)store.pThis)->RemoveFunctionCaller(store.param1);
 
 	delayProcessor.EndDelayProcess();
@@ -119,6 +137,7 @@ static void AddNptHookProcessor(PVOID param, DelayProcessInGuestFromVMM& delayPr
 	ParamsStore& store = *((ParamsStore*)param);
 	GenericRegisters& regs = delayProcessor.GetOriginRegs();
 	
+	//调用NptHookManager的AddHook方法添加内核NPT HOOK，并写入返回值
 	regs.rbx = ((NptHookManager*)store.pThis)->AddHook(*((NptHookRecord*)store.param1)) == STATUS_SUCCESS;
 
 	delayProcessor.EndDelayProcess();
@@ -130,6 +149,7 @@ static void DelNptHookProcessor(PVOID param, DelayProcessInGuestFromVMM& delayPr
 	ParamsStore& store = *((ParamsStore*)param);
 	GenericRegisters& regs = delayProcessor.GetOriginRegs();
 
+	//调用NptHookManager的RemoveHook方法删除内核NPT HOOK，并写入返回值
 	regs.rbx = ((NptHookManager*)store.pThis)->RemoveHook(store.param1)
 		== STATUS_SUCCESS;
 
@@ -171,12 +191,14 @@ void ResetLStarCallbackProcessor(PVOID param, DelayProcessInGuestFromVMM& delayP
 #pragma code_seg()
 bool FunctionInterface::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
 {
+	//比较CPUID Function是否是对应的CPUID Function
 	if (pGuestRegisters->rax == CALL_FUNCTION_INTERFACE_CPUID_FUNCTION)
 	{
 		int cpuIdx = pVirtCpuInfo->otherInfo.cpuIdx;
 
 		pGuestRegisters->rip = pVirtCpuInfo->guestVmcb.controlFields.nRip;
 
+		//根据对应的功能设置Guest执行特定处理函数。并且在执行完处理函数之后恢复原Guest执行
 		switch (pGuestRegisters->rcx)
 		{
 		case NEW_FUNCTION_CALLER_CPUID_SUBFUNCTION:
@@ -314,8 +336,10 @@ void FunctionInterface::SetMsrHookParameters()
 #pragma code_seg()
 bool DelayProcessInGuestFromVMM::CpuidHandler::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
 {
+	//比较CPUID Function是否是对应的Function
 	if (pGuestRegisters->rax == DELAY_PROCESS_END_CPUID_FUNCTION)
 	{
+		//还原Guest状态。恢复Guest执行
 		((DelayProcessInGuestFromVMM*)pGuestRegisters->rcx)->EndDelayProcessInternal(*pGuestRegisters, *pVirtCpuInfo);
 		return true;
 	}
@@ -326,6 +350,7 @@ bool DelayProcessInGuestFromVMM::CpuidHandler::HandleCpuid(VirtCpuInfo* pVirtCpu
 #pragma code_seg("PAGE")
 void DelayProcessInGuestFromVMM::AppendCpuidHandler(SVMManager& svmManager)
 {
+	//同上一个AppendCpuidHandler函数
 	if (svmManager.GetCpuidInterceptPlugin() == &GetCpuidHandler())
 		return;
 
@@ -348,6 +373,7 @@ void DelayProcessInGuestFromVMM::BeginDelayProcess(ProcessorFunction func, PVOID
 		guestRegisters.extraInfo1 = 0;
 		guestRegisters.extraInfo2 = 0;
 
+		//设置执行新入口函数
 		guestRegisters.rcx = (PTR_TYPE)func;
 		guestRegisters.rdx = (PTR_TYPE)param;
 		guestRegisters.r8 = (PTR_TYPE)this;
@@ -364,6 +390,7 @@ void DelayProcessInGuestFromVMM::EndDelayProcess()
 {
 	PTR_TYPE regs[4] = {};
 
+	//调用DelayProcessInGuextFromVMM内部的CPUID 处理器恢复Guest执行
 	regs[0] = DELAY_PROCESS_END_CPUID_FUNCTION;
 	regs[1] = 0;
 	regs[2] = (PTR_TYPE)this;
@@ -389,6 +416,7 @@ void DelayProcessInGuestFromVMM::EndDelayProcessInternal(GenericRegisters& guest
 {
 	if (needRestoreVmcb)
 	{
+		//恢复Guest状态
 		virtCpuInfo.guestVmcb = vmcb;
 
 		PTR_TYPE ripBackup = guestRegisters.rip;
