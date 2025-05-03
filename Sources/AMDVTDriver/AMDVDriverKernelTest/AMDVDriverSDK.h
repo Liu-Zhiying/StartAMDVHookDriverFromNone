@@ -1,6 +1,10 @@
 #ifndef AMDVDRIVERSDK_H
 #define AMDVDRIVERSDK_H
 
+#ifndef KERNEL_USAGE
+#include <Windows.h>
+#endif
+
 typedef unsigned int UINT32;
 typedef unsigned long long PTR_TYPE;
 typedef void* PVOID;
@@ -104,13 +108,27 @@ typedef const UINT8 StackDump[128];
 //syscall 拦截回调，r0和r3都可使用
 typedef void (*LStarCallback)(GenericRegisters& guestRegisters, StackDump& stackDump, UINT32 pid, PVOID param);
 
+typedef PVOID(*PUserFunction)(PVOID param);
+
+PVOID UserLStarCallbackEntry(PVOID param);
+
+struct LStarCallbackArgsPack
+{
+	GenericRegisters guestRegisters;
+	StackDump stackDump;
+	UINT32 pid;
+	PVOID param;
+	LStarCallback callback;
+};
+
 struct SetLStartCallbackParam
 {
 	LStarCallback callback;
 	PVOID param;
+	PUserFunction extraEntry;
 
 public:
-	SetLStartCallbackParam() : callback(NULL), param(NULL) {}
+	SetLStartCallbackParam() : callback(NULL), param(NULL), extraEntry(NULL) {}
 };
 
 class AMDVDriverInterface
@@ -186,6 +204,11 @@ public:
 	static bool SetSyscallHookCallback(SetLStartCallbackParam* param)
 	{
 		PTR_TYPE regs[4] = { CALL_FUNCTION_INTERFACE_CPUID_FUNCTION, 0, SET_SYSCALL_HOOK_CALLBACK_CPUID_SUBFUNCION, (PTR_TYPE)param };
+
+#ifndef KERNEL_USAGE
+		regs[1] = GetCurrentProcessId();
+		param->extraEntry = UserLStarCallbackEntry;
+#endif
 
 		SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
 

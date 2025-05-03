@@ -88,6 +88,7 @@
     <FilesToPackage Include="$(TargetPath)" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="AMDVDriverSDK.cpp" />
     <ClCompile Include="Basic.cpp" />
     <ClCompile Include="FunctionInterface.cpp" />
     <ClCompile Include="Hook.cpp" />

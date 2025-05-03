@@ -57,7 +57,6 @@ struct VirtCpuInfo
 	DECLSPEC_ALIGN(PAGE_SIZE) VMCB guestVmcb;
 	DECLSPEC_ALIGN(PAGE_SIZE) VMCB hostVmcb;
 	DECLSPEC_ALIGN(PAGE_SIZE) UINT8 hostStatus[PAGE_SIZE];
-	DECLSPEC_ALIGN(PAGE_SIZE) UINT8 stack[2 * PAGE_SIZE];
 	DECLSPEC_ALIGN(PAGE_SIZE) struct 
 	{
 		UINT32 isInVirtualizaion;
@@ -70,6 +69,8 @@ struct VirtCpuInfo
 		GenericRegisters genericRegisters1;
 		GenericRegisters genericRegisters2;
 	} regsBackup;
+	DECLSPEC_ALIGN(PAGE_SIZE) UINT8 stack1[KERNEL_STACK_SIZE];
+	DECLSPEC_ALIGN(PAGE_SIZE) UINT8 stack2[KERNEL_STACK_SIZE];
 };
 
 //MSRÀ¹½Ø²å¼þ

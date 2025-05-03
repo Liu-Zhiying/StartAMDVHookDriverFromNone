@@ -11,6 +11,7 @@
 #include "PageTable.h"
 #include "Basic.h"
 #define NOT_DEFINE_PUBLIC_STRCUT
+#define KERNEL_USAGE
 #include "AMDVDriverSDK.h"
 
 constexpr UINT32 FUNC_TAG = MAKE_TAG('f', 'u', 'n', 'c');
@@ -40,14 +41,14 @@ class DelayProcessInGuestFromVMM
 			PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
 	};
 
+	static UINT8 signleObjMem[sizeof(CpuidHandler)];
+	static bool isSignleObjInited;
+
 public:
 	#pragma code_seg("PGAE")
 	DelayProcessInGuestFromVMM() : originGuestRegs({}), vmcb({}), needRestoreVmcb(false) { PAGED_CODE(); }
 	#pragma code_seg("PGAE")
 	~DelayProcessInGuestFromVMM() { PAGED_CODE(); }
-
-	static UINT8 signleObjMem[sizeof(CpuidHandler)];
-	static bool isSignleObjInited;
 
 	static CpuidHandler& GetCpuidHandler();
 
@@ -95,22 +96,16 @@ class FunctionInterface : public IManager, public ICpuidInterceptPlugin
 	PPsLookupProcessByProcessId pPsLookupProcessByProcessId;
 
 	friend void SetLStarCallbackInR3Processor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor);
-	friend void ResetLStarCallbackProcessor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor);
+	friend void ResetLStarCallbackInR3Processor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor);
 
-	struct LStarCallbackInfo
-	{
-	public:
-		LStarCallback pCallback;
-		PEPROCESS pEprocess;
-		PVOID param;
-		LStarCallbackInfo() : pCallback(NULL), pEprocess(NULL), param(NULL) {}
-	} lstarInfo;
+	SetLStartCallbackParam lstarInfo;
+	PEPROCESS pLstarCallbackProcess;
 
 	static void NTAPI LStarHookCallback(GenericRegisters* pRegisters, PVOID param1, PVOID param2, PVOID param3);
 
 public:
 	#pragma code_seg("PAGE")
-	FunctionInterface() : pOldCpuidHandler(NULL), pPsLookupProcessByProcessId(NULL) {}
+	FunctionInterface() : pOldCpuidHandler(NULL), pPsLookupProcessByProcessId(NULL), pLstarCallbackProcess(NULL), lstarInfo({}) {}
 
 	//…Ë÷√MSR HOOK≤Œ ˝
 	void SetMsrHookParameters();

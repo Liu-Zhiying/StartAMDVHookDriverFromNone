@@ -5,7 +5,6 @@
 ;r8 DelayProcessInGuestFromVMM对象的指针
 
 DelayProcessEntryInGuest Proc
-
 ;调用处理函数
 mov rax, rcx
 sub rsp, 28h
@@ -19,5 +18,18 @@ mov rcx, r8
 cpuid
 
 DelayProcessEntryInGuest Endp
+
+CallUserFunctionFromKernelEntry Proc
+
+mov r9, rsp
+mov rsp, rcx
+push r9
+mov rcx, r8
+call qword ptr [rdx]
+pop r9
+mov rsp, r9
+ret
+
+CallUserFunctionFromKernelEntry Endp
 
 End

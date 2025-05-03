@@ -159,6 +159,7 @@ constexpr UINT32 CPUID_FN_SVM_FEATURE = 0x80000001;
 constexpr UINT32 CPUID_FN_NPT_FEATURE = 0x8000000a;
 constexpr UINT32 EFLAGS_RF_OFFSET = 16;
 constexpr UINT32 EFLAGS_TF_OFFSET = 8;
+constexpr UINT32 EFLAGS_IF_OFFSET = 9;
 constexpr UINT32 BP_EXPECTION_VECTOR_INDEX = 3;
 constexpr UINT32 UD_EXCEPTION_VECTOR_INDEX = 6;
 constexpr UINT32 DB_EXCEPTION_VECTOR_INDEX = 1;
@@ -449,5 +450,11 @@ _Pragma("code_seg()")																												\
 classname& operator=(const classname&) = default;																					\
 _Pragma("code_seg()")																												\
 classname& operator=(classname&&) = default;
+
+//判断是否为内核地址
+constexpr bool IsKernelAddress(PVOID address)
+{
+	return ((PTR_TYPE)address) & 0xffff000000000000;
+}
 
 #endif // !BASIC_H

@@ -1,5 +1,6 @@
 #include <ntddk.h>
 #include <wdm.h>
+#define KERNEL_USAGE
 #include "AMDVDriverSDK.h"
 
 typedef PVOID(NTAPI* pExAllocatePool2Handler)(POOL_FLAGS Flags, SIZE_T NumberOfBytes, ULONG Tag);

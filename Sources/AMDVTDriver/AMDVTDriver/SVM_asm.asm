@@ -262,7 +262,7 @@ push rdx
 
 ;把当前寄存器数据载入pVirtCpuInfo->regsBackup.genericRegisters2
 mov rax, [rsp + 10h]
-add rax, 61A0h
+add rax, 41A0h
 BACKUP_REGISTERS rax
 
 ;CompareGenericRegisters 的两个参数
@@ -304,7 +304,7 @@ vmload rax
 
 ;载入pVirtCpuInfo->regsBackup.genericRegisters1的地址
 mov rax, [rsp]
-add rax, 6000h
+add rax, 4000h
 ;备份guest寄存器
 BACKUP_REGISTERS rax
 
@@ -313,7 +313,7 @@ mov rcx, rsp
 add rcx, 38h
 ;guestRegisters 参数
 mov rdx, [rsp]
-add rdx, 6000h
+add rdx, 4000h
 ;virtCpuInfo 参数
 mov r8, [rsp]
 ;调用函数初始化MACHINE_FRAME
@@ -324,7 +324,7 @@ ALLOC_STACK_AND_CALL FillMachineFrame, 30h
 mov rcx, [rsp]
 ;pGuestRegisters 参数
 mov rdx, rcx
-add rdx, 6000h
+add rdx, 4000h
 ;pGuestVmcbPhyAddr 参数
 mov r8, [rsp + 8h]
 ;pHostVmcbPhyAddr 参数
@@ -335,7 +335,7 @@ ALLOC_STACK_AND_CALL VmExitHandler, 30h
 
 ;载入pVirtCpuInfo->regsBackup.genericRegisters1的地址
 mov rax, [rsp]
-add rax, 6000h
+add rax, 4000h
 
 ;恢复guest寄存器
 RESTORE_REGISTERS rax

@@ -411,7 +411,7 @@ NTSTATUS SVMManager::Init()
 		//为每个CPU分配进入虚拟化所需的内存
 		for (idx = 0; idx < cpuCnt; ++idx)
 		{
-			pVirtCpuInfo[idx] = (VirtCpuInfo*)AllocContiguousMem(sizeof(VirtCpuInfo), SVM_TAG);
+			pVirtCpuInfo[idx] = (VirtCpuInfo*)AllocNonPagedMem(sizeof(VirtCpuInfo), SVM_TAG);
 			if (pVirtCpuInfo[idx] == NULL)
 			{
 				status = STATUS_INSUFFICIENT_RESOURCES;
@@ -452,6 +452,12 @@ void SVMManager::Deinit()
 	if (pVirtCpuInfo != NULL && cpuCnt)
 	{
 		LeaveVirtualization();
+
+		for (SIZE_TYPE idx = 0; idx < cpuCnt; ++idx)
+		{
+			FreeNonPagedMem(pVirtCpuInfo[idx], SVM_TAG);
+			pVirtCpuInfo[idx] = NULL;
+		}
 		FreeNonPagedMem(pVirtCpuInfo, SVM_TAG);
 		pVirtCpuInfo = NULL;
 		cpuCnt = 0;
@@ -534,7 +540,7 @@ NTSTATUS SVMManager::EnterVirtualization()
 					pVirtCpuInfo[cpuIdx],
 					(PVOID)MmGetPhysicalAddress(&pVirtCpuInfo[cpuIdx]->guestVmcb).QuadPart,
 					(PVOID)MmGetPhysicalAddress(&pVirtCpuInfo[cpuIdx]->hostVmcb).QuadPart,
-					pVirtCpuInfo[cpuIdx]->stack + sizeof pVirtCpuInfo[cpuIdx]->stack
+					pVirtCpuInfo[cpuIdx]->stack1 + sizeof pVirtCpuInfo[cpuIdx]->stack1
 				);
 
 				//不应该返回
@@ -564,8 +570,6 @@ void SVMManager::LeaveVirtualization()
 			//如果已经进入虚拟化，则按照核心退出虚拟化
 			if (pVirtCpuInfo[idx]->otherInfo.isInVirtualizaion)
 				__cpuidex(result, GUEST_CALL_VMM_CPUID_FUNCTION, 0);
-			FreeContigousMem(pVirtCpuInfo[idx], SVM_TAG);
-			pVirtCpuInfo[idx] = NULL;
 		}
 		return STATUS_SUCCESS;
 	};
@@ -599,7 +603,7 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 			case EXIT_SVM_CPUID_SUBFUNCTION:
 			{
 				//如果不是从内核模式调用退出则忽略
-				if (!(pVMMVirtCpuInfo->guestVmcb.controlFields.nRip & 0xffff000000000000))
+				if (!IsKernelAddress((PVOID)pVMMVirtCpuInfo->guestVmcb.controlFields.nRip))
 					return;
 
 				//通过
