@@ -21,6 +21,11 @@ void ChangePageAccessForUser(PTR_TYPE virtAddr, bool canUserAccess)
 {
 	PageTableLevel4* pTopPageTable = NULL;
 	GetSysPXEVirtAddr((PTR_TYPE*)&pTopPageTable, __readcr3());
+
+	UINT16 index1 = (virtAddr >> 39) & 0x1ff;
+	UINT16 index2 = (virtAddr >> 30) & 0x1ff;
+	UINT16 index3 = (virtAddr >> 21) & 0x1ff;
+	UINT16 index4 = (virtAddr >> 12) & 0x1ff;
 	
 	PHYSICAL_ADDRESS phyAddr = {};
 	phyAddr.QuadPart = pTopPageTable[(virtAddr >> 39) & 0x1ff].entries->fields.pagePpn;
@@ -94,8 +99,10 @@ NTSTATUS CopyUserDataToKernel(PVOID pUserData, SIZE_TYPE dataLength, PVOID kerne
 		__except (EXCEPTION_EXECUTE_HANDLER)
 		{
 			ntStatus = GetExceptionCode();
-			break;
 		}
+
+		if (!needUnlockPage)
+			break;
 
 		PVOID buffer = MmGetSystemAddressForMdlSafe(mdl, NormalPagePriority | MdlMappingNoExecute);
 
