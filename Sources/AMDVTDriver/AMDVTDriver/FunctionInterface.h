@@ -93,19 +93,18 @@ class FunctionInterface : public IManager, public ICpuidInterceptPlugin
 	ICpuidInterceptPlugin* pOldCpuidHandler;
 	KernelVector<DelayProcessInGuestFromVMM, FUNC_TAG> delayProcessors;
 	KernelVector<ParamsStore, FUNC_TAG> stores;
-	PPsLookupProcessByProcessId pPsLookupProcessByProcessId;
 
 	friend void SetLStarCallbackInR3Processor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor);
 	friend void ResetLStarCallbackInR3Processor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor);
 
 	SetLStartCallbackParam lstarInfo;
-	PEPROCESS pLstarCallbackProcess;
+	INT64 pid;
 
 	static void NTAPI LStarHookCallback(GenericRegisters* pRegisters, PVOID param1, PVOID param2, PVOID param3);
 
 public:
 	#pragma code_seg("PAGE")
-	FunctionInterface() : pOldCpuidHandler(NULL), pPsLookupProcessByProcessId(NULL), pLstarCallbackProcess(NULL), lstarInfo({}) {}
+	FunctionInterface() : pOldCpuidHandler(NULL), pid(-1LL), lstarInfo({}) {}
 
 	//…Ë÷√MSR HOOK≤Œ ˝
 	void SetMsrHookParameters();

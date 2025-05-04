@@ -493,7 +493,7 @@ NTSTATUS SVMManager::EnterVirtualization()
 
 				//如果断点拦截插件存在，打开断点拦截
 				if (pBreakpointInterceptPlugin != NULL)
-					pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.interceptExceptionX = (1UL << BP_EXPECTION_VECTOR_INDEX);
+					pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.interceptExceptionX = (1UL << BP_EXCEPTION_VECTOR_INDEX);
 
 				//如果UD拦截插件存在，打开UD拦截
 				if (pInvalidOpcodeInterceptPlugin != NULL)
@@ -714,7 +714,7 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 
 		//默认直接注入断点异常由guest处理
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.data = 0;
-		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vector = BP_EXPECTION_VECTOR_INDEX;
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vector = BP_EXCEPTION_VECTOR_INDEX;
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.type = 3;
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vaild = 1;
 		pGuestRegisters->rip = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
@@ -750,7 +750,7 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 	{
 		//注入断点异常由guest处理
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.data = 0;
-		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vector = BP_EXPECTION_VECTOR_INDEX;
+		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vector = BP_EXCEPTION_VECTOR_INDEX;
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.type = 3;
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.fields.vaild = 1;
 		pGuestRegisters->rip = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;

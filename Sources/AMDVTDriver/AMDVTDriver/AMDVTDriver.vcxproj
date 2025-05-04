@@ -104,6 +104,7 @@
     <ClInclude Include="Hook.h" />
     <ClInclude Include="PageTable.h" />
     <ClInclude Include="SVM.h" />
+    <ClInclude Include="UnpublicAPI.h" />
     <ClInclude Include="VMCB.h" />
   </ItemGroup>
   <ItemGroup>

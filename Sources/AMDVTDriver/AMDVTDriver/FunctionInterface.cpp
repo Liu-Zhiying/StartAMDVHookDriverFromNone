@@ -1,4 +1,5 @@
 #include "FunctionInterface.h"
+#include "UnpublicAPI.h"
 
 constexpr UINT32 DELAY_PROCESS_END_CPUID_FUNCTION = 0x400000fd;
 
@@ -12,130 +13,10 @@ bool DelayProcessInGuestFromVMM::isSignleObjInited = false;
 //这个函数不会ret，而是在结尾执行cpuid，直接调用将产生灾难性后果
 extern "C" void DelayProcessEntryInGuest(DelayProcessInGuestFromVMM::ProcessorFunction func, PVOID param, DelayProcessInGuestFromVMM* obj);
 
-typedef PVOID(*PUserFunction)(PVOID param);
-
-extern "C" PVOID CallUserFunctionFromKernelEntry(PVOID userRsp, PUserFunction userFunction, PVOID param);
-
-#pragma code_seg("PAGED")
-void ChangePageAccessForUser(PTR_TYPE virtAddr, bool canUserAccess)
-{
-	PageTableLevel4* pTopPageTable = NULL;
-	GetSysPXEVirtAddr((PTR_TYPE*)&pTopPageTable, __readcr3());
-
-	UINT16 index1 = (virtAddr >> 39) & 0x1ff;
-	UINT16 index2 = (virtAddr >> 30) & 0x1ff;
-	UINT16 index3 = (virtAddr >> 21) & 0x1ff;
-	UINT16 index4 = (virtAddr >> 12) & 0x1ff;
-	
-	PHYSICAL_ADDRESS phyAddr = {};
-	phyAddr.QuadPart = pTopPageTable[(virtAddr >> 39) & 0x1ff].entries->fields.pagePpn;
-	PageTableLevel123* pPageTable = (PageTableLevel123*)MmGetVirtualForPhysical(phyAddr);
-
-	for (int i = 3; i > 1; --i)
-	{
-	 	phyAddr.QuadPart = pPageTable[(virtAddr >> (((i - 1) * 9) + 12)) & 0x1ff].entries->fields.pagePpn;
-		pPageTable = (PageTableLevel123*)MmGetVirtualForPhysical(phyAddr);
-	}
-
-	pPageTable[(virtAddr >> 12) & 0x1ff].entries->fields.userAccess = canUserAccess;
-};
-
-#pragma code_seg("PAGED")
-PVOID CallUserFunctionFromKernel(PUserFunction userFunction, PVOID param, bool& isSuccess)
-{
-	isSuccess = false;
-
-	PageTableLevel4* pTopPageTable = NULL;
-	GetSysPXEVirtAddr((PTR_TYPE*)&pTopPageTable, __readcr3());
-
-	for (SIZE_TYPE idx = 0; idx < 0x100; ++idx)
-		pTopPageTable[idx].entries->fields.executionDisabled = false;
-
-	PVOID userRsp = AllocPagedMem(PAGE_SIZE * 256, FUNC_TAG);
-
-	if (userRsp == NULL)
-		return NULL;
-
-	for (int i = 0; i < 256; ++i)
-		ChangePageAccessForUser((PTR_TYPE)userRsp + i * PAGE_SIZE, true);
-
-	PVOID result = CallUserFunctionFromKernelEntry((PVOID)((PTR_TYPE)userRsp + 256 * PAGE_SIZE), userFunction, param);
-
-	isSuccess = true;
-
-	for (int i = 0; i < 256; ++i)
-		ChangePageAccessForUser((PTR_TYPE)userRsp + i * PAGE_SIZE, false);
-
-	FreePagedMem(userRsp, FUNC_TAG);
-
-	for (SIZE_TYPE idx = 0; idx < 0x100; ++idx)
-		pTopPageTable[idx].entries->fields.executionDisabled = true;
-
-	return result;
-}
-
-#pragma code_seg("PAGE")
-NTSTATUS CopyUserDataToKernel(PVOID pUserData, SIZE_TYPE dataLength, PVOID kernelBuffer)
-{
-	NTSTATUS ntStatus = STATUS_SUCCESS;
-	PMDL mdl = NULL;
-	bool needUnlockPage = false;
-
-	do
-	{
-		mdl = IoAllocateMdl(pUserData, (ULONG)dataLength, FALSE, TRUE, NULL);
-
-		if (!mdl)
-		{
-			ntStatus = STATUS_INSUFFICIENT_RESOURCES;
-			break;
-		}
-
-		__try
-		{
-			MmProbeAndLockPages(mdl, UserMode, IoReadAccess);
-			needUnlockPage = true;
-		}
-		__except (EXCEPTION_EXECUTE_HANDLER)
-		{
-			ntStatus = GetExceptionCode();
-		}
-
-		if (!needUnlockPage)
-			break;
-
-		PVOID buffer = MmGetSystemAddressForMdlSafe(mdl, NormalPagePriority | MdlMappingNoExecute);
-
-		if (!buffer) {
-			ntStatus = STATUS_INSUFFICIENT_RESOURCES;
-			break;
-		}
-
-		RtlCopyMemory(kernelBuffer, buffer, dataLength);
-
-	} while (false);
-
-	if (needUnlockPage)
-		MmUnlockPages(mdl);
-
-	if (mdl != NULL)
-		IoFreeMdl(mdl);
-
-	return ntStatus;
-}
-
 #pragma code_seg("PAGE")
 NTSTATUS FunctionInterface::Init()
 {
 	PAGED_CODE();
-
-	UNICODE_STRING unicodeString = {};
-	
-	RtlInitUnicodeString(&unicodeString, L"PsLookupProcessByProcessId");
-
-	pPsLookupProcessByProcessId = (PPsLookupProcessByProcessId)MmGetSystemRoutineAddress(&unicodeString);
-	if (pPsLookupProcessByProcessId == NULL)
-		return STATUS_DRIVER_ENTRYPOINT_NOT_FOUND;
 	
 	int cpuCnt = KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
 
@@ -209,6 +90,8 @@ void FunctionInterface::Deinit()
 #pragma code_seg("PAGE")
 void FunctionInterface::AppendCpuidHandler()
 {
+	PAGED_CODE();
+
 	//防止重复添加
 	if (svmManager.GetCpuidInterceptPlugin() == this)
 		return;
@@ -220,9 +103,11 @@ void FunctionInterface::AppendCpuidHandler()
 	svmManager.SetCpuIdInterceptPlugin(this);
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 static void NewFunctionCallerProcessor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor)
 {
+	PAGED_CODE();
+
 	ParamsStore& store = *((ParamsStore*)param);
 	GenericRegisters& regs = delayProcessor.GetOriginRegs();
 
@@ -232,9 +117,11 @@ static void NewFunctionCallerProcessor(PVOID param, DelayProcessInGuestFromVMM& 
 	delayProcessor.EndDelayProcess();
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 static void DelFunctionCallerProcessor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor)
 {
+	PAGED_CODE();
+
 	ParamsStore& store = *((ParamsStore*)param);
 
 	//调用FunctionCallerManager删除跳板代码
@@ -243,9 +130,11 @@ static void DelFunctionCallerProcessor(PVOID param, DelayProcessInGuestFromVMM& 
 	delayProcessor.EndDelayProcess();
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 static void AddNptHookProcessor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor)
 {
+	PAGED_CODE();
+
 	ParamsStore& store = *((ParamsStore*)param);
 	GenericRegisters& regs = delayProcessor.GetOriginRegs();
 	
@@ -255,9 +144,11 @@ static void AddNptHookProcessor(PVOID param, DelayProcessInGuestFromVMM& delayPr
 	delayProcessor.EndDelayProcess();
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 static void DelNptHookProcessor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor)
 {
+	PAGED_CODE();
+
 	ParamsStore& store = *((ParamsStore*)param);
 	GenericRegisters& regs = delayProcessor.GetOriginRegs();
 
@@ -268,9 +159,11 @@ static void DelNptHookProcessor(PVOID param, DelayProcessInGuestFromVMM& delayPr
 	delayProcessor.EndDelayProcess();
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 void SetLStarCallbackInR3Processor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor)
 {
+	PAGED_CODE();
+
 	ParamsStore& store = *((ParamsStore*)param);
 	SetLStartCallbackParam& setLstarInfo = *((SetLStartCallbackParam*)store.param1);
 	FunctionInterface& functionInterface = *((FunctionInterface*)store.pThis);
@@ -278,44 +171,31 @@ void SetLStarCallbackInR3Processor(PVOID param, DelayProcessInGuestFromVMM& dela
 
 	regs.rbx = 0;
 
-	if (functionInterface.pPsLookupProcessByProcessId(store.param2, &functionInterface.pLstarCallbackProcess) == STATUS_SUCCESS)
+	if (1)
 	{
-		KAPC_STATE state = {};
-		KeStackAttachProcess(functionInterface.pLstarCallbackProcess, &state);
-
-		if (PsGetCurrentProcess() == functionInterface.pLstarCallbackProcess)
-		{
-			if (NT_SUCCESS(CopyUserDataToKernel(&setLstarInfo, sizeof setLstarInfo, &functionInterface.lstarInfo)))
-			{
-				regs.rbx = 1;
-			}
-			else
-			{
-				ObDereferenceObject(functionInterface.pLstarCallbackProcess);
-				functionInterface.pLstarCallbackProcess = NULL;
-				functionInterface.lstarInfo = {};
-			}
-
-			KeUnstackDetachProcess(&state);
-		}
+		regs.rbx = 1;
+		functionInterface.pid = (UINT64)store.param2;
+	}
+	else
+	{
+		functionInterface.pid = -1LL;
+		functionInterface.lstarInfo = {};
 	}
 	
 	delayProcessor.EndDelayProcess();
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 void ResetLStarCallbackInR3Processor(PVOID param, DelayProcessInGuestFromVMM& delayProcessor)
 {
+	PAGED_CODE();
+
 	ParamsStore& store = *((ParamsStore*)param);
 	FunctionInterface& functionInterface = *((FunctionInterface*)store.pThis);
 	GenericRegisters& regs = delayProcessor.GetOriginRegs();
 
-	if (functionInterface.pLstarCallbackProcess != NULL)
-	{
-		ObDereferenceObject(functionInterface.pLstarCallbackProcess);
-		functionInterface.pLstarCallbackProcess = NULL;
-	}
 	functionInterface.lstarInfo = {};
+	functionInterface.pid = -1LL;
 
 	regs.rbx = 1;
 
@@ -387,14 +267,12 @@ bool FunctionInterface::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters*
 				if (pGuestRegisters->rdx == NULL)
 				{
 					lstarInfo = {};
-					pLstarCallbackProcess = NULL;
+					pid = -1LL;
 				}
 				else
 				{
-					const SetLStartCallbackParam& param = *((const SetLStartCallbackParam*)pGuestRegisters->rdx);
-
-					pLstarCallbackProcess = NULL;
-					lstarInfo = param;
+					lstarInfo = *((const SetLStartCallbackParam*)pGuestRegisters->rdx);
+					pid = -1LL;
 				}
 			}
 
@@ -417,9 +295,11 @@ void FunctionInterface::EnableMsrHook()
 	EnableLStrHook<1>(&msrHookManager, LStarHookCallback, (PVOID)this, (PVOID)0, (PVOID)0);
 }
 
-#pragma code_seg()
+#pragma code_seg("PAGE")
 void FunctionInterface::LStarHookCallback(GenericRegisters* pRegisters, PVOID param1, PVOID param2, PVOID param3)
 {
+	PAGED_CODE();
+
 	UNREFERENCED_PARAMETER(param2);
 	UNREFERENCED_PARAMETER(param3);
 
@@ -428,58 +308,12 @@ void FunctionInterface::LStarHookCallback(GenericRegisters* pRegisters, PVOID pa
 
 	if (functionInterface.lstarInfo.callback != NULL)
 	{
-		if (functionInterface.pLstarCallbackProcess == NULL)
+		if (functionInterface.pid == -1)
 		{
 			functionInterface.lstarInfo.callback(*pRegisters, *pStackDump, (UINT64)PsGetCurrentProcessId(), functionInterface.lstarInfo.param);
 		}
 		else
 		{
-			
-			StackDump stackDumpCopy = {};
-
-			if (!NT_SUCCESS(CopyUserDataToKernel((void*)pStackDump, sizeof * pStackDump, (void*)stackDumpCopy)))
-				return;
-
-			UINT32 pid = (UINT64)PsGetCurrentProcessId();
-		
-			KAPC_STATE state = {};
-			KeStackAttachProcess(functionInterface.pLstarCallbackProcess, &state);
-
-			if (PsGetCurrentProcess() == functionInterface.pLstarCallbackProcess)
-			{
-				SIZE_T nPage = sizeof(LStarCallbackArgsPack) / PAGE_SIZE + 1;
-
-				LStarCallbackArgsPack* pPack = (LStarCallbackArgsPack*)AllocPagedMem(nPage * PAGE_SIZE, FUNC_TAG);
-
-				if (pPack == NULL)
-					return;
-
-				for (SIZE_T i = 0; i < nPage; ++i)
-					ChangePageAccessForUser((PTR_TYPE)pPack + nPage * PAGE_SIZE, true);
-
-				pPack->callback = functionInterface.lstarInfo.callback;
-				pPack->guestRegisters = *pRegisters;
-				pPack->param = functionInterface.lstarInfo.param;
-				pPack->pid = pid;
-				RtlCopyMemory((PVOID)&pPack->stackDump, &stackDumpCopy, sizeof(StackDump));
-
-				bool isSuccess = false;
-				CallUserFunctionFromKernel(functionInterface.lstarInfo.extraEntry, pPack, isSuccess);
-
-				for (SIZE_T i = 0; i < nPage; ++i)
-					ChangePageAccessForUser((PTR_TYPE)pPack + nPage * PAGE_SIZE, false);
-
-				FreePagedMem(pPack, FUNC_TAG);
-
-				KeUnstackDetachProcess(&state);
-			}
-			else
-			{
-				ObDereferenceObject(functionInterface.pLstarCallbackProcess);
-				functionInterface.pLstarCallbackProcess = NULL;
-				functionInterface.lstarInfo = {};
-			}
-			
 		}
 	}
 }
@@ -517,6 +351,8 @@ bool DelayProcessInGuestFromVMM::CpuidHandler::HandleCpuid(VirtCpuInfo* pVirtCpu
 #pragma code_seg("PAGE")
 void DelayProcessInGuestFromVMM::AppendCpuidHandler(SVMManager& svmManager)
 {
+	PAGED_CODE();
+
 	//同上一个AppendCpuidHandler函数
 	if (svmManager.GetCpuidInterceptPlugin() == &GetCpuidHandler())
 		return;
@@ -536,46 +372,28 @@ void DelayProcessInGuestFromVMM::BeginDelayProcess(ProcessorFunction func, PVOID
 		//备份额外寄存器
 		originGuestRegs = guestRegisters;
 
-		//设置回调执行环境
-		guestRegisters.extraInfo1 = 0;
-		guestRegisters.extraInfo2 = 0;
+		//如果调用方来自R3。执行额外的R3向R0的切换步骤
+		if (!IsKernelAddress((PVOID)guestRegisters.rip))
+		{
+			GenericRegisters genericRegs = {};
+
+			_save_or_load_regs(&genericRegs);
+
+			genericRegs.extraInfo1 = 0;
+			genericRegs.extraInfo2 = 0;
+
+			genericRegs.rflags |= (1ULL << EFLAGS_IF_OFFSET);
+
+			SAVE_GUEST_STATUS_FROM_REGS(pVirtCpuInfo, genericRegs.rax, genericRegs.rflags, guestRegisters.rsp, guestRegisters.rip);
+			
+			guestRegisters = genericRegs;
+		}
 
 		//设置执行新入口函数
 		guestRegisters.rcx = (PTR_TYPE)func;
 		guestRegisters.rdx = (PTR_TYPE)param;
 		guestRegisters.r8 = (PTR_TYPE)this;
 		guestRegisters.rsp = (PTR_TYPE)pVirtCpuInfo->stack2 + sizeof pVirtCpuInfo->stack2;
-
-		//如果调用方来自R3。执行额外的R3向R0的切换步骤
-		if (!IsKernelAddress((PVOID)guestRegisters.rip))
-		{
-			GenericRegisters genericRegs;
-
-			_save_or_load_regs(&genericRegs);
-
-			genericRegs.rflags |= (1ULL << EFLAGS_IF_OFFSET);
-
-			SAVE_GUEST_STATUS_FROM_REGS(pVirtCpuInfo, genericRegs.rax, genericRegs.rflags, guestRegisters.rsp, guestRegisters.rip);
-			
-			guestRegisters.rdi = genericRegs.rdi;
-			guestRegisters.rsi = genericRegs.rsi;
-			guestRegisters.rbx = genericRegs.rbx;
-			guestRegisters.rbp = genericRegs.rbp;
-			guestRegisters.r12 = genericRegs.r12;
-			guestRegisters.r15 = genericRegs.r15;
-
-			guestRegisters.xmm6 = genericRegs.xmm6;
-			guestRegisters.xmm7 = genericRegs.xmm7;
-			guestRegisters.xmm8 = genericRegs.xmm8;
-			guestRegisters.xmm9 = genericRegs.xmm9;
-			guestRegisters.xmm10 = genericRegs.xmm10;
-			guestRegisters.xmm11 = genericRegs.xmm11;
-			guestRegisters.xmm12 = genericRegs.xmm12;
-			guestRegisters.xmm13 = genericRegs.xmm13;
-			guestRegisters.xmm14 = genericRegs.xmm14;
-			guestRegisters.xmm15 = genericRegs.xmm15;
-		}
-
 		guestRegisters.rip = (PTR_TYPE)DelayProcessEntryInGuest;;
 
 		needRestoreVmcb = true;
@@ -599,6 +417,8 @@ void DelayProcessInGuestFromVMM::EndDelayProcess()
 #pragma code_seg("PAGE")
 DelayProcessInGuestFromVMM::CpuidHandler& DelayProcessInGuestFromVMM::GetCpuidHandler()
 {
+	PAGED_CODE();
+
 	if (!isSignleObjInited)
 	{
 		CallConstructor((CpuidHandler*)signleObjMem);
