@@ -16,6 +16,7 @@ int main()
 	param.callback = SyscallCallback;
 	param.param = 0;
 
-	AMDVDriverInterface::SetSyscallHookCallback(&param);
+	printf("Syacall hook call register %s\n", AMDVDriverInterface::SetSyscallHookCallback(&param) ? "success" : "failed");
+
 	system("pause");
 }

@@ -34,3 +34,5 @@ Intel XED https://github.com/intelxed/xed 修改见 XED Information 文件夹
 https://github.com/Liu-Zhiying/StartAMDVHookDriverFromNone_Documents  
 ## 如何使用SDK调用驱动功能
 提取项目中的 AMDVDriverSDK.h 和 common.asm 并在生成依赖项里面打开masm并设置common.asm由masm编译和打开C99标准即可使用  
+## 暂停开发
+本人需要准备考试，明年6月再开发
