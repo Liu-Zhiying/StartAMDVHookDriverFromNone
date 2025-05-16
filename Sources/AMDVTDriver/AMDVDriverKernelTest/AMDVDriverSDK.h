@@ -14,7 +14,7 @@ typedef void* PVOID;
 
 //这里面的是需要公开的已经在驱动里使用的某些结构
 //如果是驱动内部以实现接口为目的则不要定义这些结构，以避免重复定义
-#ifndef NOT_DEFINE_PUBLIC_STRCUT
+#ifndef NOT_DEFINE_PUBLIC_STRUCT
 
 //方便为类提供非分页的默认拷贝和移动构造函数和运算符
 #define DEFAULT_NONPAGED_COPY_AND_MOVE_FUNCTION_FOR_CLASS(classname)																\
