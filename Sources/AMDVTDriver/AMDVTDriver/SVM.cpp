@@ -569,7 +569,10 @@ void SVMManager::LeaveVirtualization()
 		{
 			//如果已经进入虚拟化，则按照核心退出虚拟化
 			if (pVirtCpuInfo[idx]->otherInfo.isInVirtualizaion)
+			{
 				__cpuidex(result, GUEST_CALL_VMM_CPUID_FUNCTION, 0);
+				pVirtCpuInfo[idx]->otherInfo.isInVirtualizaion = FALSE;
+			}
 		}
 		return STATUS_SUCCESS;
 	};

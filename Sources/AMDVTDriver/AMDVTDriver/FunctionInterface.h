@@ -10,7 +10,7 @@
 #include "Hook.h"
 #include "PageTable.h"
 #include "Basic.h"
-#define NOT_DEFINE_PUBLIC_STRCUT
+#define NOT_DEFINE_PUBLIC_STRUCT
 #define KERNEL_USAGE
 #include "AMDVDriverSDK.h"
 
