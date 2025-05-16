@@ -152,14 +152,14 @@ public:
 };
 
 //DE拦截插件
-class ISignleStepInterceptPlugin
+class ISingleStepInterceptPlugin
 {
 public:
 	//处理拦截的DE事件，true代表已经处理，false代表未处理
 	virtual bool HandleSignleStep(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, 
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) = 0;
 	#pragma code_seg()
-	virtual ~ISignleStepInterceptPlugin() {}
+	virtual ~ISingleStepInterceptPlugin() {}
 };
 
 //NPT页表提供接口
@@ -223,7 +223,7 @@ class SVMManager : public IManager
 	ICpuidInterceptPlugin* pCpuIdInterceptPlugin;
 	INpfInterceptPlugin* pNpfInterceptPlugin;
 	IBreakprointInterceptPlugin* pBreakpointInterceptPlugin;
-	ISignleStepInterceptPlugin* pSingleStepInterceptPlugin;
+	ISingleStepInterceptPlugin* pSingleStepInterceptPlugin;
 	INCr3Provider* pNCr3Provider;
 	IInvalidOpcodeInterceptPlugin* pInvalidOpcodeInterceptPlugin;
 	bool enableSce;
@@ -262,9 +262,9 @@ public:
 	#pragma code_seg("PAGE")
 	IInvalidOpcodeInterceptPlugin* GetInvalidOpcodePlugin() { PAGED_CODE(); return pInvalidOpcodeInterceptPlugin; }
 	#pragma code_seg("PAGE")
-	void SetSingleStepPlugin(ISignleStepInterceptPlugin* _pDebugInterceptPlugin) { PAGED_CODE(); pSingleStepInterceptPlugin = _pDebugInterceptPlugin; }
+	void SetSingleStepPlugin(ISingleStepInterceptPlugin* _pDebugInterceptPlugin) { PAGED_CODE(); pSingleStepInterceptPlugin = _pDebugInterceptPlugin; }
 	#pragma code_seg("PAGE")
-	ISignleStepInterceptPlugin* GetSingleStepPlugin() { PAGED_CODE(); return pSingleStepInterceptPlugin; }
+	ISingleStepInterceptPlugin* GetSingleStepPlugin() { PAGED_CODE(); return pSingleStepInterceptPlugin; }
 	#pragma code_seg("PAGE")
 	void SetMsrBackupRestorePlugin(IMsrBackupRestorePlugin* _pMsrHookPlugin) { PAGED_CODE(); pMsrBackupRestorePlugin = _pMsrHookPlugin; }
 	#pragma code_seg("PAGE")
