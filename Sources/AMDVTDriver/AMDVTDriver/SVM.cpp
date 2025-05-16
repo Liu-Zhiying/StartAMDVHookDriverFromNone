@@ -594,7 +594,7 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 		if (pCpuIdInterceptPlugin != NULL &&
 			pCpuIdInterceptPlugin->HandleCpuid(pVMMVirtCpuInfo, pGuestRegisters,
 				pGuestVmcbPhyAddr, pHostVmcbPhyAddr))
-			return;
+			break;
 
 		if (((int)pGuestRegisters->rax) == GUEST_CALL_VMM_CPUID_FUNCTION)
 		{
@@ -604,7 +604,7 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 			{
 				//如果不是从内核模式调用退出则忽略
 				if (!IsKernelAddress((PVOID)pVMMVirtCpuInfo->guestVmcb.controlFields.nRip))
-					return;
+					break;
 
 				//通过
 				//设置pGuestRegisters->extraInfo1为&pVMMVirtCpuInfo->regsBackup.genericRegisters1 和 
@@ -670,7 +670,7 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 				pMsrInterceptPlugin->HandleMsrInterceptWrite(pVMMVirtCpuInfo, pGuestRegisters,
 					pGuestVmcbPhyAddr, pHostVmcbPhyAddr,
 					msrNum))
-				return;
+				break;
 
 			//不允许客户机设置 EFER MSR 的 SVME 位 和 VM_CR MSR 的 SVMDIS 位
 			if (msrNum == IA32_MSR_EFER && !(value.LowPart & (1UL << EFER_SVME_OFFSET)) ||
@@ -688,7 +688,7 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 				pMsrInterceptPlugin->HandleMsrImterceptRead(pVMMVirtCpuInfo, pGuestRegisters,
 					pGuestVmcbPhyAddr, pHostVmcbPhyAddr,
 					msrNum))
-				return;
+				break;
 
 			value.QuadPart = __readmsr(msrNum);
 
@@ -710,7 +710,7 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 	{
 		if (pBreakpointInterceptPlugin != NULL &&
 			pBreakpointInterceptPlugin->HandleBreakpoint(pVMMVirtCpuInfo, pGuestRegisters, pGuestVmcbPhyAddr, pHostVmcbPhyAddr))
-			return;
+			break;
 
 		//默认直接注入断点异常由guest处理
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.data = 0;
@@ -724,7 +724,7 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 	{
 		if (pInvalidOpcodeInterceptPlugin != NULL &&
 			pInvalidOpcodeInterceptPlugin->HandleInvalidOpcode(pVMMVirtCpuInfo, pGuestRegisters, pGuestVmcbPhyAddr, pHostVmcbPhyAddr))
-			return;
+			break;
 
 		//注入UD异常由guest处理
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.data = 0;
@@ -737,7 +737,7 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 	{
 		if (pSingleStepInterceptPlugin != NULL &&
 			pSingleStepInterceptPlugin->HandleSignleStep(pVMMVirtCpuInfo, pGuestRegisters, pGuestVmcbPhyAddr, pHostVmcbPhyAddr))
-			return;
+			break;
 
 		//注入DB异常由guest处理
 		pVMMVirtCpuInfo->guestVmcb.controlFields.eventInj.data = 0;
@@ -760,7 +760,10 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 	{
 		if (pNpfInterceptPlugin != NULL &&
 			pNpfInterceptPlugin->HandleNpf(pVMMVirtCpuInfo, pGuestRegisters, pGuestVmcbPhyAddr, pHostVmcbPhyAddr))
-			return;
+			break;
+
+		__debugbreak();
+		KeBugCheck(MANUALLY_INITIATED_CRASH);
 		break;
 	}
 	default:
