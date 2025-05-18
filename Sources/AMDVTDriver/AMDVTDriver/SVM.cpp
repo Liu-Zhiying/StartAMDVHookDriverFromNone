@@ -97,7 +97,8 @@ UINT64 GetSegmentBaseAddress(_In_ UINT16 SegmentSelector, _In_ ULONG_PTR GdtBase
 	baseAddress |= descriptor->Fields.BaseLow;
 	baseAddress |= ((UINT64)descriptor->Fields.BaseMiddle) << 16;
 	baseAddress |= ((UINT64)descriptor->Fields.BaseHigh) << 24;
-	baseAddress |= ((UINT64)descriptor->OptionalField.BaseHigh4Byte) << 32;
+	if (!descriptor->Fields.System)
+		baseAddress |= ((UINT64)descriptor->OptionalField.BaseHigh4Byte) << 32;
 
 	return baseAddress;
 }
@@ -518,6 +519,8 @@ NTSTATUS SVMManager::EnterVirtualization()
 				}
 
 				SAVE_GUEST_STATUS_FROM_REGS(pVirtCpuInfo[cpuIdx], &registerBackup, registerBackup.rflags, registerBackup.rsp, registerBackup.rip);
+
+				pVirtCpuInfo[cpuIdx]->hostVmcb.statusFields = pVirtCpuInfo[cpuIdx]->guestVmcb.statusFields;
 
 				//需要时禁用syscall和sysret
 				if (!enableSce)

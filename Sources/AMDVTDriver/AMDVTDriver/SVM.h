@@ -502,8 +502,6 @@ extern "C" void _run_svm_vmrun(VirtCpuInfo* pVirtCpuInfo, PVOID pGuestVmcbPhyAdd
 	(virtCpuInfo)->guestVmcb.statusFields.rip = (UINT64)(rip_val);																	\
 	(virtCpuInfo)->guestVmcb.statusFields.gPat = __readmsr(IA32_MSR_PAT);															\
 																																	\
-	(virtCpuInfo)->guestVmcb.statusFields.cpl = _cs_selector() & 0x3;																\
-																																	\
-	(virtCpuInfo)->hostVmcb.statusFields = (virtCpuInfo)->guestVmcb.statusFields;
+	(virtCpuInfo)->guestVmcb.statusFields.cpl = _cs_selector() & 0x3;
 
 #endif
