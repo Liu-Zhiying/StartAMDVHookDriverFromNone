@@ -295,11 +295,9 @@ void FunctionInterface::EnableMsrHook()
 	EnableLStrHook<1>(&msrHookManager, LStarHookCallback, (PVOID)this, (PVOID)0, (PVOID)0);
 }
 
-#pragma code_seg("PAGE")
+#pragma code_seg()
 void FunctionInterface::LStarHookCallback(GenericRegisters* pRegisters, PVOID param1, PVOID param2, PVOID param3)
 {
-	PAGED_CODE();
-
 	UNREFERENCED_PARAMETER(param2);
 	UNREFERENCED_PARAMETER(param3);
 
@@ -314,6 +312,7 @@ void FunctionInterface::LStarHookCallback(GenericRegisters* pRegisters, PVOID pa
 		}
 		else
 		{
+
 		}
 	}
 }

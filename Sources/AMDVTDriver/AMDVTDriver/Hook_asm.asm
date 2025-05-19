@@ -23,6 +23,8 @@ LStarHookEntry Proc
 	push 0
 	push 0
 	pushfq
+
+
 	push rax
 	push rbx
 	push rcx
