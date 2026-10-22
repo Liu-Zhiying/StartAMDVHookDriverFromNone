@@ -37,6 +37,9 @@
     <ClCompile Include="FunctionTest.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="common.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Basic.h">
@@ -71,7 +74,7 @@
     <MASM Include="Hook_asm.asm">
       <Filter>Source Files</Filter>
     </MASM>
-    <MASM Include="common.asm">
+    <MASM Include="common_asm.asm">
       <Filter>Source Files</Filter>
     </MASM>
   </ItemGroup>

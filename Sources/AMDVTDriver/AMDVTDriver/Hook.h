@@ -19,7 +19,7 @@ constexpr UINT32 HOOK_TAG = MAKE_TAG('h', 'o', 'o', 'k');
 constexpr UINT32 NptHookCode = 0xCC;
 
 //辅助函数，用于跳转到VMM处理
-extern "C" void SetRegsThenCpuid(PTR_TYPE* rax, PTR_TYPE* rbx, PTR_TYPE* rcx, PTR_TYPE* rdx);
+bool SetRegsThenSVMCallWrapper(PTR_TYPE* rax, PTR_TYPE* rbx, PTR_TYPE* rcx, PTR_TYPE* rdx);
 
 //一些调用 VMM CPUID处理功能的参数定义
 struct MsrHookParameter
@@ -53,7 +53,7 @@ struct MsrOperationParameter
 
 //MSR HOOK 管理器，msrHookCount代表要Hook的MSR的个数
 template<SIZE_TYPE msrHookCount>
-class MsrHookManager : public IManager, public IMsrInterceptPlugin, public ICpuidInterceptPlugin, public IMsrBackupRestorePlugin
+class MsrHookManager : public IManager, public IMsrInterceptPlugin, public IVmmcallInterceptPlugin, public IMsrBackupRestorePlugin
 {
 private:
 	template<SIZE_TYPE msrCnt>
@@ -114,7 +114,7 @@ public:
 	virtual bool HandleMsrInterceptWrite(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr,
 		UINT32 msrNum) override;
-	virtual bool HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
+	virtual bool HandleVmmcall(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) override;
 	//启用 msr hook，msrNum代表编号，realValue 代表真实值，之后对msr的读写都是在欺骗值的内存中，不会影响真实值（只对当前核心有效）
 	void EnableMsrHook(UINT32 msrNum, PTR_TYPE realValue);
@@ -232,7 +232,7 @@ void MsrHookManager<msrHookCount>::Deinit()
 						optParam.pValueInOut = &param.pFakeValues[coreIndex];
 
 						PTR_TYPE regs[] = { CONFIGURE_MSR_HOOK_CPUID_FUNCTION, param.msrNum, WRITE_MSR_CPUID_SUBFUNCTION, (PTR_TYPE)&optParam };
-						SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+						SetRegsThenSVMCallWrapper(&regs[0], &regs[1], &regs[2], &regs[3]);
 
 						param.coreHookEnabled[coreIndex] = false;
 					}
@@ -383,7 +383,7 @@ inline bool MsrHookManager<msrHookCount>::HandleMsrInterceptWrite(VirtCpuInfo* p
 
 #pragma code_seg()
 template<SIZE_TYPE msrHookCount>
-inline bool MsrHookManager<msrHookCount>::HandleCpuid(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
+inline bool MsrHookManager<msrHookCount>::HandleVmmcall(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
 	PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr)
 {
 	UNREFERENCED_PARAMETER(pGuestVmcbPhyAddr);
@@ -594,7 +594,7 @@ inline void MsrHookManager<msrHookCount>::EnableMsrHook(UINT32 msrNum, PTR_TYPE 
 	regs[2] = GET_CPU_IDX_CPUID_SUBFUNCTION;
 	regs[3] = 0;
 
-	SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+	SetRegsThenSVMCallWrapper(&regs[0], &regs[1], &regs[2], &regs[3]);
 
 	cpuIdx = (UINT32)regs[1];
 
@@ -612,7 +612,7 @@ inline void MsrHookManager<msrHookCount>::EnableMsrHook(UINT32 msrNum, PTR_TYPE 
 			regs[1] = 0;
 			regs[2] = READ_MSR_CPUID_SUBFUNCTION;
 			regs[3] = (PTR_TYPE)&optParam;
-			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+			SetRegsThenSVMCallWrapper(&regs[0], &regs[1], &regs[2], &regs[3]);
 
 			optParam.pValueInOut = &realValue;
 
@@ -620,7 +620,7 @@ inline void MsrHookManager<msrHookCount>::EnableMsrHook(UINT32 msrNum, PTR_TYPE 
 			regs[1] = 0;
 			regs[2] = WRITE_MSR_CPUID_SUBFUNCTION;
 			regs[3] = (PTR_TYPE)&optParam;
-			SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+			SetRegsThenSVMCallWrapper(&regs[0], &regs[1], &regs[2], &regs[3]);
 
 			param.coreHookEnabled[cpuIdx] = true;
 		}
@@ -648,7 +648,7 @@ inline void MsrHookManager<msrHookCount>::DisableMsrHook(UINT32 msrNum, bool wri
 	regs[2] = GET_CPU_IDX_CPUID_SUBFUNCTION;
 	regs[3] = 0;
 
-	SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+	SetRegsThenSVMCallWrapper(&regs[0], &regs[1], &regs[2], &regs[3]);
 
 	cpuIdx = (UINT32)regs[1];
 
@@ -667,7 +667,7 @@ inline void MsrHookManager<msrHookCount>::DisableMsrHook(UINT32 msrNum, bool wri
 				regs[1] = 0;
 				regs[2] = WRITE_MSR_CPUID_SUBFUNCTION;
 				regs[3] = (PTR_TYPE)&optParam;
-				SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+				SetRegsThenSVMCallWrapper(&regs[0], &regs[1], &regs[2], &regs[3]);
 			}
 			
 			param.coreHookEnabled[cpuIdx] = false;
@@ -734,7 +734,7 @@ void EnableLStrHook(MsrHookManager<msrCnt>* pMsrHookManager, pLStarHookCallback 
 
 	PTR_TYPE regs[] = { CONFIGURE_MSR_HOOK_CPUID_FUNCTION, IA32_MSR_LSTAR, READ_MSR_CPUID_SUBFUNCTION, (PTR_TYPE)&optParam };
 
-	SetRegsThenCpuid(&regs[0], &regs[1], &regs[2], &regs[3]);
+	SetRegsThenSVMCallWrapper(&regs[0], &regs[1], &regs[2], &regs[3]);
 
 	SetLStrHookEntryParameters((PTR_TYPE)pOldEntry, (PTR_TYPE)pCallback, (PTR_TYPE)param1, (PTR_TYPE)param2, (PTR_TYPE)param3);
 
@@ -788,10 +788,12 @@ struct SwapPageRecord
 	PVOID pSwapVirtAddr;
 	//替换页面的物理地址
 	PTR_TYPE pSwapPhyAddr;
+	//NPT页表条目
+	PageTableLevel123Entry* pSwapPageEntry;
 	//使用计数
 	PTR_TYPE refCnt = 0;
 	#pragma code_seg()
-	SwapPageRecord() : pOriginVirtAddr(NULL), pOriginPhyAddr(INVALID_ADDR), pSwapVirtAddr(NULL), pSwapPhyAddr(INVALID_ADDR), refCnt(0) {}
+	SwapPageRecord() : pOriginVirtAddr(NULL), pOriginPhyAddr(INVALID_ADDR), pSwapVirtAddr(NULL), pSwapPhyAddr(INVALID_ADDR), refCnt(0), pSwapPageEntry(NULL) {}
 
 	DEFAULT_NONPAGED_COPY_AND_MOVE_FUNCTION_FOR_CLASS(SwapPageRecord)
 };

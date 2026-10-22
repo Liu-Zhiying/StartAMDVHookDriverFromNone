@@ -4,6 +4,13 @@
 #include "Basic.h"
 #include "VMCB.h"
 
+//AMD SVM 没有专门的VMMCALL指令，只能使用自定义CPUID
+//AMD 手册上给虚拟化预留的CPUID ID 为 0x40000000~0x400000ff
+constexpr UINT32 GUEST_CALL_VMM_SVMCALL_FUNCTION = 0x400000ff;
+constexpr UINT32 EXIT_SVM_SVMCALL_SUBFUNCTION = 0x00000000;
+constexpr UINT32 IS_IN_SVM_CPUID_SUBFUNCTION = 0x00000001;
+constexpr UINT32 FLUSH_TLB_SUBFUNCTION = 0x00000002;
+
 // 传入 #VMEXIT 处理函数，用于处理修改guest寄存器状态
 // 也用于 进入虚拟化前后的寄存器备份和恢复
 struct GenericRegisters
@@ -162,6 +169,17 @@ public:
 	virtual ~ISingleStepInterceptPlugin() {}
 };
 
+//vmmcall拦截插件
+class IVmmcallInterceptPlugin
+{
+public:
+	//处理拦截的DE事件，true代表已经处理，false代表未处理
+	virtual bool HandleVmmcall(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters,
+		PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr) = 0;
+#pragma code_seg()
+	virtual ~IVmmcallInterceptPlugin() {}
+};
+
 //NPT页表提供接口
 class INCr3Provider
 {
@@ -208,7 +226,9 @@ enum SVMStatus
 	//SVM就绪（未被其他虚拟化软件占用）
 	SVMS_READY = 0x8,
 	//NPT可用
-	SVMS_NPT_ENABLED = 0x10
+	SVMS_NPT_ENABLED = 0x10,
+	//嵌套虚拟化可用
+	SMVS_NESTED_VIRTUAL_ENABLED = 0x20
 };
 
 extern "C" void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr);
@@ -225,6 +245,7 @@ class SVMManager : public IManager
 	IBreakprointInterceptPlugin* pBreakpointInterceptPlugin;
 	ISingleStepInterceptPlugin* pSingleStepInterceptPlugin;
 	INCr3Provider* pNCr3Provider;
+	IVmmcallInterceptPlugin* pVmmcallInterceptPlugin;
 	IInvalidOpcodeInterceptPlugin* pInvalidOpcodeInterceptPlugin;
 	bool enableSce;
 
@@ -236,7 +257,7 @@ public:
 	//请勿调用该函数，这个函数由VMM自动调用
 	void VmExitHandler(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGuestRegisters, PVOID pGuestVmcbPhyAddr, PVOID pHostVmcbPhyAddr);
 	#pragma code_seg("PAGE")
-	SVMManager() : pVirtCpuInfo(NULL), cpuCnt(0), pMsrInterceptPlugin(NULL), pCpuIdInterceptPlugin(NULL), pNpfInterceptPlugin(NULL), pNCr3Provider(NULL), pBreakpointInterceptPlugin(NULL), pInvalidOpcodeInterceptPlugin(NULL), pSingleStepInterceptPlugin(NULL), enableSce(true), pMsrBackupRestorePlugin(NULL) { PAGED_CODE(); }
+	SVMManager() : pVirtCpuInfo(NULL), cpuCnt(0), pMsrInterceptPlugin(NULL), pCpuIdInterceptPlugin(NULL), pNpfInterceptPlugin(NULL), pNCr3Provider(NULL), pBreakpointInterceptPlugin(NULL), pInvalidOpcodeInterceptPlugin(NULL), pSingleStepInterceptPlugin(NULL), enableSce(true), pMsrBackupRestorePlugin(NULL), pVmmcallInterceptPlugin(NULL) { PAGED_CODE(); }
 	#pragma code_seg("PAGE")
 	void SetMsrInterceptPlugin(IMsrInterceptPlugin* _pMsrInterceptPlugin) { PAGED_CODE(); pMsrInterceptPlugin = _pMsrInterceptPlugin; }
 	#pragma code_seg("PAGE")
@@ -265,6 +286,10 @@ public:
 	void SetSingleStepPlugin(ISingleStepInterceptPlugin* _pDebugInterceptPlugin) { PAGED_CODE(); pSingleStepInterceptPlugin = _pDebugInterceptPlugin; }
 	#pragma code_seg("PAGE")
 	ISingleStepInterceptPlugin* GetSingleStepPlugin() { PAGED_CODE(); return pSingleStepInterceptPlugin; }
+	#pragma code_seg("PAGE")
+	void SetVmmcallPlugin(IVmmcallInterceptPlugin* _pVmcallInterceptPlugin) { PAGED_CODE(); pVmmcallInterceptPlugin = _pVmcallInterceptPlugin; }
+	#pragma code_seg("PAGE")
+	IVmmcallInterceptPlugin* GetVmmcallPlugin() { PAGED_CODE(); return pVmmcallInterceptPlugin; }
 	#pragma code_seg("PAGE")
 	void SetMsrBackupRestorePlugin(IMsrBackupRestorePlugin* _pMsrHookPlugin) { PAGED_CODE(); pMsrBackupRestorePlugin = _pMsrHookPlugin; }
 	#pragma code_seg("PAGE")

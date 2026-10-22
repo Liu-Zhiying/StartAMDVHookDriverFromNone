@@ -89,6 +89,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Basic.cpp" />
+    <ClCompile Include="common.cpp" />
     <ClCompile Include="FunctionTest.cpp" />
     <ClCompile Include="Hook.cpp" />
     <ClCompile Include="main.cpp" />
@@ -106,7 +107,7 @@
     <ClInclude Include="VMCB.h" />
   </ItemGroup>
   <ItemGroup>
-    <MASM Include="common.asm" />
+    <MASM Include="common_asm.asm" />
     <MASM Include="Hook_asm.asm" />
     <MASM Include="SVM_asm.asm" />
   </ItemGroup>

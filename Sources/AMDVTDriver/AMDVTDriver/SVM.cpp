@@ -2,11 +2,9 @@
 #include "VMCB.h"
 #include <intrin.h>
 
-//AMD SVM 没有专门的VMMCALL指令，只能使用自定义CPUID
-//AMD 手册上给虚拟化预留的CPUID ID 为 0x40000000~0x400000ff
-constexpr UINT32 GUEST_CALL_VMM_CPUID_FUNCTION = 0x400000ff;
-constexpr UINT32 EXIT_SVM_CPUID_SUBFUNCTION = 0x00000000;
-constexpr UINT32 IS_IN_SVM_CPUID_SUBFUNCTION = 0x00000001;
+//辅助函数，用于跳转到VMM处理
+bool SetRegsThenSVMCallWrapper(PTR_TYPE* rax, PTR_TYPE* rbx, PTR_TYPE* rcx, PTR_TYPE* rdx);
+
 constexpr UINT32 SVM_TAG = MAKE_TAG('s', 'v', 'm', ' ');
 
 //GDT表项，参考https://wiki.osdev.org/Global_Descriptor_Table#System_Segment_Descriptor
@@ -342,6 +340,12 @@ SVMStatus SVMManager::CheckSVM()
 
 		result = ((SVMStatus)(result | SVMS_NPT_ENABLED));
 
+		//查询嵌套虚拟化可用
+		if (!(cpuid_result[3] & (1ULL << NESTED_VIRTUAL_OFFSET)))
+			break;
+
+		result = ((SVMStatus)(result | SMVS_NESTED_VIRTUAL_ENABLED));
+
 	} while (false);
 
 	return result;
@@ -377,6 +381,12 @@ NTSTATUS SVMManager::Init()
 		if (!(svmStatus & SVMStatus::SVMS_ENABLED))
 		{
 			KdPrint(("SVMManager::Init(): SVM feature is not enabled!\n"));
+			break;
+		}
+
+		if (!(svmStatus & SVMStatus::SMVS_NESTED_VIRTUAL_ENABLED))
+		{
+			KdPrint(("SVMManager::Init(): Nested virtualization is not supported!\n"));
 			break;
 		}
 
@@ -490,7 +500,7 @@ NTSTATUS SVMManager::EnterVirtualization()
 					= Opcode1InterceptBits::CPUID | Opcode1InterceptBits::RDMSR_WRMSR;
 				//vmrun拦截必须打开，否则vmrun会失败
 				pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.interceptOpcodes2
-					= Opcode2InterceptBits::VMRUN;
+					= Opcode2InterceptBits::VMRUN | Opcode2InterceptBits::VMCALL;
 
 				//如果断点拦截插件存在，打开断点拦截
 				if (pBreakpointInterceptPlugin != NULL)
@@ -507,6 +517,9 @@ NTSTATUS SVMManager::EnterVirtualization()
 				pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.msrpmBasePA = msrPremissionMap.GetPhyAddress();
 				pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.guestASID = 1;
 
+				//嵌套虚拟化
+				pVirtCpuInfo[cpuIdx]->guestVmcb.controlFields.extendFeatures2.fields.enableVirtualizedVmsaveVmload = true;
+				
 				if (pNCr3Provider != NULL)
 				{
 					PVOID nCr3Pa = pNCr3Provider->GetNCr3ForCore(cpuIdx);
@@ -567,13 +580,14 @@ void SVMManager::LeaveVirtualization()
 	//调用CPUID指令通知VMM退出
 	auto coreAction = [this](UINT32 idx) -> NTSTATUS
 	{
-		int result[4] = {};
 		if (pVirtCpuInfo[idx] != NULL)
 		{
+			PTR_TYPE regs[4] = { GUEST_CALL_VMM_SVMCALL_FUNCTION,0,EXIT_SVM_SVMCALL_SUBFUNCTION,0 };
+
 			//如果已经进入虚拟化，则按照核心退出虚拟化
 			if (pVirtCpuInfo[idx]->otherInfo.isInVirtualizaion)
 			{
-				__cpuidex(result, GUEST_CALL_VMM_CPUID_FUNCTION, 0);
+				SetRegsThenSVMCallWrapper(&regs[0], &regs[1], &regs[2], &regs[3]);
 				pVirtCpuInfo[idx]->otherInfo.isInVirtualizaion = FALSE;
 			}
 		}
@@ -595,18 +609,18 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 
 	switch ((VmExitReasons)pVMMVirtCpuInfo->guestVmcb.controlFields.exitCode)
 	{
-	case VMEXIT_REASON_CPUID:
+	case VMEXIT_REASON_VMMCALL:
 	{
-		if (pCpuIdInterceptPlugin != NULL &&
-			pCpuIdInterceptPlugin->HandleCpuid(pVMMVirtCpuInfo, pGuestRegisters,
+		if (pVmmcallInterceptPlugin != NULL &&
+			pVmmcallInterceptPlugin->HandleVmmcall(pVMMVirtCpuInfo, pGuestRegisters,
 				pGuestVmcbPhyAddr, pHostVmcbPhyAddr))
 			break;
 
-		if (((int)pGuestRegisters->rax) == GUEST_CALL_VMM_CPUID_FUNCTION)
+		if (((int)pGuestRegisters->rax) == GUEST_CALL_VMM_SVMCALL_FUNCTION)
 		{
 			switch (pGuestRegisters->rcx)
 			{
-			case EXIT_SVM_CPUID_SUBFUNCTION:
+			case EXIT_SVM_SVMCALL_SUBFUNCTION:
 			{
 				//如果不是从内核模式调用退出则忽略
 				if (!IsKernelAddress((PVOID)pVMMVirtCpuInfo->guestVmcb.controlFields.nRip))
@@ -639,22 +653,37 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 				*reinterpret_cast<UINT32*>(&pGuestRegisters->rcx) = 'SVM';
 				break;
 			}
+			case FLUSH_TLB_SUBFUNCTION:
+			{
+				pVMMVirtCpuInfo->guestVmcb.controlFields.tlbControl = 1;
+				break;
+			}
 			}
 		}
-		else
-		{
-			int cpuidResult[4] = {};
 
-			__cpuidex(cpuidResult, (int)pGuestRegisters->rax, (int)pGuestRegisters->rcx);
+		//guest到下一条指令执行
+		pGuestRegisters->rip = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;
 
-			if (((int)pGuestRegisters->rax) == CPUID_FN_SVM_FEATURE)
-				cpuidResult[2] &= ~(1UL << CPUID_FN_80000001_ECX_SVM_OFFSET);
+		break;
+	}
+	case VMEXIT_REASON_CPUID:
+	{
+		if (pCpuIdInterceptPlugin != NULL &&
+			pCpuIdInterceptPlugin->HandleCpuid(pVMMVirtCpuInfo, pGuestRegisters,
+				pGuestVmcbPhyAddr, pHostVmcbPhyAddr))
+			break;
 
-			*reinterpret_cast<UINT32*>(&pGuestRegisters->rax) = cpuidResult[0];
-			*reinterpret_cast<UINT32*>(&pGuestRegisters->rbx) = cpuidResult[1];
-			*reinterpret_cast<UINT32*>(&pGuestRegisters->rcx) = cpuidResult[2];
-			*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = cpuidResult[3];
-		}
+		int cpuidResult[4] = {};
+
+		__cpuidex(cpuidResult, (int)pGuestRegisters->rax, (int)pGuestRegisters->rcx);
+
+		if (((int)pGuestRegisters->rax) == CPUID_FN_SVM_FEATURE)
+			cpuidResult[2] &= ~(1UL << CPUID_FN_80000001_ECX_SVM_OFFSET);
+
+		*reinterpret_cast<UINT32*>(&pGuestRegisters->rax) = cpuidResult[0];
+		*reinterpret_cast<UINT32*>(&pGuestRegisters->rbx) = cpuidResult[1];
+		*reinterpret_cast<UINT32*>(&pGuestRegisters->rcx) = cpuidResult[2];
+		*reinterpret_cast<UINT32*>(&pGuestRegisters->rdx) = cpuidResult[3];
 
 		//guest到下一条指令执行
 		pGuestRegisters->rip = pVMMVirtCpuInfo->guestVmcb.controlFields.nRip;

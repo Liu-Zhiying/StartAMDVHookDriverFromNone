@@ -190,8 +190,6 @@ bool NptHookManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGue
 			CoreNptPageTableManager& internalCorePageTableManager = pageTableManager2.GetCoreNptPageTables()[cpuIdx];
 
 			SIZE_TYPE swapPageIdx = INVALID_INDEX;
-			PageTableLevel123Entry entry = {};
-
 			PTR_TYPE tempPhyAddr = INVALID_ADDR;
 
 			NptHookData& data = hookData[cpuIdx];
@@ -204,13 +202,23 @@ bool NptHookManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGue
 				if (swapPageIdx != INVALID_INDEX)
 				{
 					//恢复上次hook页面为禁止执行
-					entry.fields.writeable = true;
-					entry.fields.userAccess = true;
-					entry.fields.executionDisabled = true;
+					if (data.swapPageRecord[swapPageIdx].pSwapPageEntry != NULL)
+					{
+						data.swapPageRecord[swapPageIdx].pSwapPageEntry->fields.executionDisabled = true;
+					}
+					else
+					{
+						PageTableLevel123Entry entry = {};
 
-					tempPhyAddr = data.swapPageRecord[swapPageIdx].pOriginPhyAddr;
+						//恢复上次hook页面为禁止执行
+						entry.fields.writeable = true;
+						entry.fields.userAccess = true;
+						entry.fields.executionDisabled = true;
 
-					internalCorePageTableManager.ChangePageTableEntryPermession(tempPhyAddr, entry, 1);
+						tempPhyAddr = data.swapPageRecord[swapPageIdx].pOriginPhyAddr;
+
+						internalCorePageTableManager.ChangePageTableEntryPermession(tempPhyAddr, entry, 1);
+					}
 				}
 			}
 
@@ -219,12 +227,23 @@ bool NptHookManager::HandleNpf(VirtCpuInfo* pVirtCpuInfo, GenericRegisters* pGue
 
 			if (swapPageIdx != INVALID_INDEX)
 			{
-				//设置hook页面可执行
-				entry.fields.writeable = true;
-				entry.fields.userAccess = true;
-				entry.fields.executionDisabled = false;
+				if (data.swapPageRecord[swapPageIdx].pSwapPageEntry != NULL)
+				{
+					data.swapPageRecord[swapPageIdx].pSwapPageEntry->fields.executionDisabled = false;
+				}
+				else
+				{
+					PageTableLevel123Entry entry = {};
 
-				internalCorePageTableManager.ChangePageTableEntryPermession(pa, entry, 1);
+					//恢复上次hook页面为禁止执行
+					entry.fields.writeable = true;
+					entry.fields.userAccess = true;
+					entry.fields.executionDisabled = false;
+
+					tempPhyAddr = data.swapPageRecord[swapPageIdx].pOriginPhyAddr;
+
+					internalCorePageTableManager.ChangePageTableEntryPermession(tempPhyAddr, entry, 1);
+				}
 
 				//切换到内部页表
 				tempPhyAddr = internalCorePageTableManager.GetNptPageTablePa();
@@ -266,6 +285,7 @@ NTSTATUS NptHookManager::AddHookInSignleCore(const NptHookRecord& record, UINT32
 	UINT8* swapPageVirtAddr = NULL;
 	PTR_TYPE swapPagePhyAddr = INVALID_ADDR;
 	bool needChangePagePermission = false;
+	bool newSwapCntRef = false;
 
 	CoreNptPageTableManager& corePageTableManager1 = pageTableManager1.GetCoreNptPageTables()[idx];
 	CoreNptPageTableManager& corePageTableManager2 = pageTableManager2.GetCoreNptPageTables()[idx];
@@ -332,6 +352,8 @@ NTSTATUS NptHookManager::AddHookInSignleCore(const NptHookRecord& record, UINT32
 			newItem.refCnt = 1;
 
 			swapPagePhyAddr = newItem.pSwapPhyAddr;
+
+			newSwapCntRef = true;
 
 			hookData[idx].swapPageRecord.PushBack(newItem);
 		}
@@ -415,6 +437,17 @@ NTSTATUS NptHookManager::AddHookInSignleCore(const NptHookRecord& record, UINT32
 
 	} while (false);
 
+	swapPageIdx = hookData[idx].FindSwapPageRefCntByOriginVirtAddr(pOriginPageVirtAddr);
+
+	if (NT_SUCCESS(status) && newSwapCntRef)
+	{
+		if (swapPageIdx != INVALID_INDEX)
+		{
+			PageTableLevel123* pTable = (PageTableLevel123*)corePageTableManager2.FindPageTableByPhyAddr(pOriginPhyAddr, 1);
+			hookData[idx].swapPageRecord[swapPageIdx].pSwapPageEntry = &pTable->entries[(pOriginPhyAddr >> 12) & 0x1ff];
+		}
+	}
+
 	if (NT_SUCCESS(status) && needChangePagePermission)
 	{
 		PageTableLevel123Entry permission = {};
@@ -427,6 +460,9 @@ NTSTATUS NptHookManager::AddHookInSignleCore(const NptHookRecord& record, UINT32
 		permission.fields.executionDisabled = true;
 
 		corePageTableManager1.ChangePageTableEntryPermession(pOriginPhyAddr, permission, 1);
+
+		PTR_TYPE regs[4] = { GUEST_CALL_VMM_SVMCALL_FUNCTION,0,FLUSH_TLB_SUBFUNCTION,0 };
+		SetRegsThenSVMCallWrapper(&regs[0], &regs[1], &regs[2], &regs[3]);
 	}
 
 	return status;
@@ -540,6 +576,9 @@ NTSTATUS NptHookManager::RemoveHookInSignleCore(PVOID pHookOriginVirtAddr, UINT3
 		hookData[idx].hookRecords.Remove(hookIdx);
 
 	} while (false);
+
+	PTR_TYPE regs[4] = { GUEST_CALL_VMM_SVMCALL_FUNCTION,0,FLUSH_TLB_SUBFUNCTION,0 };
+	SetRegsThenSVMCallWrapper(&regs[0], &regs[1], &regs[2], &regs[3]);
 
 	return status;
 }

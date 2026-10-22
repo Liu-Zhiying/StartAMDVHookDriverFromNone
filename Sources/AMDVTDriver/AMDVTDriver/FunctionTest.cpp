@@ -54,7 +54,7 @@ void GlobalManager::SetMsrHookParameters()
 	msrHookManager.SetHookMsrs(msrNums);
 
 	//ºÍSVMManager°ó¶¨
-	svmManager.SetCpuIdInterceptPlugin(&msrHookManager);
+	svmManager.SetVmmcallPlugin(&msrHookManager);
 	svmManager.SetMsrInterceptPlugin(&msrHookManager);
 	svmManager.SetMsrBackupRestorePlugin(&msrHookManager);
 }

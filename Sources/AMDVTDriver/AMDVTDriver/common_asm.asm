@@ -1,6 +1,6 @@
 .code
 
-SetRegsThenCpuid Proc
+SetRegsThenSVMCall Proc
 	;备份寄存器
 	push rax
 	push rbx
@@ -15,7 +15,7 @@ SetRegsThenCpuid Proc
 	mov rcx, [r8]
 	mov rdx, [r9]
 
-	cpuid
+	vmmcall
 
 	;回写参数
 	mov r9, [rsp + 18h]
@@ -36,6 +36,6 @@ SetRegsThenCpuid Proc
 	pop rax
 	
 	ret
-SetRegsThenCpuid Endp
+SetRegsThenSVMCall Endp
 
 End
