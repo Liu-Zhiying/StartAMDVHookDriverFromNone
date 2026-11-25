@@ -446,25 +446,28 @@ NTSTATUS NptHookManager::AddHookInSignleCore(const NptHookRecord& record, UINT32
 		}
 	}
 
-	PageTableLevel123Entry permission = {};
-
-	//设置页交换
-	corePageTableManager2.SwapSmallPagePpn(pOriginPhyAddr, swapPagePhyAddr, 1);
-
-	permission.fields.writeable = true;
-	permission.fields.userAccess = true;
-	permission.fields.executionDisabled = true;
-
-	corePageTableManager1.ChangePageTableEntryPermession(pOriginPhyAddr, permission, 1);
-
+	if (NT_SUCCESS(status))
 	{
-		PTR_TYPE regs[4] = { GUEST_CALL_VMM_SVMCALL_FUNCTION,0,FLUSH_TLB_SUBFUNCTION,0 };
-		SetRegsThenSVMCallWrapper(&regs[0], &regs[1], &regs[2], &regs[3]);
-	}
+		PageTableLevel123Entry permission = {};
 
-	{
-		PTR_TYPE regs[4] = { GUEST_CALL_VMM_SVMCALL_FUNCTION,0,RECOVER_TLB_SUBFUNCTION,0 };
-		SetRegsThenSVMCallWrapper(&regs[0], &regs[1], &regs[2], &regs[3]);
+		//设置页交换
+		corePageTableManager2.SwapSmallPagePpn(pOriginPhyAddr, swapPagePhyAddr, 1);
+
+		permission.fields.writeable = true;
+		permission.fields.userAccess = true;
+		permission.fields.executionDisabled = true;
+
+		corePageTableManager1.ChangePageTableEntryPermession(pOriginPhyAddr, permission, 1);
+
+		{
+			PTR_TYPE regs[4] = { GUEST_CALL_VMM_SVMCALL_FUNCTION,0,FLUSH_TLB_SUBFUNCTION,0 };
+			SetRegsThenSVMCallWrapper(&regs[0], &regs[1], &regs[2], &regs[3]);
+		}
+
+		{
+			PTR_TYPE regs[4] = { GUEST_CALL_VMM_SVMCALL_FUNCTION,0,RECOVER_TLB_SUBFUNCTION,0 };
+			SetRegsThenSVMCallWrapper(&regs[0], &regs[1], &regs[2], &regs[3]);
+		}
 	}
 
 	return status;
@@ -505,6 +508,9 @@ NTSTATUS NptHookManager::RemoveHookInSignleCore(PVOID pHookOriginVirtAddr, UINT3
 
 			swapPageVirtAddr = (UINT8*)record.pSwapVirtAddr;
 
+			//获取交换页的物理地址
+			swapPagePhyAddr = MmGetPhysicalAddress((PVOID)swapPageVirtAddr).QuadPart;
+
 			//还原HOOK
 			swapPageVirtAddr[(PTR_TYPE)record.pOriginVirtAddr & 0xfff] = *((UINT8*)record.pOriginVirtAddr);
 
@@ -519,9 +525,6 @@ NTSTATUS NptHookManager::RemoveHookInSignleCore(PVOID pHookOriginVirtAddr, UINT3
 				hookData[idx].swapPageRecord.Remove(swapPageIdx);
 			}
 		}
-
-		//获取交换页的物理地址
-		swapPagePhyAddr = MmGetPhysicalAddress((PVOID)swapPageVirtAddr).QuadPart;
 
 		//递减计数，如果计数为0恢复大页并清除记录
 		smallPagIdx = hookData[idx].FindSmallPageLevel2RefCntByPhyAddr(swapPagePhyAddr & 0xFFFFFFFFFFE00000);
