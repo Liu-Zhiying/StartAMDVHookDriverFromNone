@@ -416,7 +416,7 @@ inline void KernelVector<ElementType, allocTag, memType>::SetCapacity(SIZE_TYPE 
 		KeBugCheck(MEMORY_MANAGEMENT);
 	}
 
-	for (SIZE_T idx = 0; idx < capacity; ++idx)
+	for (SIZE_T idx = 0; idx < copyLength; ++idx)
 		 CallConstructor(pNewData + idx);
 
 	for (SIZE_TYPE idx = 0; idx < copyLength; ++idx)
