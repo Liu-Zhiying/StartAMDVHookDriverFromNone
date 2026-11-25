@@ -444,10 +444,7 @@ NTSTATUS NptHookManager::AddHookInSignleCore(const NptHookRecord& record, UINT32
 			PageTableLevel123* pTable = (PageTableLevel123*)corePageTableManager2.FindPageTableByPhyAddr(pOriginPhyAddr, 1);
 			hookData[idx].swapPageRecord[swapPageIdx].pSwapPageEntry = &pTable->entries[(pOriginPhyAddr >> 12) & 0x1ff];
 		}
-	}
 
-	if (NT_SUCCESS(status))
-	{
 		PageTableLevel123Entry permission = {};
 
 		//…Ë÷√“≥Ωªªª
