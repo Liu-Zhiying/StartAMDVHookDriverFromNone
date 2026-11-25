@@ -655,7 +655,7 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 			}
 			case FLUSH_TLB_SUBFUNCTION:
 			{
-				pVMMVirtCpuInfo->guestVmcb.controlFields.tlbControl = 3;
+				pVMMVirtCpuInfo->guestVmcb.controlFields.tlbControl = 1;
 				break;
 			}
 			case RECOVER_TLB_SUBFUNCTION:

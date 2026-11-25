@@ -582,8 +582,16 @@ NTSTATUS NptHookManager::RemoveHookInSignleCore(PVOID pHookOriginVirtAddr, UINT3
 
 	} while (false);
 
-	PTR_TYPE regs[4] = { GUEST_CALL_VMM_SVMCALL_FUNCTION,0,FLUSH_TLB_SUBFUNCTION,0 };
-	SetRegsThenSVMCallWrapper(&regs[0], &regs[1], &regs[2], &regs[3]);
+
+	{
+		PTR_TYPE regs[4] = { GUEST_CALL_VMM_SVMCALL_FUNCTION,0,FLUSH_TLB_SUBFUNCTION,0 };
+		SetRegsThenSVMCallWrapper(&regs[0], &regs[1], &regs[2], &regs[3]);
+	}
+
+	{
+		PTR_TYPE regs[4] = { GUEST_CALL_VMM_SVMCALL_FUNCTION,0,RECOVER_TLB_SUBFUNCTION,0 };
+		SetRegsThenSVMCallWrapper(&regs[0], &regs[1], &regs[2], &regs[3]);
+	}
 
 	return status;
 }
