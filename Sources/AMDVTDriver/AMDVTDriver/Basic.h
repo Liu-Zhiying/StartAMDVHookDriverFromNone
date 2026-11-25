@@ -380,6 +380,8 @@ inline void KernelVector<ElementType, allocTag, memType>::Remove(SIZE_TYPE idx)
 		KeBugCheck(MEMORY_MANAGEMENT);
 	}
 
+	CallDestroyer(&pData[idx]);
+
 	for (SIZE_TYPE idx2 = idx; idx2 < Length() - 1; ++idx2)
 		pData[idx2] = static_cast<ElementType&&>(pData[idx2 + 1]);
 
