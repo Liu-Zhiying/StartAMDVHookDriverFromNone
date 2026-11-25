@@ -215,7 +215,7 @@ inline KernelVector<ElementType, allocTag, memType>::KernelVector() : pData(NULL
 		pMemAlloc = AllocPagedMem;
 		pMemFree = FreePagedMem;
 	}
-	else if constexpr (memType = MemType::ContigousMem)
+	else if constexpr (memType == MemType::ContigousMem)
 	{
 		pMemAlloc = AllocContiguousMem;
 		pMemFree = FreeContigousMem;
