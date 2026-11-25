@@ -82,11 +82,10 @@ NTSTATUS AllocNewPageTable(EntryType* fatherEntry, PageTableRecords& records, PT
 		PTR_TYPE pa = (PTR_TYPE)MmGetPhysicalAddress((PVOID)pSubTable).QuadPart;
 		//添加到页表记录
 		records.PushBack(PageTableRecord((PTR_TYPE)pSubTable, pa));
-		//设置父页表项
-		entrySetter(fatherEntry, GET_PFN_FROM_PHYADDR(pa), false, level);
 		//清空子页表
 		RtlZeroMemory(pSubTable, sizeof * pSubTable);
-
+		//设置父页表项
+		entrySetter(fatherEntry, GET_PFN_FROM_PHYADDR(pa), false, level);
 	} while (false);
 
 	return status;
