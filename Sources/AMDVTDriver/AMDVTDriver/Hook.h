@@ -652,8 +652,6 @@ inline void MsrHookManager<msrHookCount>::DisableMsrHook(UINT32 msrNum, bool wri
 
 	cpuIdx = (UINT32)regs[1];
 
-	MsrOperationParameter optParam = {};
-
 	for (MsrHookParameter& param : parameters)
 	{
 		if (param.msrNum == msrNum && param.coreHookEnabled[cpuIdx])
