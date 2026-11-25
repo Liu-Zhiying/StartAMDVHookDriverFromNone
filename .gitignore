@@ -3,3 +3,6 @@ Sources/**/.vs/
 Sources/**/x64
 Sources/**/Debug
 Sources/**/Release
+
+# Deepseek herness temp files.
+.dsh_tmp

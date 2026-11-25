@@ -284,7 +284,6 @@ NTSTATUS NptHookManager::AddHookInSignleCore(const NptHookRecord& record, UINT32
 	SIZE_TYPE hookIdx = INVALID_INDEX;
 	UINT8* swapPageVirtAddr = NULL;
 	PTR_TYPE swapPagePhyAddr = INVALID_ADDR;
-	bool needChangePagePermission = false;
 	bool newSwapCntRef = false;
 
 	CoreNptPageTableManager& corePageTableManager1 = pageTableManager1.GetCoreNptPageTables()[idx];
@@ -422,11 +421,10 @@ NTSTATUS NptHookManager::AddHookInSignleCore(const NptHookRecord& record, UINT32
 			if (!NT_SUCCESS(status))
 				break;
 
-			needChangePagePermission = true;
-
 			SmallPageRecord newItem = {};
 
 			newItem.level3PhyAddr = pOriginPhyAddr & 0xFFFFFFFFFFE00000;
+			newItem.refCnt = 1;
 
 			hookData[idx].smallPageRecord.PushBack(newItem);
 		}
@@ -448,20 +446,24 @@ NTSTATUS NptHookManager::AddHookInSignleCore(const NptHookRecord& record, UINT32
 		}
 	}
 
-	if (NT_SUCCESS(status) && needChangePagePermission)
+	PageTableLevel123Entry permission = {};
+
+	//设置页交换
+	corePageTableManager2.SwapSmallPagePpn(pOriginPhyAddr, swapPagePhyAddr, 1);
+
+	permission.fields.writeable = true;
+	permission.fields.userAccess = true;
+	permission.fields.executionDisabled = true;
+
+	corePageTableManager1.ChangePageTableEntryPermession(pOriginPhyAddr, permission, 1);
+
 	{
-		PageTableLevel123Entry permission = {};
-
-		//设置页交换
-		corePageTableManager2.SwapSmallPagePpn(pOriginPhyAddr, swapPagePhyAddr, 1);
-
-		permission.fields.writeable = true;
-		permission.fields.userAccess = true;
-		permission.fields.executionDisabled = true;
-
-		corePageTableManager1.ChangePageTableEntryPermession(pOriginPhyAddr, permission, 1);
-
 		PTR_TYPE regs[4] = { GUEST_CALL_VMM_SVMCALL_FUNCTION,0,FLUSH_TLB_SUBFUNCTION,0 };
+		SetRegsThenSVMCallWrapper(&regs[0], &regs[1], &regs[2], &regs[3]);
+	}
+
+	{
+		PTR_TYPE regs[4] = { GUEST_CALL_VMM_SVMCALL_FUNCTION,0,RECOVER_TLB_SUBFUNCTION,0 };
 		SetRegsThenSVMCallWrapper(&regs[0], &regs[1], &regs[2], &regs[3]);
 	}
 
@@ -596,11 +598,11 @@ NTSTATUS NptHookManager::AddHook(const NptHookRecord& record)
 		return RemoveHookInSignleCore(record.pOriginVirtAddr, cpuIdx);
 		};
 
-	NTSTATUS status = RunOnEachCore(0, KeQueryMaximumProcessorCountEx(ALL_PROCESSOR_GROUPS), processor);
+	NTSTATUS status = RunOnEachCore(0, KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS), processor);
 
 	if (NT_SUCCESS(status)) return status;
 
-	return RunOnEachCore(0, KeQueryMaximumProcessorCountEx(ALL_PROCESSOR_GROUPS), rollbacker);
+	return RunOnEachCore(0, KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS), rollbacker);
 }
 
 #pragma code_seg("PAGE")
@@ -612,7 +614,7 @@ NTSTATUS NptHookManager::RemoveHook(PVOID pHookOriginVirtAddr)
 		return RemoveHookInSignleCore(pHookOriginVirtAddr, cpuIdx);
 		};
 
-	return RunOnEachCore(0, KeQueryMaximumProcessorCountEx(ALL_PROCESSOR_GROUPS), processor);
+	return RunOnEachCore(0, KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS), processor);
 }
 
 #pragma code_seg("PAGE")

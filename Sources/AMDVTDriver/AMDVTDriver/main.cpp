@@ -23,9 +23,9 @@ void UnloadDriver(IN PDRIVER_OBJECT drvObj)
 		GlobalManager* pGlobalManager = (GlobalManager*)drvObj->DeviceObject->DeviceExtension;
 		//如果你在DriverEntry里面调用IoCreateSymbolicLink的话加上这句
 		//因为你在DriverEntry里面使用的常量跟着DriverEntry一起卸载了
-		IoDeleteSymbolicLink(&symLinkName);
 		IoDeleteDevice(devObj);
 		CallDestroyer(pGlobalManager);
+		IoDeleteSymbolicLink(&symLinkName);
 	}
 	KdPrint(("AMD-V driver has exited\n"));
 }
