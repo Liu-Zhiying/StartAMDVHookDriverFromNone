@@ -607,6 +607,9 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 	pGuestRegisters->extraInfo1 = 0;
 	pGuestRegisters->extraInfo2 = 0;
 
+	if (pVMMVirtCpuInfo->guestVmcb.controlFields.tlbControl != 0)
+		pVMMVirtCpuInfo->guestVmcb.controlFields.tlbControl = 0;
+
 	switch ((VmExitReasons)pVMMVirtCpuInfo->guestVmcb.controlFields.exitCode)
 	{
 	case VMEXIT_REASON_VMMCALL:
@@ -656,11 +659,6 @@ void SVMManager::VmExitHandler(VirtCpuInfo* pVMMVirtCpuInfo, GenericRegisters* p
 			case FLUSH_TLB_SUBFUNCTION:
 			{
 				pVMMVirtCpuInfo->guestVmcb.controlFields.tlbControl = 1;
-				break;
-			}
-			case RECOVER_TLB_SUBFUNCTION:
-			{
-				pVMMVirtCpuInfo->guestVmcb.controlFields.tlbControl = 0;
 				break;
 			}
 			}
